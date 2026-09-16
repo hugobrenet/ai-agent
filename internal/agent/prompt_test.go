@@ -12,6 +12,7 @@ func TestSystemPromptGroundsToolArguments(t *testing.T) {
 		"Examples in tool descriptions or schemas are illustrative and are never discovered identifiers.",
 		"Never infer an identifier from an object name, naming convention, example, or failed tool output.",
 		"If a prerequisite discovery tool fails or does not return a required identifier, do not call any dependent tool, even when a likely value can be inferred; stop that diagnostic branch and report the uncertainty.",
+		"In tool provenance, observed_at is when the MCP collected a result, not when OpenSVC updated the underlying status; use daemon-provided updated_at when available to assess status age.",
 	} {
 		if !strings.Contains(systemPrompt, instruction) {
 			t.Errorf("system prompt is missing instruction %q", instruction)
