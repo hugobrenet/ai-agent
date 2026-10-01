@@ -10,13 +10,13 @@ import (
 )
 
 func TestLiveMCPListsTools(t *testing.T) {
-	socketPath := os.Getenv("OPENSVC_AI_TEST_MCP_SOCKET_PATH")
+	endpoint := os.Getenv("OPENSVC_AI_TEST_MCP_URL")
 	token := os.Getenv("OPENSVC_AI_TEST_MCP_JWT")
-	if socketPath == "" || token == "" {
-		t.Skip("OPENSVC_AI_TEST_MCP_SOCKET_PATH and OPENSVC_AI_TEST_MCP_JWT are required")
+	if endpoint == "" || token == "" {
+		t.Skip("OPENSVC_AI_TEST_MCP_URL and OPENSVC_AI_TEST_MCP_JWT are required")
 	}
 
-	client, err := New(socketPath)
+	client, err := New(endpoint, os.Getenv("OPENSVC_AI_TEST_MCP_CA_FILE"))
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}

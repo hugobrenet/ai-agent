@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -23,11 +24,7 @@ import (
 	"github.com/hugobrenet/opensvc-ai-agent/internal/mcpclient"
 )
 
-const (
-	maxHTTPHeaderBytes = 64 << 10
-	unixSocketMode     = 0o660
-	socketProbeTimeout = 100 * time.Millisecond
-)
+const maxHTTPHeaderBytes = 64 << 10
 
 func main() {
 	processConfig, err := config.Load()
@@ -60,7 +57,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create LLM client: %v", err)
 	}
-	mcpClient, err := mcpclient.New(mcpConfig.SocketPath)
+	mcpClient, err := mcpclient.New(mcpConfig.URL, mcpConfig.CAFile)
 	if err != nil {
 		log.Fatalf("create MCP client: %v", err)
 	}
@@ -110,20 +107,22 @@ func main() {
 		log.Fatalf("create HTTP API: %v", err)
 	}
 
-	listener, err := listenUnixSocket(processConfig.SocketPath)
+	listener, tlsConfig, err := listenHTTPS(processConfig)
 	if err != nil {
 		_ = conversationStore.Close()
 		log.Fatalf("listen for HTTP API: %v", err)
 	}
+	defer listener.Close()
 	server := newHTTPServer(listener.Addr().String(), handler)
+	server.TLSConfig = tlsConfig
 	serveErrors := make(chan error, 1)
 	go func() {
-		serveErrors <- server.Serve(listener)
+		serveErrors <- server.ServeTLS(listener, "", "")
 	}()
 
 	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
-	log.Printf("opensvc-ai-agentd listening on unix://%s", processConfig.SocketPath)
+	log.Printf("opensvc-ai-agentd listening on https://%s", listener.Addr())
 	select {
 	case err := <-serveErrors:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -142,60 +141,17 @@ func main() {
 	}
 }
 
-func listenUnixSocket(path string) (*net.UnixListener, error) {
-	if err := removeStaleUnixSocket(path); err != nil {
-		return nil, err
-	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+// listenHTTPS loads the TLS identity before opening the TCP listener.
+func listenHTTPS(cfg config.Config) (net.Listener, *tls.Config, error) {
+	certificate, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("listen on Unix socket %s: %w", path, err)
+		return nil, nil, fmt.Errorf("load API TLS certificate/key: %w", err)
 	}
-	listener.SetUnlinkOnClose(true)
-	if err := os.Chmod(path, unixSocketMode); err != nil {
-		_ = listener.Close()
-		return nil, fmt.Errorf("set Unix socket %s mode to %04o: %w", path, unixSocketMode, err)
-	}
-	return listener, nil
-}
-
-func removeStaleUnixSocket(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	listener, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
-		return fmt.Errorf("inspect Unix socket path %s: %w", path, err)
+		return nil, nil, fmt.Errorf("listen on TCP address %s: %w", cfg.ListenAddress, err)
 	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("refuse to remove non-socket path %s", path)
-	}
-
-	connection, probeErr := net.DialTimeout("unix", path, socketProbeTimeout)
-	if probeErr == nil {
-		_ = connection.Close()
-		return fmt.Errorf("Unix socket %s is already accepting connections", path)
-	}
-	if errors.Is(probeErr, os.ErrNotExist) {
-		return nil
-	}
-	if !errors.Is(probeErr, syscall.ECONNREFUSED) {
-		return fmt.Errorf("probe existing Unix socket %s: %w", path, probeErr)
-	}
-
-	currentInfo, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("reinspect stale Unix socket %s: %w", path, err)
-	}
-	if currentInfo.Mode()&os.ModeSocket == 0 || !os.SameFile(info, currentInfo) {
-		return fmt.Errorf("Unix socket path %s changed while checking whether it was stale", path)
-	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove stale Unix socket %s: %w", path, err)
-	}
-	return nil
+	return listener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}, nil
 }
 
 func newHTTPServer(address string, handler http.Handler) *http.Server {

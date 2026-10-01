@@ -3,7 +3,7 @@
 Standalone Go daemon that orchestrates LLM providers and OpenSVC MCP servers
 for authenticated AI-assisted cluster diagnostics.
 
-The project is intentionally independent from the om3 daemon. Its local API
+The project is intentionally independent from the om3 daemon. Its HTTPS API
 lets command-line clients submit prompts while the agent coordinates LLM
 providers and OpenSVC MCP tools.
 
@@ -19,8 +19,8 @@ tools, lets the LLM select them, executes calls, returns results to the LLM,
 and repeats until a final answer. Authenticated one-shot and persistent
 conversation APIs expose the agent event stream over SSE. Conversations are
 stored locally in SQLite and isolated by the verified OpenSVC issuer and
-subject. The om3 client provides one-shot prompts, persistent interactive
-sessions, and conversation metadata management through `om ai`.
+subject. The `om ai` HTTP contracts remain unchanged, but its Unix-socket client
+needs a separate TCP/HTTPS migration before it can use this version of the agent.
 
 The API emits structured JSON operational audit records to stdout. Every HTTP
 request receives a server-generated `X-Request-ID` for correlation.
@@ -37,7 +37,9 @@ provider name.
 
 | Variable | Description |
 | --- | --- |
-| `OPENSVC_AI_SOCKET_PATH` | Unix socket path, default `/run/opensvc-ai-agent/agent.sock`. |
+| `OPENSVC_AI_LISTEN_ADDR` | TCP listen IP and port, default `127.0.0.1:8090`; use an explicit interface IP or `0.0.0.0:8090` / `[::]:8090` for remote access. |
+| `OPENSVC_AI_TLS_CERT_FILE` | Required absolute path to the API PEM certificate chain. |
+| `OPENSVC_AI_TLS_KEY_FILE` | Required absolute path to its PEM private key. |
 | `OPENSVC_AI_MAX_CONCURRENT_ASKS` | Process-wide concurrent ask limit, default `4`, maximum `128`. |
 | `OPENSVC_AI_SHUTDOWN_TIMEOUT` | Maximum graceful shutdown drain time, default `30s`, accepted range `1s` to `5m`. |
 
@@ -79,11 +81,17 @@ prompts, grants, audit records, and partial model output are never persisted.
 
 | Variable | Description |
 | --- | --- |
-| `OPENSVC_AI_MCP_SOCKET_PATH` | MCP Unix socket path, default `/run/opensvc-daemon-mcp/mcp.sock`. |
+| `OPENSVC_AI_MCP_URL` | Required HTTPS Streamable HTTP endpoint, including its path, for example `https://mcp.example.test/mcp`. |
+| `OPENSVC_AI_MCP_CA_FILE` | Optional absolute path to a PEM CA bundle (maximum 1 MiB). When set, only this bundle is trusted; otherwise use system roots. |
 
-The agent carries Streamable HTTP over this socket. Its internal HTTP URL is
-synthetic: the transport disables proxies and always dials the configured Unix
-path. The delegated JWT remains attached to every MCP request.
+The MCP client uses TCP with verified HTTPS (TLS 1.2 or newer). It verifies the
+certificate chain and hostname, disables proxies and redirects, and sends the
+request-scoped JWT only to the configured origin. The agent and MCP may run on
+different hosts. There is no Unix-socket fallback.
+
+Migration: `OPENSVC_AI_SOCKET_PATH` and `OPENSVC_AI_MCP_SOCKET_PATH` are no
+longer supported and cause a startup error when set. Configure the new
+listener, TLS files and MCP URL instead.
 
 ## OpenSVC authentication
 
@@ -94,8 +102,13 @@ path. The delegated JWT remains attached to every MCP request.
 The API accepts only RS256 JWTs signed by the configured OpenSVC cluster CA. It
 requires valid registered time claims, non-empty `sub` and `iss`, and
 `token_use=access`. Authentication happens before the ask request body is read
-or its SSE response starts. The same request-scoped JWT is then independently
-verified by MCP and delegated to the OpenSVC daemon for grant enforcement.
+or its SSE response starts. The same request-scoped JWT is forwarded to MCP,
+which must accept native
+OpenSVC JWT delegation and enforce daemon authorization. Transport migration
+does not add OAuth login or token exchange. The current OAuth-only om3-mcp
+configuration does not accept this native JWT flow yet; that authentication
+integration is a separate step. The agent still trusts one configured cluster
+CA, not an arbitrary set of clusters.
 After verification, the inbound `Authorization` header is removed before the
 request reaches the ask handler; the JWT remains only in private request
 context.
@@ -103,8 +116,9 @@ context.
 The verification certificate or public key is loaded once at process startup
 and is not reloaded automatically. Replace the configured public file
 atomically and restart the agent when the OpenSVC signing key changes.
-Coordinate the same rotation with the MCP server and JWT issuer so they validate
-the same generation of access tokens throughout the transition.
+Coordinate the same rotation with a native-JWT-compatible MCP server and JWT
+issuer so they validate the same generation of access tokens throughout the
+transition.
 
 For each request, the agent opens an MCP session, lists all available tools,
 and sends their schemas to the LLM. Tool calls run sequentially, with at most
@@ -118,8 +132,8 @@ MiB. Model-visible tool names, descriptions, and input schemas are additionally
 limited to 128 bytes, 4 KiB, and 256 KiB respectively, with a 1 MiB aggregate
 limit.
 
-No endpoint, model, or token has a project default. Plain HTTP endpoints must
-use a loopback IP. The token value is checked at configuration time, read again
+For LLM providers, no endpoint, model, or token has a project default. Plain
+HTTP endpoints must use a loopback IP. The token value is checked at configuration time, read again
 when sending a request, and never retained in the non-secret configuration
 structure.
 
@@ -139,24 +153,32 @@ The daemon validates the LLM, agent, and MCP configuration at startup. Provider
 tokens remain in their environment variable and are not retained in process
 configuration.
 
-The daemon listens on `/run/opensvc-ai-agent/agent.sock` by default. The parent
-directory must already exist; systemd should create it with
-`RuntimeDirectory=opensvc-ai-agent`. The daemon refuses relative or oversized
-paths, refuses to replace non-socket files, removes a socket only after proving
-that it is stale, sets its mode to `0660`, and removes it when the listener
-closes.
+The daemon listens on TCP with HTTPS only. TLS certificate/key files are loaded
+before binding; invalid TLS material prevents the listener from opening. There
+is no insecure HTTP mode. The default loopback bind is deliberate: exposing
+it remotely requires an explicit address and suitable firewall rules. The
+certificate must cover the hostname or IP used by clients. Keep the private
+key readable only by the service user and restart to reload it.
 
-For an unprivileged development run, select a socket in an owner-only temporary
-directory:
+Example after configuring the LLM, JWT verifier and conversation database:
 
 ```bash
-runtime_directory="$(mktemp -d)"
-OPENSVC_AI_SOCKET_PATH="$runtime_directory/agent.sock" \
+OPENSVC_AI_LISTEN_ADDR=127.0.0.1:8090 \
+OPENSVC_AI_TLS_CERT_FILE=/etc/opensvc-ai/agent.crt \
+OPENSVC_AI_TLS_KEY_FILE=/etc/opensvc-ai/agent.key \
+OPENSVC_AI_MCP_URL=https://mcp.example.test/mcp \
+OPENSVC_AI_MCP_CA_FILE=/etc/opensvc-ai/mcp-ca.pem \
   go run ./cmd/opensvc-ai-agentd
 ```
 
-The agent exposes its HTTP routes and SSE contract only through the Unix
-socket. The HTTP server limits request headers to 64 KiB. On `SIGINT` or
+The systemd unit in `deploy/systemd/opensvc-ai-agent.service` runs under a
+dedicated user. Its environment file supplies LLM settings and the MCP URL;
+remove the CA setting when system roots suffice. It does not depend on a local
+MCP service or socket group. Override the listen address to expose it remotely;
+TLS does not replace the existing JWT authentication.
+
+The HTTP routes and SSE contracts are unchanged. The HTTP server limits request
+headers to 64 KiB. On `SIGINT` or
 `SIGTERM`, it stops
 accepting new requests and lets active asks finish for at most
 `OPENSVC_AI_SHUTDOWN_TIMEOUT`. Once that deadline expires, remaining
@@ -166,7 +188,7 @@ operations.
 ## Health
 
 ```bash
-curl --unix-socket /run/opensvc-ai-agent/agent.sock http://localhost/health
+curl --cacert /etc/opensvc-ai/agent-ca.pem https://127.0.0.1:8090/health
 ```
 
 Expected response:
@@ -177,7 +199,9 @@ Expected response:
 
 ## Quick start with `om ai`
 
-The local om3 client is the recommended user interface for the agent:
+The following commands describe the existing CLI workflow. Socket-based
+versions of `om ai` are incompatible with this HTTPS agent until the separate
+client migration is completed:
 
 ```bash
 om ai ask "Assess the health of my cluster"
@@ -196,7 +220,7 @@ examples, controls, output formats, and troubleshooting.
 
 ## HTTP API
 
-The local API supports both one-shot requests and persistent conversations:
+The HTTPS API supports both one-shot requests and persistent conversations:
 
 | Method and path | Purpose |
 | --- | --- |
@@ -212,8 +236,8 @@ The local API supports both one-shot requests and persistent conversations:
 For example, submit a one-shot prompt with:
 
 ```bash
-curl --unix-socket /run/opensvc-ai-agent/agent.sock \
-  -N http://localhost/v1/ask \
+curl --cacert /etc/opensvc-ai/agent-ca.pem \
+  -N https://127.0.0.1:8090/v1/ask \
   -H "Authorization: Bearer $OPENSVC_JWT" \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Assess the health of my cluster."}'
@@ -257,8 +281,9 @@ git diff --check
 ```
 
 An opt-in integration test can validate the authenticated client against a
-running OpenSVC MCP server. Export `OPENSVC_AI_TEST_MCP_SOCKET_PATH` and
-`OPENSVC_AI_TEST_MCP_JWT`, then run:
+running OpenSVC MCP server. Export `OPENSVC_AI_TEST_MCP_URL` and
+`OPENSVC_AI_TEST_MCP_JWT` (for a native-JWT-compatible MCP), optionally
+`OPENSVC_AI_TEST_MCP_CA_FILE` for a private TLS CA, then run:
 
 ```bash
 go test -tags=integration ./internal/mcpclient

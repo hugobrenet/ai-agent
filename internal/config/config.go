@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,17 +11,18 @@ import (
 )
 
 const (
-	DefaultSocketPath        = "/run/opensvc-ai-agent/agent.sock"
+	DefaultListenAddress     = "127.0.0.1:8090"
 	DefaultMaxConcurrentAsks = 4
 	DefaultShutdownTimeout   = 30 * time.Second
-	maximumUnixPathBytes     = 107
 	maximumMaxConcurrentAsks = 128
 	minimumShutdownTimeout   = time.Second
 	maximumShutdownTimeout   = 5 * time.Minute
 )
 
 type Config struct {
-	SocketPath        string
+	ListenAddress     string
+	TLSCertFile       string
+	TLSKeyFile        string
 	MaxConcurrentAsks int
 	ShutdownTimeout   time.Duration
 }
@@ -30,14 +32,25 @@ func Load() (Config, error) {
 }
 
 func load(getenv func(string) string) (Config, error) {
-	socketPath := strings.TrimSpace(getenv("OPENSVC_AI_SOCKET_PATH"))
-	if socketPath == "" {
-		socketPath = DefaultSocketPath
+	if strings.TrimSpace(getenv("OPENSVC_AI_SOCKET_PATH")) != "" {
+		return Config{}, fmt.Errorf("OPENSVC_AI_SOCKET_PATH is no longer supported; configure OPENSVC_AI_LISTEN_ADDR and TLS certificate/key files")
 	}
-	var err error
-	socketPath, err = cleanUnixSocketPath(socketPath)
+	address := strings.TrimSpace(getenv("OPENSVC_AI_LISTEN_ADDR"))
+	if address == "" {
+		address = DefaultListenAddress
+	}
+	host, port, err := net.SplitHostPort(address)
+	portNumber, portErr := strconv.Atoi(port)
+	if err != nil || net.ParseIP(host) == nil || portErr != nil || portNumber < 1 || portNumber > 65535 {
+		return Config{}, fmt.Errorf("parse OPENSVC_AI_LISTEN_ADDR: expected an explicit IP address and port between 1 and 65535")
+	}
+	certFile, err := absoluteFile(getenv("OPENSVC_AI_TLS_CERT_FILE"))
 	if err != nil {
-		return Config{}, fmt.Errorf("parse OPENSVC_AI_SOCKET_PATH: %w", err)
+		return Config{}, fmt.Errorf("parse OPENSVC_AI_TLS_CERT_FILE: %w", err)
+	}
+	keyFile, err := absoluteFile(getenv("OPENSVC_AI_TLS_KEY_FILE"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse OPENSVC_AI_TLS_KEY_FILE: %w", err)
 	}
 	maxConcurrentAsks := DefaultMaxConcurrentAsks
 	if value := strings.TrimSpace(getenv("OPENSVC_AI_MAX_CONCURRENT_ASKS")); value != "" {
@@ -65,22 +78,21 @@ func load(getenv func(string) string) (Config, error) {
 		shutdownTimeout = parsed
 	}
 	return Config{
-		SocketPath:        socketPath,
+		ListenAddress:     address,
+		TLSCertFile:       certFile,
+		TLSKeyFile:        keyFile,
 		MaxConcurrentAsks: maxConcurrentAsks,
 		ShutdownTimeout:   shutdownTimeout,
 	}, nil
 }
 
-func cleanUnixSocketPath(value string) (string, error) {
-	path := filepath.Clean(value)
+func absoluteFile(value string) (string, error) {
+	path := filepath.Clean(strings.TrimSpace(value))
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("path must be absolute")
 	}
 	if path == string(filepath.Separator) {
-		return "", fmt.Errorf("path must name a socket")
-	}
-	if len([]byte(path)) > maximumUnixPathBytes {
-		return "", fmt.Errorf("path exceeds the Linux Unix socket limit of %d bytes", maximumUnixPathBytes)
+		return "", fmt.Errorf("path must name a file")
 	}
 	return path, nil
 }

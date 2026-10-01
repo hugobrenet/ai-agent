@@ -86,7 +86,7 @@ func TestClientRejectsOversizedToolResponse(t *testing.T) {
 			return nil, map[string]string{"content": content}, nil
 		})
 	streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
-	socketPath := serveUnixHTTP(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	endpoint, caFile := serveHTTPS(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+token {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
@@ -94,7 +94,7 @@ func TestClientRejectsOversizedToolResponse(t *testing.T) {
 		streamHandler.ServeHTTP(response, request)
 	}))
 
-	client, err := New(socketPath)
+	client, err := New(endpoint, caFile)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}

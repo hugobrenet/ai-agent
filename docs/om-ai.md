@@ -4,14 +4,20 @@ The om3 command-line client provides the local user interface for
 `opensvc-ai-agent`. It supports one-shot prompts, persistent interactive
 conversations, and conversation metadata management.
 
+Transport migration notice: the agent now accepts HTTPS over TCP only.
+The `om ai` client migration is a separate step; Unix-socket versions cannot
+connect to this agent. The commands below document the existing CLI behavior,
+not a completed HTTPS client implementation.
+
 ## Architecture
 
-`om ai` communicates only with services on the local node:
+The target architecture keeps token issuance at the local OpenSVC daemon but
+allows the agent and MCP to run centrally:
 
 ```text
 om ai ── access token ──> OpenSVC daemon
   │
-  └── authenticated request ──> AI agent ──> LLM provider
+  └── HTTPS request ──> AI agent ──> LLM provider
                                       │
                                       └──> OpenSVC MCP ──> OpenSVC daemon
 ```
@@ -21,15 +27,12 @@ The agent verifies the token, delegates it to MCP for tool calls, and binds
 persistent conversations to its issuer and subject. The client never stores
 the token, messages, or conversation state.
 
-The client connects to `/run/opensvc-ai-agent/agent.sock` by default. For a
-non-default local Unix socket, set:
-
-```bash
-export OPENSVC_AI_AGENT_SOCKET=/path/to/agent.sock
-```
-
-The path must be absolute and fit the Linux Unix socket address limit. There is
-intentionally no public `--agent-url` flag.
+Configure the agent's TCP listener and certificate/key files with
+`OPENSVC_AI_LISTEN_ADDR`, `OPENSVC_AI_TLS_CERT_FILE`, and
+`OPENSVC_AI_TLS_KEY_FILE`. Configure its outbound MCP connection with
+`OPENSVC_AI_MCP_URL` and optional `OPENSVC_AI_MCP_CA_FILE`. These are agent
+settings, not CLI settings. CLI endpoint and TLS trust settings will be
+specified during the separate `om ai` migration.
 
 ## Prerequisites
 
@@ -41,7 +44,7 @@ Before using the client:
 4. Verify the agent health endpoint:
 
    ```bash
-   curl --unix-socket /run/opensvc-ai-agent/agent.sock http://localhost/health
+   curl --cacert /etc/opensvc-ai/agent-ca.pem https://127.0.0.1:8090/health
    ```
 
 5. Verify the available commands:
@@ -237,16 +240,16 @@ the client.
 
 ### Agent connection refused
 
-Verify the local socket, its permissions, and the health endpoint:
+Verify the configured TCP endpoint and TLS trust:
 
 ```bash
-ls -l /run/opensvc-ai-agent/agent.sock
-curl --unix-socket /run/opensvc-ai-agent/agent.sock http://localhost/health
-printf 'socket=%s\n' "$OPENSVC_AI_AGENT_SOCKET"
+curl --cacert /etc/opensvc-ai/agent-ca.pem https://127.0.0.1:8090/health
 ```
 
-An absent socket reports a connection error. `Permission denied` means that
-the user running `om` is not allowed by the socket owner, group, or mode.
+Connection refused means the listener is not reachable. For a TLS error, check
+the CA bundle and the certificate hostname/IP. Do not disable certificate
+verification. A Unix-socket version of `om ai` requires the planned client
+migration before it can connect.
 
 ### Local daemon permission denied
 

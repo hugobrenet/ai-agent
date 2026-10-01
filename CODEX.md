@@ -12,7 +12,7 @@ servers remain the deterministic OpenSVC integration layer.
 
 ## Current scope
 
-The current implementation exposes an HTTP health endpoint, an authenticated
+The current implementation exposes an HTTPS-over-TCP health endpoint, an authenticated
 MCP client, provider-neutral LLM contracts, Responses and Chat Completions
 protocol adapters, an agent loop coordinating LLM turns with MCP tool calls,
 an authenticated one-shot SSE ask API, a provider-neutral conversation turn
@@ -70,22 +70,23 @@ active project step:
      graceful shutdown with active conversations.
    - Run a real multi-turn workflow through LLM, MCP, and the OpenSVC daemon and
      verify restart and resume behavior.
-7. Local service deployment and Unix sockets. In progress.
-   - Version independent systemd units for the agent and MCP without making the
-     OpenSVC daemon depend on either service.
-   - Run under dedicated unprivileged users, protect state and credentials, and
-     apply systemd filesystem, privilege, and resource hardening.
-   - The `om ai` to agent link uses a permissioned Unix socket while preserving
-     its HTTP contracts.
-   - The agent MCP client uses a permissioned Unix socket; complete the matching
-     listener and service changes in the MCP repository, then validate them in
-     the lab.
-8. Remote OpenSVC client integration. Deferred until local interactive use is
-   complete.
-   - Design `ox ai` and an optional authenticated OpenSVC daemon proxy without
-     exposing the agent or MCP listener to the network.
+7. Agent TCP/HTTPS transport and service deployment. Implemented in this repository.
+   - Run the agent under a dedicated unprivileged user with protected state and
+     credentials and systemd hardening, independently of a local MCP service.
+   - Expose existing API and SSE contracts over TCP with mandatory TLS 1.2 or
+     newer. Use explicit listen IP/port and certificate/key files; no Unix socket
+     listener or insecure HTTP fallback.
+   - Connect to an explicit HTTPS MCP URL, verify the chain and hostname, disable
+     proxies and redirects, and bind delegated tokens to its configured origin.
+   - Reject removed Unix socket configuration variables with migration errors.
+8. CLI transport and global authentication integration. Pending explicit request.
+   - Migrate `om ai` separately; its socket-based versions cannot reach this agent.
+   - Design native OpenSVC/OpenID trust and delegation for a global MCP/agent.
+     Native JWT validation still trusts one configured cluster CA. The current
+     OAuth-only om3-mcp does not yet accept this agent's native JWT flow.
+   - Revalidate the complete CLI/LLM/MCP/daemon chain after those migrations.
 
-The next incomplete step is step 7. The OpenSVC JWT belongs only to the
+The next incomplete step is step 8. Do not implement it without user direction. The OpenSVC JWT belongs only to the
 authenticated agent, MCP, and daemon path. It must never enter an LLM request,
 LLM context, persisted conversation, prompt, tool argument, provider
 configuration, or audit record.
@@ -164,8 +165,8 @@ limitations remain explicit and must not be described as solved:
   LLM failure tests; retain this observation for provider/adapter diagnostics;
 - the audit covered one single-node lab and one live provider, not long-running
   soak, load, fuzz, multi-node partition, or independent penetration testing;
-- systemd hardening and permissioned Unix sockets remain step 7, so the current
-  loopback HTTP deployment is not the final production deployment model.
+- this historical audit predates TCP/HTTPS transport; remote deployment,
+  CLI migration and global authentication need separate end-to-end validation.
 
 ## Technology
 
@@ -324,9 +325,12 @@ protocol name, never by provider or model name.
 
 ## Security invariants
 
-- The local agent listener and its MCP client transport use permissioned Unix
-  sockets. Keep unavoidable TCP destinations constrained by their own trust
-  boundary and transport policy.
+- The agent listener and MCP client use TCP with verified HTTPS, TLS 1.2 or
+  newer. Never reintroduce a Unix-socket or insecure HTTP fallback. Load the
+  listener certificate/key before binding. Preserve loopback defaults, require
+  explicit remote exposure, and never follow MCP redirects or proxies.
+- Bind delegated JWTs to the configured MCP HTTPS origin and verify its TLS
+  hostname/chain. Custom MCP CA bundles replace system roots.
 - Never place JWTs, provider API keys, passwords, or private keys in prompts,
   request bodies, logs, errors, or test fixtures.
 - Future OpenSVC JWTs must remain request-scoped and must never be stored in a
@@ -396,8 +400,10 @@ Use `httptest` for API behavior. Normal tests must not require a live LLM,
 OpenSVC daemon, MCP server, network connection, or secret.
 
 The `integration` build tag may be used for explicit tests against a running
-MCP server. Such tests must read its Unix socket path and JWT from the
-environment, skip when either is absent, and never print the JWT.
+native-JWT-compatible MCP server. Such tests must read its HTTPS URL
+(`OPENSVC_AI_TEST_MCP_URL`), optional CA file
+(`OPENSVC_AI_TEST_MCP_CA_FILE`) and JWT (`OPENSVC_AI_TEST_MCP_JWT`) from the
+environment, skip when URL or JWT is absent, and never print the JWT.
 
 LLM adapter integration tests use the same build tag and generic
 `OPENSVC_AI_LLM_*` environment variables. Never commit gateway URLs, model

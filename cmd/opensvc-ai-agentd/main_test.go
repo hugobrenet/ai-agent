@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
 )
 
 func TestNewHTTPServerHardening(t *testing.T) {
@@ -24,72 +27,65 @@ func TestNewHTTPServerHardening(t *testing.T) {
 	}
 }
 
-func TestListenUnixSocketCreatesPermissionedSocketAndCleansUp(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.sock")
-	listener, err := listenUnixSocket(path)
+func TestHTTPSListener(t *testing.T) {
+	fixture := httptest.NewTLSServer(nil)
+	defer fixture.Close()
+	certFile := filepath.Join(t.TempDir(), "agent.crt")
+	keyFile := filepath.Join(t.TempDir(), "agent.key")
+	cert := fixture.TLS.Certificates[0]
+	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
 	if err != nil {
-		t.Fatalf("listen on Unix socket: %v", err)
+		t.Fatal(err)
 	}
-	info, err := os.Lstat(path)
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	listener, tlsConfig, err := listenHTTPS(config.Config{ListenAddress: "127.0.0.1:0", TLSCertFile: certFile, TLSKeyFile: keyFile})
 	if err != nil {
-		t.Fatalf("stat Unix socket: %v", err)
+		t.Fatal(err)
 	}
-	if info.Mode()&os.ModeSocket == 0 {
-		t.Fatalf("path mode %s is not a socket", info.Mode())
+	if tlsConfig.MinVersion < tls.VersionTLS12 {
+		t.Fatal("TLS minimum version not enforced")
 	}
-	if got := info.Mode().Perm(); got != unixSocketMode {
-		t.Fatalf("socket mode = %04o, want %04o", got, unixSocketMode)
+	server := newHTTPServer(listener.Addr().String(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil {
+			t.Error("request reached handler without TLS")
+		}
+		_, _ = io.WriteString(w, "healthy")
+	}))
+	server.TLSConfig = tlsConfig
+	done := make(chan error, 1)
+	go func() { done <- server.ServeTLS(listener, "", "") }()
+	t.Cleanup(func() { _ = server.Close(); <-done })
+	response, err := fixture.Client().Get("https://" + listener.Addr().String() + "/health")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := listener.Close(); err != nil {
-		t.Fatalf("close Unix socket: %v", err)
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || string(body) != "healthy" {
+		t.Fatalf("HTTPS response=%q err=%v", body, err)
 	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("socket remains after listener close: %v", err)
+	if response, err := http.Get("https://" + listener.Addr().String() + "/health"); err == nil {
+		response.Body.Close()
+		t.Fatal("untrusted TLS certificate accepted")
+	}
+	response, err = http.Get("http://" + listener.Addr().String() + "/health")
+	if err == nil {
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("plaintext HTTP status=%d", response.StatusCode)
+		}
 	}
 }
 
-func TestListenUnixSocketReplacesOnlyStaleSocket(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.sock")
-	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
-	if err != nil {
-		t.Fatalf("create stale Unix socket: %v", err)
-	}
-	stale.SetUnlinkOnClose(false)
-	if err := stale.Close(); err != nil {
-		t.Fatalf("close stale Unix socket: %v", err)
-	}
-
-	listener, err := listenUnixSocket(path)
-	if err != nil {
-		t.Fatalf("replace stale Unix socket: %v", err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-}
-
-func TestListenUnixSocketRefusesActiveSocket(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.sock")
-	active, err := net.Listen("unix", path)
-	if err != nil {
-		t.Fatalf("create active Unix socket: %v", err)
-	}
-	t.Cleanup(func() { _ = active.Close() })
-
-	if _, err := listenUnixSocket(path); err == nil || !strings.Contains(err.Error(), "already accepting connections") {
-		t.Fatalf("listen error = %v", err)
-	}
-}
-
-func TestListenUnixSocketRefusesNonSocketPath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.sock")
-	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
-		t.Fatalf("create ordinary file: %v", err)
-	}
-	if _, err := listenUnixSocket(path); err == nil || !strings.Contains(err.Error(), "refuse to remove non-socket") {
-		t.Fatalf("listen error = %v", err)
-	}
-	contents, err := os.ReadFile(path)
-	if err != nil || string(contents) != "keep" {
-		t.Fatalf("ordinary file changed: contents=%q error=%v", contents, err)
+func TestHTTPSListenerRejectsInvalidCertificateBeforeBind(t *testing.T) {
+	listener, _, err := listenHTTPS(config.Config{ListenAddress: "127.0.0.1:0", TLSCertFile: filepath.Join(t.TempDir(), "missing.crt"), TLSKeyFile: filepath.Join(t.TempDir(), "missing.key")})
+	if err == nil || listener != nil {
+		t.Fatalf("listener=%v err=%v", listener, err)
 	}
 }
 

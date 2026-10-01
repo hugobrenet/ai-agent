@@ -2,22 +2,21 @@ package mcpclient
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"net"
+	"io"
 	"net/http"
-	"path/filepath"
-	"strings"
-	"time"
+	"os"
 
 	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
+	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-	clientName           = "opensvc-ai-agent"
-	clientVersion        = "v0.1.0"
-	streamableEndpoint   = "http://localhost/mcp"
-	maximumUnixPathBytes = 107
+	clientName    = "opensvc-ai-agent"
+	clientVersion = "v0.1.0"
 )
 
 // Client creates request-scoped MCP sessions. It never retains a Bearer token.
@@ -26,34 +25,47 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// New creates an MCP client that carries Streamable HTTP over a Unix socket.
-func New(socketPath string) (*Client, error) {
-	path, err := cleanUnixSocketPath(socketPath)
+// New creates a verified HTTPS MCP client. An empty CA file uses system roots.
+func New(endpoint string, caFile string) (*Client, error) {
+	parsed, err := config.ParseMCPURL(endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("parse MCP Unix socket path: %w", err)
+		return nil, fmt.Errorf("parse MCP URL: %w", err)
 	}
-
-	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	var roots *x509.CertPool
+	if caFile != "" {
+		file, err := os.Open(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("open MCP CA file: %w", err)
+		}
+		defer file.Close()
+		const maxCABytes = 1 << 20
+		data, err := io.ReadAll(io.LimitReader(file, maxCABytes+1))
+		if err != nil {
+			return nil, fmt.Errorf("read MCP CA file: %w", err)
+		}
+		roots = x509.NewCertPool()
+		if len(data) > maxCABytes || !roots.AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("MCP CA file must contain PEM certificates and be at most 1 MiB")
+		}
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return dialer.DialContext(ctx, "unix", path)
-	}
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
 
 	return &Client{
-		endpoint:   streamableEndpoint,
-		httpClient: securedHTTPClient(&http.Client{Transport: transport}),
+		endpoint:   parsed.String(),
+		httpClient: securedHTTPClient(&http.Client{Transport: transport}, parsed.Scheme+"://"+parsed.Host),
 	}, nil
 }
 
-func securedHTTPClient(base *http.Client) *http.Client {
+func securedHTTPClient(base *http.Client, origin string) *http.Client {
 	clientCopy := *base
 	baseTransport := clientCopy.Transport
 	if baseTransport == nil {
 		baseTransport = http.DefaultTransport
 	}
 	clientCopy.Transport = responseLimitTransport{
-		base:     bearerTransport{base: baseTransport},
+		base:     bearerTransport{base: baseTransport, origin: origin},
 		maxBytes: maxMCPResponseBodyBytes,
 	}
 	clientCopy.CheckRedirect = func(*http.Request, []*http.Request) error {
@@ -124,10 +136,14 @@ func (s *Session) Close() error {
 }
 
 type bearerTransport struct {
-	base http.RoundTripper
+	base   http.RoundTripper
+	origin string
 }
 
 func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Scheme+"://"+request.URL.Host != t.origin || (request.Host != "" && request.Host != request.URL.Host) {
+		return nil, fmt.Errorf("send MCP request: destination differs from configured HTTPS origin")
+	}
 	token, ok := auth.BearerTokenFromContext(request.Context())
 	if !ok {
 		return nil, fmt.Errorf("send MCP request: delegated OpenSVC access JWT is missing from request context")
@@ -137,18 +153,4 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	requestCopy.Header = request.Header.Clone()
 	requestCopy.Header.Set("Authorization", "Bearer "+token)
 	return t.base.RoundTrip(requestCopy)
-}
-
-func cleanUnixSocketPath(value string) (string, error) {
-	path := filepath.Clean(strings.TrimSpace(value))
-	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("path must be absolute")
-	}
-	if path == string(filepath.Separator) {
-		return "", fmt.Errorf("path must name a socket")
-	}
-	if len([]byte(path)) > maximumUnixPathBytes {
-		return "", fmt.Errorf("path exceeds the Linux Unix socket limit of %d bytes", maximumUnixPathBytes)
-	}
-	return path, nil
 }
