@@ -11,14 +11,14 @@ Standalone AI agent for OpenSVC cluster diagnostics, usable with `om ai`.
 
 ## Install
 
-From the repository root, on a Linux host with systemd:
+From the repository root, on a Linux host:
 
 ```bash
 go build -o bin/opensvc-ai-agentd ./cmd/opensvc-ai-agentd
 sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin opensvc-ai
 sudo install -Dm755 bin/opensvc-ai-agentd /usr/local/libexec/opensvc-ai-agentd
-sudo install -d -m750 -o opensvc-ai -g opensvc-ai /etc/opensvc-ai
-sudo install -m644 deploy/systemd/opensvc-ai-agent.service /etc/systemd/system/
+sudo install -d -m750 -o root -g opensvc-ai /etc/opensvc-ai
+sudo install -d -m700 -o opensvc-ai -g opensvc-ai /var/lib/opensvc-ai-agent
 ```
 
 Place the TLS certificate at `/etc/opensvc-ai/agent.crt` and the private key
@@ -27,10 +27,13 @@ the private key to that user.
 
 ## Configure
 
-Create `/etc/opensvc-ai/agent-llm.env`, owned by root with mode `0600`:
+Create `/etc/opensvc-ai/agent-llm.env`, owned by `root:opensvc-ai` with mode `0640`:
 
 ```dotenv
 OPENSVC_AI_LISTEN_ADDR=0.0.0.0:8090
+OPENSVC_AI_TLS_CERT_FILE=/etc/opensvc-ai/agent.crt
+OPENSVC_AI_TLS_KEY_FILE=/etc/opensvc-ai/agent.key
+OPENSVC_AI_CONVERSATION_DB_PATH=/var/lib/opensvc-ai-agent/conversations.db
 OPENSVC_AI_MCP_URL=https://mcp.example.test/mcp
 
 OPENSVC_AI_LLM_PROTOCOL=responses
@@ -47,15 +50,20 @@ required by the provider. For a provider without authentication, set
 Optional: `OPENSVC_AI_MCP_CA_FILE` supplies a private CA bundle for MCP HTTPS.
 Otherwise, system CA roots are used. Restrict network access to the agent port.
 
-The service creates its state directory at `/var/lib/opensvc-ai-agent`.
-
 ## Start
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now opensvc-ai-agent
-sudo systemctl status opensvc-ai-agent
+sudo -u opensvc-ai sh -c '
+  set -a
+  . /etc/opensvc-ai/agent-llm.env
+  set +a
+  exec /usr/local/libexec/opensvc-ai-agentd
+'
 ```
+
+For managed deployments, use an OpenSVC `app.simple` resource to launch the
+binary with the same environment. The agent reads environment variables, not
+the environment file itself; its launcher must load that file if used.
 
 Check health using the hostname covered by the certificate:
 
