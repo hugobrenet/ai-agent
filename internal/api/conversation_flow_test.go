@@ -54,7 +54,7 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 		t.Fatalf("create conversation service: %v", err)
 	}
 	verifier := tokenVerifierFunc(func(_ context.Context, token string) (auth.Identity, error) {
-		return auth.Identity{Issuer: "cluster", Subject: token}, nil
+		return auth.Identity{ClusterID: "cluster-id", Issuer: "cluster", Subject: token}, nil
 	})
 	handler, err := NewHandler(
 		askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }),
@@ -125,7 +125,7 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 	if err := json.NewDecoder(getResponse.Body).Decode(&afterSecond); err != nil || afterSecond.Conversation.Title != "Renamed incident" {
 		t.Fatalf("final title response=%+v error=%v", afterSecond, err)
 	}
-	history, err := store.LoadHistory(t.Context(), conversation.Owner{Issuer: "cluster", Subject: "alice"}, id)
+	history, err := store.LoadHistory(t.Context(), conversation.Owner{ClusterID: "cluster-id", Issuer: "cluster", Subject: "alice"}, id)
 	if err != nil || len(history) != 4 {
 		t.Fatalf("stored history=%#v error=%v", history, err)
 	}

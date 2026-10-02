@@ -186,7 +186,7 @@ type serviceTestStore struct {
 
 func newServiceTestStore() *serviceTestStore {
 	return &serviceTestStore{item: Conversation{
-		ID: "conversation-id", Owner: Owner{Issuer: "cluster", Subject: "user"},
+		ID: "conversation-id", Owner: Owner{ClusterID: "cluster-id", Issuer: "cluster", Subject: "user"},
 		CreatedAt: serviceTestNow.Add(-time.Hour), UpdatedAt: serviceTestNow.Add(-time.Hour),
 		ExpiresAt: serviceTestNow.Add(time.Hour),
 	}}
@@ -204,7 +204,7 @@ func newTestService(t *testing.T, store *serviceTestStore, runner TurnRunner) *S
 }
 
 func serviceTestIdentity() auth.Identity {
-	return auth.Identity{Issuer: "cluster", Subject: "user"}
+	return auth.Identity{ClusterID: "cluster-id", Issuer: "cluster", Subject: "user"}
 }
 
 func (s *serviceTestStore) CreateConversation(context.Context, Conversation) error { return nil }

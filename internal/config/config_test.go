@@ -1,50 +1,61 @@
 package config
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
 
-func TestLoadUnixSocket(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		value   string
-		want    string
-		wantErr bool
+func processEnv(values map[string]string) func(string) string {
+	return func(key string) string {
+		if value, ok := values[key]; ok {
+			return value
+		}
+		switch key {
+		case "OPENSVC_AI_TLS_CERT_FILE":
+			return "/etc/opensvc-ai/agent.crt"
+		case "OPENSVC_AI_TLS_KEY_FILE":
+			return "/etc/opensvc-ai/agent.key"
+		}
+		return ""
+	}
+}
+
+func TestLoadHTTPS(t *testing.T) {
+	for _, tc := range []struct {
+		name, address string
+		wantErr       bool
 	}{
-		{name: "default", want: DefaultSocketPath},
-		{name: "explicit", value: " /run/opensvc-ai-agent/../opensvc-ai-agent/custom.sock ", want: "/run/opensvc-ai-agent/custom.sock"},
-		{name: "relative", value: "agent.sock", wantErr: true},
-		{name: "root", value: "/", wantErr: true},
-		{name: "too long", value: "/" + strings.Repeat("a", maximumUnixPathBytes), wantErr: true},
+		{"default", "", false}, {"ipv4", "0.0.0.0:8090", false}, {"ipv6", "[::1]:8090", false},
+		{"missing IP", ":8090", true}, {"hostname", "localhost:8090", true},
+		{"missing port", "127.0.0.1", true}, {"zero", "127.0.0.1:0", true},
+		{"large port", "127.0.0.1:65536", true}, {"named port", "127.0.0.1:https", true},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			config, err := load(func(key string) string {
-				if key == "OPENSVC_AI_SOCKET_PATH" {
-					return test.value
-				}
-				return ""
-			})
-			if test.wantErr {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := load(processEnv(map[string]string{"OPENSVC_AI_LISTEN_ADDR": tc.address}))
+			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("load succeeded with %+v, want error", config)
+					t.Fatal("invalid address succeeded")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("load config: %v", err)
+				t.Fatal(err)
 			}
-			if config.SocketPath != test.want {
-				t.Errorf("got socket path %q, want %q", config.SocketPath, test.want)
+			want := tc.address
+			if want == "" {
+				want = DefaultListenAddress
 			}
-			if config.MaxConcurrentAsks != DefaultMaxConcurrentAsks {
-				t.Errorf("got max concurrent asks %d, want %d", config.MaxConcurrentAsks, DefaultMaxConcurrentAsks)
-			}
-			if config.ShutdownTimeout != DefaultShutdownTimeout {
-				t.Errorf("got shutdown timeout %s, want %s", config.ShutdownTimeout, DefaultShutdownTimeout)
+			if cfg.ListenAddress != want || cfg.TLSCertFile != "/etc/opensvc-ai/agent.crt" || cfg.TLSKeyFile != "/etc/opensvc-ai/agent.key" || cfg.MaxConcurrentAsks != DefaultMaxConcurrentAsks || cfg.ShutdownTimeout != DefaultShutdownTimeout {
+				t.Fatalf("unexpected config: %+v", cfg)
 			}
 		})
+	}
+	for _, key := range []string{"OPENSVC_AI_TLS_CERT_FILE", "OPENSVC_AI_TLS_KEY_FILE"} {
+		for _, value := range []string{"", "/", "relative.pem"} {
+			if _, err := load(processEnv(map[string]string{key: value})); err == nil {
+				t.Fatalf("%s=%q succeeded", key, value)
+			}
+		}
 	}
 }
 
@@ -53,7 +64,7 @@ func TestLoadShutdownTimeout(t *testing.T) {
 		if key == "OPENSVC_AI_SHUTDOWN_TIMEOUT" {
 			return "45s"
 		}
-		return ""
+		return processEnv(nil)(key)
 	})
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -67,7 +78,7 @@ func TestLoadShutdownTimeout(t *testing.T) {
 			if key == "OPENSVC_AI_SHUTDOWN_TIMEOUT" {
 				return value
 			}
-			return ""
+			return processEnv(nil)(key)
 		})
 		if err == nil {
 			t.Fatalf("value %q succeeded", value)
@@ -80,7 +91,7 @@ func TestLoadMaxConcurrentAsks(t *testing.T) {
 		if key == "OPENSVC_AI_MAX_CONCURRENT_ASKS" {
 			return "12"
 		}
-		return ""
+		return processEnv(nil)(key)
 	})
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -94,7 +105,7 @@ func TestLoadMaxConcurrentAsks(t *testing.T) {
 			if key == "OPENSVC_AI_MAX_CONCURRENT_ASKS" {
 				return value
 			}
-			return ""
+			return processEnv(nil)(key)
 		})
 		if err == nil {
 			t.Fatalf("value %q succeeded", value)

@@ -16,9 +16,9 @@ import (
 )
 
 func TestLiveAgentUsesClusterHealthTool(t *testing.T) {
-	mcpSocketPath := os.Getenv("OPENSVC_AI_TEST_MCP_SOCKET_PATH")
+	mcpURL := os.Getenv("OPENSVC_AI_TEST_MCP_URL")
 	mcpJWT := os.Getenv("OPENSVC_AI_TEST_MCP_JWT")
-	if mcpSocketPath == "" || mcpJWT == "" || os.Getenv("OPENSVC_AI_LLM_PROTOCOL") == "" {
+	if mcpURL == "" || mcpJWT == "" || os.Getenv("OPENSVC_AI_LLM_PROTOCOL") == "" {
 		t.Skip("live MCP and LLM configuration is unavailable")
 	}
 
@@ -34,7 +34,7 @@ func TestLiveAgentUsesClusterHealthTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create live LLM client: %v", err)
 	}
-	mcpClient, err := mcpclient.New(mcpSocketPath)
+	mcpClient, err := mcpclient.New(mcpURL, os.Getenv("OPENSVC_AI_TEST_MCP_CA_FILE"))
 	if err != nil {
 		t.Fatalf("create live MCP client: %v", err)
 	}

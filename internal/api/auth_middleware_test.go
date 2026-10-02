@@ -15,7 +15,7 @@ func TestRequireAccessTokenRemovesAuthorizationHeaderAndPreservesContext(t *test
 		if got != token {
 			t.Fatalf("verifier token = %q", got)
 		}
-		return auth.Identity{Subject: "alice", Issuer: "node-a"}, nil
+		return auth.Identity{ClusterID: "cluster-id", Subject: "alice", Issuer: "node-a"}, nil
 	})
 	called := false
 	next := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {

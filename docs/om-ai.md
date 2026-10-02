@@ -4,32 +4,34 @@ The om3 command-line client provides the local user interface for
 `opensvc-ai-agent`. It supports one-shot prompts, persistent interactive
 conversations, and conversation metadata management.
 
+The client connects to the agent over HTTPS using its configured remote address.
+
 ## Architecture
 
-`om ai` communicates only with services on the local node:
+The target architecture keeps token issuance at the local OpenSVC daemon but
+allows the agent and MCP to run centrally:
 
 ```text
 om ai ── access token ──> OpenSVC daemon
   │
-  └── authenticated request ──> AI agent ──> LLM provider
+  └── HTTPS request ──> AI agent ──> LLM provider
                                       │
                                       └──> OpenSVC MCP ──> OpenSVC daemon
 ```
 
 The client obtains a short-lived OpenSVC access token from the local daemon.
-The agent verifies the token, delegates it to MCP for tool calls, and binds
-persistent conversations to its issuer and subject. The client never stores
+Before each protected API operation, the agent verifies the token through
+MCP GET /mcp/auth/whoami and daemon GET /api/auth/whoami. The same token is
+delegated for MCP tools. Persistent conversations are bound to authenticated
+cluster ID, issuer and subject. The client never stores
 the token, messages, or conversation state.
 
-The client connects to `/run/opensvc-ai-agent/agent.sock` by default. For a
-non-default local Unix socket, set:
-
-```bash
-export OPENSVC_AI_AGENT_SOCKET=/path/to/agent.sock
-```
-
-The path must be absolute and fit the Linux Unix socket address limit. There is
-intentionally no public `--agent-url` flag.
+Configure the agent's TCP listener and certificate/key files with
+`OPENSVC_AI_LISTEN_ADDR`, `OPENSVC_AI_TLS_CERT_FILE`, and
+`OPENSVC_AI_TLS_KEY_FILE`. Configure its outbound MCP connection with
+`OPENSVC_AI_MCP_URL` and optional `OPENSVC_AI_MCP_CA_FILE`. These are agent
+settings, not CLI settings. The TCP/HTTPS CLI uses OPENSVC_AI_AGENT_URL and
+optional OPENSVC_AI_AGENT_CA_FILE for its remote endpoint and TLS trust.
 
 ## Prerequisites
 
@@ -41,7 +43,7 @@ Before using the client:
 4. Verify the agent health endpoint:
 
    ```bash
-   curl --unix-socket /run/opensvc-ai-agent/agent.sock http://localhost/health
+   curl --cacert /etc/opensvc-ai/agent-ca.pem https://127.0.0.1:8090/health
    ```
 
 5. Verify the available commands:
@@ -224,8 +226,8 @@ after deletion.
 
 ## Identity and security
 
-Conversation access is isolated by the verified OpenSVC token issuer and
-subject. Listing returns only conversations owned by that identity. Reading or
+Conversation access is isolated by the authenticated OpenSVC cluster ID,
+issuer and subject. Resuming a chat is authenticated again through whoami. Listing returns only conversations owned by that identity. Reading or
 deleting another identity's conversation does not reveal whether it exists.
 
 The CLI never accepts a provider token. Provider credentials remain in the
@@ -237,16 +239,15 @@ the client.
 
 ### Agent connection refused
 
-Verify the local socket, its permissions, and the health endpoint:
+Verify the configured TCP endpoint and TLS trust:
 
 ```bash
-ls -l /run/opensvc-ai-agent/agent.sock
-curl --unix-socket /run/opensvc-ai-agent/agent.sock http://localhost/health
-printf 'socket=%s\n' "$OPENSVC_AI_AGENT_SOCKET"
+curl --cacert /etc/opensvc-ai/agent-ca.pem https://127.0.0.1:8090/health
 ```
 
-An absent socket reports a connection error. `Permission denied` means that
-the user running `om` is not allowed by the socket owner, group, or mode.
+Connection refused means the listener is not reachable. For a TLS error, check
+the CA bundle and the certificate hostname/IP. Do not disable certificate
+verification.
 
 ### Local daemon permission denied
 

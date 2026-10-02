@@ -22,9 +22,9 @@ import (
 )
 
 func TestLiveAskStreamsClusterHealth(t *testing.T) {
-	mcpSocketPath := os.Getenv("OPENSVC_AI_TEST_MCP_SOCKET_PATH")
+	mcpURL := os.Getenv("OPENSVC_AI_TEST_MCP_URL")
 	mcpJWT := os.Getenv("OPENSVC_AI_TEST_MCP_JWT")
-	if mcpSocketPath == "" || mcpJWT == "" || os.Getenv("OPENSVC_AI_LLM_PROTOCOL") == "" {
+	if mcpURL == "" || mcpJWT == "" || os.Getenv("OPENSVC_AI_LLM_PROTOCOL") == "" {
 		t.Skip("live MCP and LLM configuration is unavailable")
 	}
 	llmConfig, err := config.LoadLLM()
@@ -39,7 +39,7 @@ func TestLiveAskStreamsClusterHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create live LLM client: %v", err)
 	}
-	mcpClient, err := mcpclient.New(mcpSocketPath)
+	mcpClient, err := mcpclient.New(mcpURL, os.Getenv("OPENSVC_AI_TEST_MCP_CA_FILE"))
 	if err != nil {
 		t.Fatalf("create live MCP client: %v", err)
 	}
@@ -49,12 +49,7 @@ func TestLiveAskStreamsClusterHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create live agent: %v", err)
 	}
-	jwtConfig := config.LoadJWT()
-	verifier, err := auth.NewJWTVerifier(jwtConfig.VerifyKeyFile)
-	if err != nil {
-		t.Fatalf("create live JWT verifier: %v", err)
-	}
-	handler, err := api.NewHandler(orchestrator, integrationConversationService{}, verifier, api.HandlerConfig{
+	handler, err := api.NewHandler(orchestrator, integrationConversationService{}, mcpClient, api.HandlerConfig{
 		MaxConcurrentAsks: 4,
 		AuditLogger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

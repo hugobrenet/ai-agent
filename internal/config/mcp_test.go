@@ -1,41 +1,48 @@
 package config
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestLoadMCPUnixSocket(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		value   string
-		want    string
-		wantErr bool
+func TestLoadMCPHTTPS(t *testing.T) {
+	for _, tc := range []struct {
+		name, url, ca string
+		wantErr       bool
 	}{
-		{name: "default", want: DefaultMCPSocketPath},
-		{name: "explicit", value: " /run/opensvc-daemon-mcp/../opensvc-daemon-mcp/custom.sock ", want: "/run/opensvc-daemon-mcp/custom.sock"},
-		{name: "relative", value: "mcp.sock", wantErr: true},
-		{name: "root", value: "/", wantErr: true},
-		{name: "too long", value: "/" + strings.Repeat("a", maximumUnixPathBytes), wantErr: true},
+		{"default missing URL", "", "", true},
+		{"https", "https://mcp.example.test/mcp", "", false},
+		{"explicit CA", " https://mcp.example.test:8443/mcp ", "/etc/opensvc-ai/mcp-ca.pem", false},
+		{"ipv6", "https://[::1]:8443/mcp", "", false},
+		{"http", "http://mcp.example.test/mcp", "", true},
+		{"credentials", "https://user:pass@mcp.example.test/mcp", "", true},
+		{"query", "https://mcp.example.test/mcp?token=x", "", true},
+		{"fragment", "https://mcp.example.test/mcp#x", "", true},
+		{"missing path", "https://mcp.example.test", "", true},
+		{"relative CA", "https://mcp.example.test/mcp", "ca.pem", true},
+		{"root CA path", "https://mcp.example.test/mcp", "/", true},
+		{"zero port", "https://mcp.example.test:0/mcp", "", true},
+		{"empty port", "https://mcp.example.test:/mcp", "", true},
+		{"invalid port", "https://mcp.example.test:65536/mcp", "", true},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			config, err := loadMCP(func(key string) string {
-				if key != "OPENSVC_AI_MCP_SOCKET_PATH" {
-					t.Fatalf("unexpected environment key %q", key)
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := loadMCP(func(key string) string {
+				switch key {
+				case "OPENSVC_AI_MCP_URL":
+					return tc.url
+				case "OPENSVC_AI_MCP_CA_FILE":
+					return tc.ca
 				}
-				return test.value
+				return ""
 			})
-			if test.wantErr {
+			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("load MCP config succeeded with %+v, want error", config)
+					t.Fatal("invalid configuration succeeded")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("load MCP config: %v", err)
+				t.Fatal(err)
 			}
-			if config.SocketPath != test.want {
-				t.Fatalf("got socket path %q, want %q", config.SocketPath, test.want)
+			if cfg.URL == "" || cfg.CAFile != tc.ca {
+				t.Fatalf("unexpected config: %+v", cfg)
 			}
 		})
 	}

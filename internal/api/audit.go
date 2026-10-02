@@ -58,6 +58,7 @@ func (a auditLogger) event(ctx context.Context, event string, attributes ...slog
 	}
 	if identity, ok := auth.IdentityFromContext(ctx); ok {
 		base = append(base,
+			slog.String("cluster_id", boundedAuditIdentity(identity.ClusterID)),
 			slog.String("subject", boundedAuditIdentity(identity.Subject)),
 			slog.String("issuer", boundedAuditIdentity(identity.Issuer)),
 		)

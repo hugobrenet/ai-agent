@@ -2,9 +2,11 @@ package mcpclient
 
 import (
 	"context"
+	"encoding/pem"
 	"fmt"
-	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -25,7 +27,7 @@ func TestClientListsAndCallsToolsWithDelegatedJWT(t *testing.T) {
 
 	var requestCount atomic.Int64
 	streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
-	socketPath := serveUnixHTTP(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	endpoint, caFile := serveHTTPS(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requestCount.Add(1)
 		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
@@ -34,7 +36,7 @@ func TestClientListsAndCallsToolsWithDelegatedJWT(t *testing.T) {
 		streamHandler.ServeHTTP(response, request)
 	}))
 
-	client, err := New(socketPath)
+	client, err := New(endpoint, caFile)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -71,11 +73,11 @@ func TestClientListsAndCallsToolsWithDelegatedJWT(t *testing.T) {
 
 func TestClientRejectsMissingDelegatedJWT(t *testing.T) {
 	var requestCount atomic.Int64
-	socketPath := serveUnixHTTP(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	endpoint, caFile := serveHTTPS(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		requestCount.Add(1)
 	}))
 
-	client, err := New(socketPath)
+	client, err := New(endpoint, caFile)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -89,11 +91,11 @@ func TestClientRejectsMissingDelegatedJWT(t *testing.T) {
 
 func TestClientDoesNotExposeJWTInErrors(t *testing.T) {
 	const token = "secret-jwt-value"
-	socketPath := serveUnixHTTP(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+	endpoint, caFile := serveHTTPS(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		http.Error(response, "unauthorized", http.StatusUnauthorized)
 	}))
 
-	client, err := New(socketPath)
+	client, err := New(endpoint, caFile)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -110,7 +112,7 @@ func TestSessionRequiresJWTOnEveryOperation(t *testing.T) {
 	const token = "delegated-test-token"
 	server := mcp.NewServer(&mcp.Implementation{Name: "test-mcp", Version: "v0.1.0"}, nil)
 	streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
-	socketPath := serveUnixHTTP(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	endpoint, caFile := serveHTTPS(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+token {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
@@ -118,7 +120,7 @@ func TestSessionRequiresJWTOnEveryOperation(t *testing.T) {
 		streamHandler.ServeHTTP(response, request)
 	}))
 
-	client, err := New(socketPath)
+	client, err := New(endpoint, caFile)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -145,7 +147,7 @@ func TestClientRejectsTooManyTools(t *testing.T) {
 			})
 	}
 	streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
-	socketPath := serveUnixHTTP(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	endpoint, caFile := serveHTTPS(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+token {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
@@ -153,7 +155,7 @@ func TestClientRejectsTooManyTools(t *testing.T) {
 		streamHandler.ServeHTTP(response, request)
 	}))
 
-	client, err := New(socketPath)
+	client, err := New(endpoint, caFile)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -180,25 +182,23 @@ func TestCallToolRejectsEmptyName(t *testing.T) {
 	}
 }
 
-func TestNewValidatesUnixSocketPath(t *testing.T) {
-	for _, socketPath := range []string{"mcp.sock", "/", "/" + strings.Repeat("a", maximumUnixPathBytes)} {
-		t.Run(socketPath, func(t *testing.T) {
-			if _, err := New(socketPath); err == nil {
-				t.Fatal("invalid Unix socket path succeeded")
+func TestNewValidatesHTTPSURL(t *testing.T) {
+	for _, endpoint := range []string{"", "mcp.sock", "http://localhost/mcp", "https://user:pass@example.test/mcp", "https://example.test/", "https://example.test/mcp?q=token", "https://example.test/mcp#secret", "https://example.test:0/mcp"} {
+		t.Run(endpoint, func(t *testing.T) {
+			if _, err := New(endpoint, ""); err == nil {
+				t.Fatal("invalid HTTPS URL succeeded")
 			}
 		})
 	}
 }
 
-func serveUnixHTTP(t *testing.T, handler http.Handler) string {
+func serveHTTPS(t *testing.T, handler http.Handler) (string, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "mcp.sock")
-	listener, err := net.Listen("unix", path)
-	if err != nil {
-		t.Fatalf("listen on Unix socket: %v", err)
+	server := httptest.NewTLSServer(handler)
+	t.Cleanup(server.Close)
+	caFile := filepath.Join(t.TempDir(), "mcp-ca.pem")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
 	}
-	server := &http.Server{Handler: handler}
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close() })
-	return path
+	return server.URL + "/mcp", caFile
 }

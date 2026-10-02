@@ -3,8 +3,9 @@ package conversation
 import "time"
 
 type Owner struct {
-	Issuer  string
-	Subject string
+	ClusterID string
+	Issuer    string
+	Subject   string
 }
 
 type Conversation struct {

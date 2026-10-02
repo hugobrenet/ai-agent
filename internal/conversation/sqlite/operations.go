@@ -39,10 +39,11 @@ func (s *Store) CreateConversation(ctx context.Context, item conversation.Conver
 		return fmt.Errorf("%w: maximum conversation count is %d", conversation.ErrLimit, s.config.MaxConversations)
 	}
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO conversations(id, title, issuer, subject, created_at, updated_at, expires_at, stored_bytes)
-VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+INSERT INTO conversations(id, title, cluster_id, issuer, subject, created_at, updated_at, expires_at, stored_bytes)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		item.ID,
 		item.Title,
+		item.Owner.ClusterID,
 		item.Owner.Issuer,
 		item.Owner.Subject,
 		toUnixNano(item.CreatedAt),
@@ -66,9 +67,9 @@ func (s *Store) GetConversation(ctx context.Context, owner conversation.Owner, i
 		return conversation.Conversation{}, err
 	}
 	return scanConversation(s.db.QueryRowContext(ctx, `
-SELECT id, title, issuer, subject, created_at, updated_at, expires_at, stored_bytes
+SELECT id, title, cluster_id, issuer, subject, created_at, updated_at, expires_at, stored_bytes
 FROM conversations
-WHERE id = ? AND issuer = ? AND subject = ?`, id, owner.Issuer, owner.Subject))
+WHERE id = ? AND cluster_id = ? AND issuer = ? AND subject = ?`, id, owner.ClusterID, owner.Issuer, owner.Subject))
 }
 
 func (s *Store) ListConversations(ctx context.Context, owner conversation.Owner, limit int) ([]conversation.Conversation, error) {
@@ -79,11 +80,11 @@ func (s *Store) ListConversations(ctx context.Context, owner conversation.Owner,
 		return nil, fmt.Errorf("%w: conversation list limit must be between 1 and %d", conversation.ErrInvalid, maxListLimit)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, title, issuer, subject, created_at, updated_at, expires_at, stored_bytes
+SELECT id, title, cluster_id, issuer, subject, created_at, updated_at, expires_at, stored_bytes
 FROM conversations
-WHERE issuer = ? AND subject = ?
+WHERE cluster_id = ? AND issuer = ? AND subject = ?
 ORDER BY updated_at DESC, id
-LIMIT ?`, owner.Issuer, owner.Subject, limit)
+LIMIT ?`, owner.ClusterID, owner.Issuer, owner.Subject, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list conversations: %w", err)
 	}
@@ -121,7 +122,7 @@ func (s *Store) DeleteConversation(ctx context.Context, owner conversation.Owner
 	if running != 0 {
 		return conversation.ErrBusy
 	}
-	result, err := tx.ExecContext(ctx, "DELETE FROM conversations WHERE id = ? AND issuer = ? AND subject = ?", id, owner.Issuer, owner.Subject)
+	result, err := tx.ExecContext(ctx, "DELETE FROM conversations WHERE id = ? AND cluster_id = ? AND issuer = ? AND subject = ?", id, owner.ClusterID, owner.Issuer, owner.Subject)
 	if err != nil {
 		return fmt.Errorf("delete conversation: %w", err)
 	}
@@ -152,9 +153,9 @@ func (s *Store) UpdateConversationTitle(ctx context.Context, owner conversation.
 	}
 	defer func() { _ = tx.Rollback() }()
 	item, err := scanConversation(tx.QueryRowContext(ctx, `
-SELECT id, title, issuer, subject, created_at, updated_at, expires_at, stored_bytes
+SELECT id, title, cluster_id, issuer, subject, created_at, updated_at, expires_at, stored_bytes
 FROM conversations
-WHERE id = ? AND issuer = ? AND subject = ?`, id, owner.Issuer, owner.Subject))
+WHERE id = ? AND cluster_id = ? AND issuer = ? AND subject = ?`, id, owner.ClusterID, owner.Issuer, owner.Subject))
 	if err != nil {
 		return conversation.Conversation{}, err
 	}
@@ -165,7 +166,7 @@ WHERE id = ? AND issuer = ? AND subject = ?`, id, owner.Issuer, owner.Subject))
 	if _, err := tx.ExecContext(ctx, `
 UPDATE conversations
 SET title = ?, updated_at = ?
-WHERE id = ? AND issuer = ? AND subject = ?`, title, toUnixNano(updatedAt), id, owner.Issuer, owner.Subject); err != nil {
+WHERE id = ? AND cluster_id = ? AND issuer = ? AND subject = ?`, title, toUnixNano(updatedAt), id, owner.ClusterID, owner.Issuer, owner.Subject); err != nil {
 		return conversation.Conversation{}, fmt.Errorf("update conversation title: %w", err)
 	}
 	item.Title = title
@@ -505,6 +506,7 @@ func scanConversation(scanner rowScanner) (conversation.Conversation, error) {
 	if err := scanner.Scan(
 		&item.ID,
 		&item.Title,
+		&item.Owner.ClusterID,
 		&item.Owner.Issuer,
 		&item.Owner.Subject,
 		&createdAt,
@@ -527,7 +529,7 @@ func requireConversation(ctx context.Context, tx *sql.Tx, owner conversation.Own
 	var exists int
 	if err := tx.QueryRowContext(ctx, `
 SELECT 1 FROM conversations
-WHERE id = ? AND issuer = ? AND subject = ?`, id, owner.Issuer, owner.Subject).Scan(&exists); err != nil {
+WHERE id = ? AND cluster_id = ? AND issuer = ? AND subject = ?`, id, owner.ClusterID, owner.Issuer, owner.Subject).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.ErrNotFound
 		}
@@ -540,7 +542,7 @@ func conversationStoredBytes(ctx context.Context, tx *sql.Tx, owner conversation
 	var storedBytes int64
 	if err := tx.QueryRowContext(ctx, `
 SELECT stored_bytes FROM conversations
-WHERE id = ? AND issuer = ? AND subject = ?`, id, owner.Issuer, owner.Subject).Scan(&storedBytes); err != nil {
+WHERE id = ? AND cluster_id = ? AND issuer = ? AND subject = ?`, id, owner.ClusterID, owner.Issuer, owner.Subject).Scan(&storedBytes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, conversation.ErrNotFound
 		}
@@ -621,7 +623,7 @@ func validateOwnerAndID(owner conversation.Owner, id string) error {
 }
 
 func validateOwner(owner conversation.Owner) error {
-	if !validIdentity(owner.Issuer) || !validIdentity(owner.Subject) {
+	if !validIdentity(owner.ClusterID) || !validIdentity(owner.Issuer) || !validIdentity(owner.Subject) {
 		return fmt.Errorf("%w: conversation owner is invalid", conversation.ErrInvalid)
 	}
 	return nil
