@@ -18,9 +18,6 @@ func LoadMCP() (MCPConfig, error) {
 }
 
 func loadMCP(getenv func(string) string) (MCPConfig, error) {
-	if strings.TrimSpace(getenv("OPENSVC_AI_MCP_SOCKET_PATH")) != "" {
-		return MCPConfig{}, fmt.Errorf("OPENSVC_AI_MCP_SOCKET_PATH is no longer supported; configure OPENSVC_AI_MCP_URL")
-	}
 	endpoint, err := ParseMCPURL(getenv("OPENSVC_AI_MCP_URL"))
 	if err != nil {
 		return MCPConfig{}, fmt.Errorf("parse OPENSVC_AI_MCP_URL: %w", err)

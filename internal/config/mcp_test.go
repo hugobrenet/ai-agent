@@ -46,12 +46,4 @@ func TestLoadMCPHTTPS(t *testing.T) {
 			}
 		})
 	}
-	if _, err := loadMCP(func(key string) string {
-		if key == "OPENSVC_AI_MCP_SOCKET_PATH" {
-			return "/run/mcp.sock"
-		}
-		return ""
-	}); err == nil {
-		t.Fatal("obsolete socket setting succeeded")
-	}
 }

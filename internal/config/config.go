@@ -32,9 +32,6 @@ func Load() (Config, error) {
 }
 
 func load(getenv func(string) string) (Config, error) {
-	if strings.TrimSpace(getenv("OPENSVC_AI_SOCKET_PATH")) != "" {
-		return Config{}, fmt.Errorf("OPENSVC_AI_SOCKET_PATH is no longer supported; configure OPENSVC_AI_LISTEN_ADDR and TLS certificate/key files")
-	}
 	address := strings.TrimSpace(getenv("OPENSVC_AI_LISTEN_ADDR"))
 	if address == "" {
 		address = DefaultListenAddress

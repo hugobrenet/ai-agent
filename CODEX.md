@@ -36,12 +36,12 @@ active project step:
    - Introduce a storage interface independent from SQLite and the API layer.
    - Persist conversations, turns, and provider-neutral messages, including the
      bounded tool calls and results required to reconstruct LLM context.
-   - Use embedded migrations, transactions, WAL mode, owner-only file
+   - Use the embedded current schema, transactions, WAL mode, owner-only file
      permissions, retention, size limits, and interrupted-turn recovery.
    - Never persist JWTs, authorization headers, provider credentials, grants,
      system prompts, or raw audit data.
 3. Conversation service. Complete.
-   - Bind every conversation to the authenticated OpenSVC issuer and subject.
+   - Bind every conversation to authenticated OpenSVC cluster ID, issuer and subject.
    - Serialize turns per conversation without holding a database transaction
      during LLM or MCP work.
    - Commit only completed messages to future model context; record failed,
@@ -65,7 +65,7 @@ active project step:
      exit, with no client-side conversation persistence.
 6. Conversation hardening and end-to-end validation. Complete in the local lab
    on 2026-07-30.
-   - Test ownership isolation, concurrent turns, expiry, deletion, migration,
+   - Test ownership isolation, concurrent turns, expiry, deletion, schema initialization,
      crash recovery, database failures, bounded context, SSE disconnects, and
      graceful shutdown with active conversations.
    - Run a real multi-turn workflow through LLM, MCP, and the OpenSVC daemon and
@@ -74,24 +74,28 @@ active project step:
    - Run the agent under a dedicated unprivileged user with protected state and
      credentials and systemd hardening, independently of a local MCP service.
    - Expose existing API and SSE contracts over TCP with mandatory TLS 1.2 or
-     newer. Use explicit listen IP/port and certificate/key files; no Unix socket
-     listener or insecure HTTP fallback.
+     newer. Use explicit listen IP/port and certificate/key files.
    - Connect to an explicit HTTPS MCP URL, verify the chain and hostname, disable
      proxies and redirects, and bind delegated tokens to its configured origin.
-   - Reject removed Unix socket configuration variables with migration errors.
-8. CLI transport and global authentication integration. Pending explicit request.
-   - Migrate `om ai` separately; its socket-based versions cannot reach this agent.
-   - Design native OpenSVC/OpenID trust and delegation for a global MCP/agent.
-     Native JWT validation still trusts one configured cluster CA. The current
-     OAuth-only om3-mcp does not yet accept this agent's native JWT flow.
-   - Revalidate the complete CLI/LLM/MCP/daemon chain after those migrations.
+8. CLI transport and native global authentication integration. Implemented.
+   - The TCP/HTTPS client lives in om3's feature/ai-agent-client branch.
+   - Authenticate every protected operation through MCP GET /mcp/auth/whoami,
+     which delegates native signature verification to daemon GET /api/auth/whoami.
+     No JWT verification keys or OAuth token exchange in agent/MCP.
+   - Isolate local conversations by authenticated cluster ID, issuer and subject.
+   - Offline authentication and ownership regression tests are in place.
+     Revalidate the complete CLI/LLM/MCP/daemon chain in the lab separately.
+   - Webapp/OpenID integration remains a future, explicitly scoped increment.
 
-The next incomplete step is step 8. Do not implement it without user direction. The OpenSVC JWT belongs only to the
+The OpenSVC JWT belongs only to the
 authenticated agent, MCP, and daemon path. It must never enter an LLM request,
 LLM context, persisted conversation, prompt, tool argument, provider
 configuration, or audit record.
 
 ## Step 6 robustness validation
+
+This historical audit predates TCP transport and daemon-backed authentication;
+it does not certify the new end-to-end deployment.
 
 The step 6 audit was executed on 2026-07-30 in a disposable single-node WSL
 lab using the real OpenSVC daemon, the real Streamable HTTP MCP server, a live
@@ -136,8 +140,7 @@ The following scenarios passed:
     the model to explain the authorization failure without weakening grants.
 11. A held SQLite write lock returned the stable `conversation_failed` API
     error without exposing SQL details, and normal operation resumed after the
-    lock was released. Tests also passed for v1-to-v2 migration, unsafe
-    permissions, symlinks, newer schemas, corrupt databases and rows, turn and
+    lock was released. Tests also passed for unsafe permissions, symlinks, corrupt databases and rows, turn and
     byte limits, and atomic rejection of invalid or oversized completions.
 12. Live marker scans found no OpenSVC JWT, provider token, one-shot prompt,
     tool argument, tool result, or model text in structured audit output. JWTs
@@ -166,7 +169,7 @@ limitations remain explicit and must not be described as solved:
 - the audit covered one single-node lab and one live provider, not long-running
   soak, load, fuzz, multi-node partition, or independent penetration testing;
 - this historical audit predates TCP/HTTPS transport; remote deployment,
-  CLI migration and global authentication need separate end-to-end validation.
+  CLI transport and global authentication need separate end-to-end validation.
 
 ## Technology
 
@@ -208,7 +211,6 @@ internal/
     conversation.go
     config.go
     config_test.go
-    jwt.go
     mcp.go
   conversation/
     model.go
@@ -216,12 +218,11 @@ internal/
     store.go
     sqlite/
       codec.go
-      migrations.go
+      schema.go
       operations.go
       store.go
       store_test.go
-      migrations/
-        001_initial.sql
+      schema.sql
   llm/
     client.go
     types.go
@@ -254,11 +255,12 @@ conversation domain types and the storage contract belong in
 `internal/conversation`; the SQLite adapter belongs in
 `internal/conversation/sqlite`.
 
-The composition root loads and validates HTTP, JWT, LLM, MCP, and agent
-configuration; constructs one shared JWT verifier, LLM client, MCP client, and
-Agent; then injects them into the API handler. `POST /v1/ask` never constructs
-provider clients. Its middleware authenticates the OpenSVC access JWT before
-reading the prompt or starting SSE, removes the inbound Authorization header,
+The composition root loads and validates HTTP, LLM, MCP, and agent
+configuration; constructs one shared LLM client, MCP client, and Agent;
+the MCP client also implements the remote native identity verifier. It then
+injects them into the API handler. `POST /v1/ask` never constructs
+provider clients. Its middleware checks native claims, then authenticates through
+the MCP whoami bridge before reading prompts, accessing SQLite or starting SSE, removes the inbound Authorization header,
 and retains the JWT only in private request context. `Agent.Ask` wraps
 `Agent.RunTurn` with an empty history. `RunTurn` deep-copies and validates up to
 256 provider-neutral history messages and 2 MiB before opening and closing one
@@ -267,8 +269,8 @@ prompt outside persisted history and returns only the complete new user,
 assistant, tool-call, and tool-result messages.
 
 The SQLite conversation store is local to one node and is constructed once by
-the composition root. It uses embedded
-migrations, WAL with full synchronous writes, foreign keys, secure deletion,
+the composition root. It initializes an empty database directly from the
+embedded current schema and uses WAL with full synchronous writes, foreign keys, secure deletion,
 owner-filtered operations, atomic turn completion, and strict provider-neutral
 message encoding. It permits one writer connection, stores no partial model
 output, marks abandoned running turns interrupted on explicit recovery, and
@@ -278,8 +280,8 @@ crash are marked interrupted and expired conversations are deleted. JWTs,
 provider credentials, system prompts, grants, authorization headers, and audit
 records never enter it.
 
-The conversation service binds every operation to the verified issuer and
-subject. It reserves one running turn atomically, loads a bounded suffix of
+The conversation service binds every operation to verified cluster ID, issuer
+and subject. It reserves one running turn atomically, loads a bounded suffix of
 completed history, and releases all database transactions before calling the
 LLM or MCP. Failed and canceled turns store only a stable status and code.
 Successful messages are committed atomically before the terminal `completed`
@@ -300,7 +302,7 @@ configuration.
 `internal/api` assigns a cryptographically random request ID and emits bounded
 JSON audit records to stdout for authentication rejection, ask rejection and
 lifecycle, tool lifecycle, LLM usage, and stable failure codes. Audit records
-may contain the verified subject and issuer, tool names, counters, durations,
+may contain the verified cluster ID, subject and issuer, tool names, counters, durations,
 and finish reasons. They must never contain JWTs, authorization headers,
 prompts, model text, tool arguments or results, provider credentials, grants,
 or raw upstream errors.
@@ -326,7 +328,7 @@ protocol name, never by provider or model name.
 ## Security invariants
 
 - The agent listener and MCP client use TCP with verified HTTPS, TLS 1.2 or
-  newer. Never reintroduce a Unix-socket or insecure HTTP fallback. Load the
+  newer. Load the
   listener certificate/key before binding. Preserve loopback defaults, require
   explicit remote exposure, and never follow MCP redirects or proxies.
 - Bind delegated JWTs to the configured MCP HTTPS origin and verify its TLS
@@ -335,11 +337,16 @@ protocol name, never by provider or model name.
   request bodies, logs, errors, or test fixtures.
 - Future OpenSVC JWTs must remain request-scoped and must never be stored in a
   global variable or persistent session.
-- Authenticate `/v1/ask` with the OpenSVC cluster CA before reading its body or
-  starting SSE. Accept only RS256 tokens with valid expiration, non-empty `sub`
-  and `iss`, and `token_use=access`.
-- Continue delegating the verified raw JWT to MCP. Agent authentication never
-  replaces MCP and daemon verification or authorization.
+- Before any protected API handler, validate the unchanged JWT through the
+  configured MCP endpoint's dedicated /auth/whoami bridge. No local signature
+  verification keys, identity cache or authentication fallback. Check RS256
+  structure, required future exp, optional nbf, nonempty cluster_id/sub/iss and
+  token_use=access locally; decoded claims alone are never authenticated identity.
+- Require the normalized whoami identity to match the exact token. Limit
+  validation to 10 seconds and 16 KiB; invalid credentials return 401,
+  unavailable validation returns 503 authentication_unavailable.
+- Continue delegating the unchanged raw JWT to MCP. Agent authentication never
+  replaces the daemon's grants enforcement on each protected API call.
 - Attach OpenSVC JWTs to MCP HTTP requests through request context. Never retain
   them in a long-lived MCP client.
 - Mask the delegated JWT, verified identity, and grants from the context passed

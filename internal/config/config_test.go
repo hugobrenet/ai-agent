@@ -57,9 +57,6 @@ func TestLoadHTTPS(t *testing.T) {
 			}
 		}
 	}
-	if _, err := load(processEnv(map[string]string{"OPENSVC_AI_SOCKET_PATH": "/run/agent.sock"})); err == nil {
-		t.Fatal("obsolete socket setting succeeded")
-	}
 }
 
 func TestLoadShutdownTimeout(t *testing.T) {

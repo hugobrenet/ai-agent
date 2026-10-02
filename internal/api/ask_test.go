@@ -118,7 +118,7 @@ func TestAskRejectsTokenRejectedByVerifier(t *testing.T) {
 		if got != token {
 			t.Fatalf("verifier got token %q", got)
 		}
-		return auth.Identity{}, auth.ErrInvalidToken
+		return auth.Identity{ClusterID: "cluster-id"}, auth.ErrInvalidToken
 	})
 	handler := newTestHandlerWithVerifier(t, askerFunc(func(context.Context, string, agent.EmitFunc) error {
 		agentCalls.Add(1)
@@ -473,7 +473,7 @@ func discardAuditLogger() *slog.Logger {
 
 func allowTestTokenVerifier() auth.TokenVerifier {
 	return tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
-		return auth.Identity{Subject: "test-user", Issuer: "test-node"}, nil
+		return auth.Identity{ClusterID: "cluster-id", Subject: "test-user", Issuer: "test-node"}, nil
 	})
 }
 

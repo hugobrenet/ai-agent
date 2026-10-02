@@ -71,7 +71,7 @@ func Open(ctx context.Context, config Config) (_ *Store, err error) {
 	if err := configureDatabase(ctx, db); err != nil {
 		return nil, err
 	}
-	if err := migrate(ctx, db); err != nil {
+	if err := initializeSchema(ctx, db); err != nil {
 		return nil, err
 	}
 	var integrity string

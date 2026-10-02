@@ -2,94 +2,65 @@ package auth
 
 import (
 	"context"
-	"crypto/rsa"
 	"errors"
-	"fmt"
-	"os"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var ErrInvalidToken = errors.New("invalid OpenSVC access token")
+var (
+	ErrInvalidToken            = errors.New("invalid OpenSVC access token")
+	ErrVerificationUnavailable = errors.New("OpenSVC identity verification unavailable")
+)
 
 type Identity struct {
-	Subject   string
-	Issuer    string
-	Grants    []string
-	ExpiresAt time.Time
+	ClusterID string    `json:"cluster_id"`
+	Subject   string    `json:"subject"`
+	Issuer    string    `json:"issuer"`
+	Grants    []string  `json:"-"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type TokenVerifier interface {
 	Verify(context.Context, string) (Identity, error)
 }
 
+// Delegation contains unverified claims. Only a successful daemon identity
+// check through the trusted MCP can turn these claims into an Identity.
+type Delegation struct {
+	ClusterID string
+	Subject   string
+	Issuer    string
+	ExpiresAt time.Time
+}
+
 type jwtClaims struct {
-	Grant    []string `json:"grant"`
-	TokenUse string   `json:"token_use"`
+	ClusterID string `json:"cluster_id"`
+	TokenUse  string `json:"token_use"`
 	jwt.RegisteredClaims
 }
 
-// JWTVerifier validates OpenSVC access JWTs signed by the cluster CA.
-type JWTVerifier struct {
-	publicKey *rsa.PublicKey
+func CheckDelegation(raw string) (Delegation, error) {
+	if raw == "" || len(raw) > 16<<10 {
+		return Delegation{}, ErrInvalidToken
+	}
+	var claims jwtClaims
+	token, _, err := jwt.NewParser().ParseUnverified(raw, &claims)
+	if err != nil || token == nil || token.Method != jwt.SigningMethodRS256 {
+		return Delegation{}, ErrInvalidToken
+	}
+	if err := jwt.NewValidator(jwt.WithExpirationRequired()).Validate(&claims); err != nil {
+		return Delegation{}, ErrInvalidToken
+	}
+	if !validClaim(claims.ClusterID) || !validClaim(claims.Subject) || !validClaim(claims.Issuer) || claims.TokenUse != "access" || claims.ExpiresAt == nil {
+		return Delegation{}, ErrInvalidToken
+	}
+	return Delegation{ClusterID: claims.ClusterID, Subject: claims.Subject, Issuer: claims.Issuer, ExpiresAt: claims.ExpiresAt.Time}, nil
 }
 
-// NewJWTVerifier loads an RSA public key from an OpenSVC cluster CA
-// certificate or public-key file.
-func NewJWTVerifier(verifyKeyFile string) (*JWTVerifier, error) {
-	if strings.TrimSpace(verifyKeyFile) == "" {
-		return nil, fmt.Errorf("OpenSVC JWT verification key file path is empty")
-	}
-	keyPEM, err := os.ReadFile(verifyKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("read OpenSVC JWT verification key file %q: %w", verifyKeyFile, err)
-	}
-	publicKey, err := jwt.ParseRSAPublicKeyFromPEM(keyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("parse OpenSVC JWT RSA verification key file %q: %w", verifyKeyFile, err)
-	}
-	return &JWTVerifier{publicKey: publicKey}, nil
-}
-
-func (v *JWTVerifier) Verify(_ context.Context, rawToken string) (Identity, error) {
-	claims := &jwtClaims{}
-	token, err := jwt.ParseWithClaims(
-		rawToken,
-		claims,
-		func(token *jwt.Token) (any, error) {
-			if token.Method != jwt.SigningMethodRS256 {
-				return nil, fmt.Errorf("unexpected signing method %q", token.Method.Alg())
-			}
-			return v.publicKey, nil
-		},
-		jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
-		jwt.WithExpirationRequired(),
-	)
-	if err != nil || token == nil || !token.Valid {
-		return Identity{}, invalidToken("signature or registered claims validation failed")
-	}
-	if claims.Subject == "" {
-		return Identity{}, invalidToken("subject claim is missing")
-	}
-	if claims.Issuer == "" {
-		return Identity{}, invalidToken("issuer claim is missing")
-	}
-	if claims.TokenUse != "access" {
-		return Identity{}, invalidToken("token_use claim is not access")
-	}
-	if claims.ExpiresAt == nil {
-		return Identity{}, invalidToken("expiration claim is missing")
-	}
-	return Identity{
-		Subject:   claims.Subject,
-		Issuer:    claims.Issuer,
-		Grants:    append([]string(nil), claims.Grant...),
-		ExpiresAt: claims.ExpiresAt.Time,
-	}, nil
-}
-
-func invalidToken(reason string) error {
-	return errors.Join(ErrInvalidToken, errors.New(reason))
+func validClaim(value string) bool {
+	return len(value) > 0 && len(value) <= 256 && value == strings.TrimSpace(value) && utf8.ValidString(value) && !strings.ContainsFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.In(r, unicode.Cf) })
 }

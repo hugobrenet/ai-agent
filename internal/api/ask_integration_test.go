@@ -49,12 +49,7 @@ func TestLiveAskStreamsClusterHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create live agent: %v", err)
 	}
-	jwtConfig := config.LoadJWT()
-	verifier, err := auth.NewJWTVerifier(jwtConfig.VerifyKeyFile)
-	if err != nil {
-		t.Fatalf("create live JWT verifier: %v", err)
-	}
-	handler, err := api.NewHandler(orchestrator, integrationConversationService{}, verifier, api.HandlerConfig{
+	handler, err := api.NewHandler(orchestrator, integrationConversationService{}, mcpClient, api.HandlerConfig{
 		MaxConcurrentAsks: 4,
 		AuditLogger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

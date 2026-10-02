@@ -42,7 +42,7 @@ func TestAuditRecordsAskLifecycleWithoutSensitiveData(t *testing.T) {
 		}
 		return nil
 	}), tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
-		return auth.Identity{Subject: "alice\noperator", Issuer: "node-a"}, nil
+		return auth.Identity{ClusterID: "cluster-id", Subject: "alice\noperator", Issuer: "node-a"}, nil
 	}))
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"`+promptMarker+`"}`))
@@ -100,7 +100,7 @@ func TestAuditRecordsAuthenticationRejectionWithoutTokenOrVerifierError(t *testi
 		t.Fatal("agent was called")
 		return nil
 	}), tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
-		return auth.Identity{}, errors.New(errorMarker)
+		return auth.Identity{ClusterID: "cluster-id"}, errors.New(errorMarker)
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)

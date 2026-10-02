@@ -321,8 +321,8 @@ func turnFailure(err error, contextErr error) (TurnStatus, string) {
 }
 
 func ownerFromIdentity(identity auth.Identity) (Owner, error) {
-	owner := Owner{Issuer: strings.TrimSpace(identity.Issuer), Subject: strings.TrimSpace(identity.Subject)}
-	if owner.Issuer == "" || owner.Subject == "" {
+	owner := Owner{ClusterID: strings.TrimSpace(identity.ClusterID), Issuer: strings.TrimSpace(identity.Issuer), Subject: strings.TrimSpace(identity.Subject)}
+	if owner.ClusterID == "" || owner.Issuer == "" || owner.Subject == "" {
 		return Owner{}, fmt.Errorf("%w: authenticated conversation owner is invalid", ErrInvalid)
 	}
 	return owner, nil

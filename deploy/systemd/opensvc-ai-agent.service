@@ -10,7 +10,6 @@ Group=opensvc-ai
 Environment=OPENSVC_AI_LISTEN_ADDR=127.0.0.1:8090
 Environment=OPENSVC_AI_TLS_CERT_FILE=/etc/opensvc-ai/agent.crt
 Environment=OPENSVC_AI_TLS_KEY_FILE=/etc/opensvc-ai/agent.key
-Environment=OPENSVC_AI_JWT_VERIFY_KEY_FILE=/etc/opensvc-ai/cluster-ca.pem
 Environment=OPENSVC_AI_CONVERSATION_DB_PATH=/var/lib/opensvc-ai-agent/conversations.db
 # Configure OPENSVC_AI_MCP_URL and, for a private TLS CA, OPENSVC_AI_MCP_CA_FILE.
 # This environment file also supplies the generic LLM configuration.

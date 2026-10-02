@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,7 +15,7 @@ const maxBearerTokenBytes = 16 << 10
 func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		rawToken, ok := bearerToken(request.Header.Get("Authorization"))
-		if !ok || len(rawToken) > maxBearerTokenBytes {
+		if !ok || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -22,7 +24,13 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 			return
 		}
 		identity, err := verifier.Verify(request.Context(), rawToken)
-		if err != nil || identity.Subject == "" {
+		if errors.Is(err, auth.ErrVerificationUnavailable) {
+			audit.event(request.Context(), "auth_unavailable", slog.Int("status", http.StatusServiceUnavailable), slog.String("code", "authentication_unavailable"))
+			response.Header().Set("Retry-After", "1")
+			writeJSONError(response, http.StatusServiceUnavailable, "authentication_unavailable", "OpenSVC identity verification is unavailable")
+			return
+		}
+		if err != nil || identity.Subject == "" || identity.Issuer == "" || identity.ClusterID == "" {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -30,7 +38,13 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 			writeUnauthorized(response)
 			return
 		}
-		ctx := auth.WithBearerToken(request.Context(), rawToken)
+		ctx := request.Context()
+		if !identity.ExpiresAt.IsZero() {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, identity.ExpiresAt)
+			defer cancel()
+		}
+		ctx = auth.WithBearerToken(ctx, rawToken)
 		ctx = auth.WithIdentity(ctx, identity)
 		request.Header.Del("Authorization")
 		next.ServeHTTP(response, request.WithContext(ctx))

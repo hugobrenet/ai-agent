@@ -16,7 +16,6 @@ import (
 
 	"github.com/hugobrenet/opensvc-ai-agent/internal/agent"
 	"github.com/hugobrenet/opensvc-ai-agent/internal/api"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
 	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
 	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
 	conversationsqlite "github.com/hugobrenet/opensvc-ai-agent/internal/conversation/sqlite"
@@ -46,11 +45,6 @@ func main() {
 	mcpConfig, err := config.LoadMCP()
 	if err != nil {
 		log.Fatalf("load MCP configuration: %v", err)
-	}
-	jwtConfig := config.LoadJWT()
-	verifier, err := auth.NewJWTVerifier(jwtConfig.VerifyKeyFile)
-	if err != nil {
-		log.Fatalf("create OpenSVC JWT verifier: %v", err)
 	}
 
 	model, err := llmfactory.New(llmConfig, nil)
@@ -98,7 +92,7 @@ func main() {
 		}
 	}()
 	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	handler, err := api.NewHandler(orchestrator, conversationService, verifier, api.HandlerConfig{
+	handler, err := api.NewHandler(orchestrator, conversationService, mcpClient, api.HandlerConfig{
 		MaxConcurrentAsks: processConfig.MaxConcurrentAsks,
 		AuditLogger:       auditLogger,
 	})

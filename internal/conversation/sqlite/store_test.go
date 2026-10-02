@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	testOwner = conversation.Owner{Issuer: "node-a", Subject: "alice"}
+	testOwner = conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "alice"}
 	testNow   = time.Date(2026, 7, 24, 10, 0, 0, 123456789, time.UTC)
 )
 
@@ -32,7 +32,7 @@ func TestStorePersistsConversationAndToolHistory(t *testing.T) {
 	if err := store.CreateConversation(t.Context(), item); !errors.Is(err, conversation.ErrConflict) {
 		t.Fatalf("duplicate CreateConversation() error = %v", err)
 	}
-	if _, err := store.GetConversation(t.Context(), conversation.Owner{Issuer: "node-a", Subject: "bob"}, item.ID); !errors.Is(err, conversation.ErrNotFound) {
+	if _, err := store.GetConversation(t.Context(), conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID); !errors.Is(err, conversation.ErrNotFound) {
 		t.Fatalf("cross-owner GetConversation() error = %v", err)
 	}
 	got, err := store.GetConversation(t.Context(), testOwner, item.ID)
@@ -90,7 +90,7 @@ func TestStorePersistsConversationAndToolHistory(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(history, messages) {
 		t.Fatalf("reopened LoadHistory() = %#v, %v", history, err)
 	}
-	if err := reopened.DeleteConversation(t.Context(), conversation.Owner{Issuer: "node-a", Subject: "bob"}, item.ID); !errors.Is(err, conversation.ErrNotFound) {
+	if err := reopened.DeleteConversation(t.Context(), conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID); !errors.Is(err, conversation.ErrNotFound) {
 		t.Fatalf("cross-owner DeleteConversation() error = %v", err)
 	}
 	if err := reopened.DeleteConversation(t.Context(), testOwner, item.ID); err != nil {
@@ -120,7 +120,7 @@ func TestStoreUpdatesTitleWithoutOverwritingItOnCompletion(t *testing.T) {
 	if updated.Title != "Database incident" || !updated.UpdatedAt.Equal(testNow.Add(time.Second)) {
 		t.Fatalf("UpdateConversationTitle() = %#v", updated)
 	}
-	if _, err := store.UpdateConversationTitle(t.Context(), conversation.Owner{Issuer: "node-a", Subject: "bob"}, item.ID, "Foreign", testNow.Add(time.Second)); !errors.Is(err, conversation.ErrNotFound) {
+	if _, err := store.UpdateConversationTitle(t.Context(), conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID, "Foreign", testNow.Add(time.Second)); !errors.Is(err, conversation.ErrNotFound) {
 		t.Fatalf("cross-owner UpdateConversationTitle() error = %v", err)
 	}
 	if _, err := store.UpdateConversationTitle(t.Context(), testOwner, item.ID, " not normalized ", testNow.Add(time.Second)); !errors.Is(err, conversation.ErrInvalid) {
@@ -323,7 +323,7 @@ func TestStoreDeletesExpiredConversationsInBatches(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsUnsafeFilesAndNewerSchema(t *testing.T) {
+func TestOpenRejectsUnsafeFilesAndUnsupportedSchema(t *testing.T) {
 	t.Run("directory permissions", func(t *testing.T) {
 		directory := filepath.Join(t.TempDir(), "state")
 		if err := os.Mkdir(directory, 0o755); err != nil {
@@ -357,15 +357,15 @@ func TestOpenRejectsUnsafeFilesAndNewerSchema(t *testing.T) {
 			t.Fatalf("Open() error = %v", err)
 		}
 	})
-	t.Run("newer schema", func(t *testing.T) {
+	t.Run("unsupported schema", func(t *testing.T) {
 		store, path := openTestStore(t, Config{})
-		if _, err := store.db.ExecContext(t.Context(), "INSERT INTO schema_migrations(version, applied_at) VALUES (3, ?)", testNow.UnixNano()); err != nil {
+		if _, err := store.db.ExecContext(t.Context(), "PRAGMA user_version = 2"); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Open(t.Context(), Config{Path: path}); err == nil || !strings.Contains(err.Error(), "newer") {
+		if _, err := Open(t.Context(), Config{Path: path}); err == nil || !strings.Contains(err.Error(), "unsupported") {
 			t.Fatalf("Open() error = %v", err)
 		}
 	})
@@ -381,10 +381,34 @@ func TestOpenRejectsUnsafeFilesAndNewerSchema(t *testing.T) {
 	})
 }
 
-func TestOpenMigratesExistingConversationTitles(t *testing.T) {
-	directory := secureTempDir(t)
-	path := filepath.Join(directory, "conversations.db")
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+func TestOpenInitializesCurrentSchema(t *testing.T) {
+	store, path := openTestStore(t, Config{})
+	var version int
+	if err := store.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("schema version = %d, %v", version, err)
+	}
+	item := testConversation("conversation-1", testOwner, testNow)
+	item.Title = "Current schema"
+	if err := store.CreateConversation(t.Context(), item); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(t.Context(), Config{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	got, err := reopened.GetConversation(t.Context(), testOwner, item.ID)
+	if err != nil || got.Title != item.Title || got.Owner != item.Owner {
+		t.Fatalf("current schema did not preserve owner/title on reopen: %+v, %v", got, err)
+	}
+}
+
+func TestOpenRejectsUnrecognizedSchemaWithoutChangingData(t *testing.T) {
+	path := filepath.Join(secureTempDir(t), "conversations.db")
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,45 +419,20 @@ func TestOpenMigratesExistingConversationTitles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial, err := migrationFiles.ReadFile("migrations/001_initial.sql")
-	if err != nil {
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.ExecContext(t.Context(), "CREATE TABLE unrelated (value TEXT); INSERT INTO unrelated VALUES ('keep')"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(t.Context(), `
-CREATE TABLE schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at INTEGER NOT NULL
-);`); err != nil {
-		t.Fatal(err)
+	if _, err := Open(t.Context(), Config{Path: path}); err == nil || !strings.Contains(err.Error(), "unrecognized schema") {
+		t.Fatalf("unrecognized database accepted: %v", err)
 	}
-	if _, err := db.ExecContext(t.Context(), string(initial)); err != nil {
-		t.Fatal(err)
+	var value string
+	if err := db.QueryRowContext(t.Context(), "SELECT value FROM unrelated").Scan(&value); err != nil || value != "keep" {
+		t.Fatalf("refused database changed: %q, %v", value, err)
 	}
-	if _, err := db.ExecContext(t.Context(), "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)", testNow.UnixNano()); err != nil {
-		t.Fatal(err)
-	}
-	item := testConversation("conversation-1", testOwner, testNow)
-	if _, err := db.ExecContext(t.Context(), `
-INSERT INTO conversations(id, issuer, subject, created_at, updated_at, expires_at, stored_bytes)
-VALUES (?, ?, ?, ?, ?, ?, 0)`, item.ID, item.Owner.Issuer, item.Owner.Subject, toUnixNano(item.CreatedAt), toUnixNano(item.UpdatedAt), toUnixNano(item.ExpiresAt)); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := Open(t.Context(), Config{Path: path})
-	if err != nil {
-		t.Fatalf("Open() migration error: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	got, err := store.GetConversation(t.Context(), testOwner, item.ID)
-	if err != nil || got.Title != "" {
-		t.Fatalf("migrated conversation = %#v, %v", got, err)
-	}
-	var version int
-	if err := store.db.QueryRowContext(t.Context(), "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 2 {
-		t.Fatalf("schema version = %d, %v", version, err)
+	var count int
+	if err := db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'conversations'").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("refused database was initialized: %d, %v", count, err)
 	}
 }
 

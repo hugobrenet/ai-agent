@@ -4,10 +4,7 @@ The om3 command-line client provides the local user interface for
 `opensvc-ai-agent`. It supports one-shot prompts, persistent interactive
 conversations, and conversation metadata management.
 
-Transport migration notice: the agent now accepts HTTPS over TCP only.
-The `om ai` client migration is a separate step; Unix-socket versions cannot
-connect to this agent. The commands below document the existing CLI behavior,
-not a completed HTTPS client implementation.
+The client connects to the agent over HTTPS using its configured remote address.
 
 ## Architecture
 
@@ -23,16 +20,18 @@ om ai ── access token ──> OpenSVC daemon
 ```
 
 The client obtains a short-lived OpenSVC access token from the local daemon.
-The agent verifies the token, delegates it to MCP for tool calls, and binds
-persistent conversations to its issuer and subject. The client never stores
+Before each protected API operation, the agent verifies the token through
+MCP GET /mcp/auth/whoami and daemon GET /api/auth/whoami. The same token is
+delegated for MCP tools. Persistent conversations are bound to authenticated
+cluster ID, issuer and subject. The client never stores
 the token, messages, or conversation state.
 
 Configure the agent's TCP listener and certificate/key files with
 `OPENSVC_AI_LISTEN_ADDR`, `OPENSVC_AI_TLS_CERT_FILE`, and
 `OPENSVC_AI_TLS_KEY_FILE`. Configure its outbound MCP connection with
 `OPENSVC_AI_MCP_URL` and optional `OPENSVC_AI_MCP_CA_FILE`. These are agent
-settings, not CLI settings. CLI endpoint and TLS trust settings will be
-specified during the separate `om ai` migration.
+settings, not CLI settings. The TCP/HTTPS CLI uses OPENSVC_AI_AGENT_URL and
+optional OPENSVC_AI_AGENT_CA_FILE for its remote endpoint and TLS trust.
 
 ## Prerequisites
 
@@ -227,8 +226,8 @@ after deletion.
 
 ## Identity and security
 
-Conversation access is isolated by the verified OpenSVC token issuer and
-subject. Listing returns only conversations owned by that identity. Reading or
+Conversation access is isolated by the authenticated OpenSVC cluster ID,
+issuer and subject. Resuming a chat is authenticated again through whoami. Listing returns only conversations owned by that identity. Reading or
 deleting another identity's conversation does not reveal whether it exists.
 
 The CLI never accepts a provider token. Provider credentials remain in the
@@ -248,8 +247,7 @@ curl --cacert /etc/opensvc-ai/agent-ca.pem https://127.0.0.1:8090/health
 
 Connection refused means the listener is not reachable. For a TLS error, check
 the CA bundle and the certificate hostname/IP. Do not disable certificate
-verification. A Unix-socket version of `om ai` requires the planned client
-migration before it can connect.
+verification.
 
 ### Local daemon permission denied
 

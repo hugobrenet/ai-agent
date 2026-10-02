@@ -1,5 +1,7 @@
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '' CHECK (length(title) <= 80),
+    cluster_id TEXT NOT NULL,
     issuer TEXT NOT NULL,
     subject TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -8,7 +10,7 @@ CREATE TABLE conversations (
     stored_bytes INTEGER NOT NULL DEFAULT 0 CHECK (stored_bytes >= 0)
 );
 CREATE INDEX conversations_owner_updated
-    ON conversations (issuer, subject, updated_at DESC, id);
+    ON conversations (cluster_id, issuer, subject, updated_at DESC, id);
 CREATE INDEX conversations_expiry
     ON conversations (expires_at, id);
 
