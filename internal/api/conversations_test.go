@@ -217,6 +217,7 @@ func TestConversationRoutesRequireAuthentication(t *testing.T) {
 		{http.MethodPost, "/v1/conversations"},
 		{http.MethodGet, "/v1/conversations"},
 		{http.MethodGet, "/v1/conversations/id"},
+		{http.MethodGet, "/v1/conversations/id/messages"},
 		{http.MethodPatch, "/v1/conversations/id"},
 		{http.MethodDelete, "/v1/conversations/id"},
 		{http.MethodPost, "/v1/conversations/id/turns"},
@@ -230,12 +231,13 @@ func TestConversationRoutesRequireAuthentication(t *testing.T) {
 }
 
 type conversationServiceFuncs struct {
-	create  func(context.Context, auth.Identity) (conversation.Conversation, error)
-	get     func(context.Context, auth.Identity, string) (conversation.Conversation, error)
-	list    func(context.Context, auth.Identity) ([]conversation.Conversation, error)
-	update  func(context.Context, auth.Identity, string, string) (conversation.Conversation, error)
-	delete  func(context.Context, auth.Identity, string) error
-	prepare func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error)
+	create   func(context.Context, auth.Identity) (conversation.Conversation, error)
+	get      func(context.Context, auth.Identity, string) (conversation.Conversation, error)
+	list     func(context.Context, auth.Identity) ([]conversation.Conversation, error)
+	update   func(context.Context, auth.Identity, string, string) (conversation.Conversation, error)
+	delete   func(context.Context, auth.Identity, string) error
+	prepare  func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error)
+	messages func(context.Context, auth.Identity, string, conversation.MessageQuery) (conversation.MessagePage, error)
 }
 
 func (s conversationServiceFuncs) Create(ctx context.Context, identity auth.Identity) (conversation.Conversation, error) {
@@ -255,6 +257,12 @@ func (s conversationServiceFuncs) List(ctx context.Context, identity auth.Identi
 		return nil, errors.New("unexpected list")
 	}
 	return s.list(ctx, identity)
+}
+func (s conversationServiceFuncs) Messages(ctx context.Context, identity auth.Identity, id string, query conversation.MessageQuery) (conversation.MessagePage, error) {
+	if s.messages == nil {
+		return conversation.MessagePage{}, errors.New("unexpected messages")
+	}
+	return s.messages(ctx, identity, id, query)
 }
 func (s conversationServiceFuncs) Delete(ctx context.Context, identity auth.Identity, id string) error {
 	if s.delete == nil {

@@ -182,6 +182,8 @@ type serviceTestStore struct {
 	failed            bool
 	failureCode       string
 	completedMessages []llm.Message
+	messageQuery      MessageQuery
+	messageReads      int
 }
 
 func newServiceTestStore() *serviceTestStore {
@@ -246,6 +248,14 @@ func (s *serviceTestStore) FailTurn(_ context.Context, _ Owner, _ string, _ stri
 }
 func (s *serviceTestStore) LoadHistory(context.Context, Owner, string) ([]llm.Message, error) {
 	return append([]llm.Message(nil), s.history...), nil
+}
+func (s *serviceTestStore) ListMessages(_ context.Context, owner Owner, id string, query MessageQuery) (MessagePage, error) {
+	if owner != s.item.Owner || id != s.item.ID {
+		return MessagePage{}, ErrNotFound
+	}
+	s.messageReads++
+	s.messageQuery = query
+	return MessagePage{Messages: []DisplayMessage{}}, nil
 }
 func (s *serviceTestStore) RecoverInterrupted(context.Context, time.Time) (int64, error) {
 	return 0, nil

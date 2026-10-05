@@ -9,6 +9,10 @@ import (
 
 type noopConversationService struct{}
 
+func (noopConversationService) Messages(context.Context, auth.Identity, string, conversation.MessageQuery) (conversation.MessagePage, error) {
+	return conversation.MessagePage{}, conversation.ErrNotFound
+}
+
 func (noopConversationService) Create(context.Context, auth.Identity) (conversation.Conversation, error) {
 	return conversation.Conversation{}, nil
 }
