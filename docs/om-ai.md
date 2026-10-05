@@ -197,8 +197,10 @@ om ai show 1d8f521a6df5ab128d264d88244c229c
 om ai show 1d8f521a6df5ab128d264d88244c229c --output json
 ```
 
-The command returns metadata only. The API intentionally does not expose stored
-prompts, model responses, tool arguments, or tool results.
+The command and `GET /v1/conversations/{id}` return metadata only. The separate
+[messages endpoint](webapp.md#conversation-messages) exposes stored display text
+to authorized clients; `om ai` does not call it or display previous messages.
+Tool arguments and raw tool results remain private.
 
 ## Rename a conversation
 

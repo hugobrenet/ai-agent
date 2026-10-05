@@ -9,12 +9,13 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("conversation not found")
-	ErrBusy     = errors.New("conversation has a running turn")
-	ErrExpired  = errors.New("conversation expired")
-	ErrConflict = errors.New("conversation store conflict")
-	ErrLimit    = errors.New("conversation store limit exceeded")
-	ErrInvalid  = errors.New("invalid conversation store input")
+	ErrNotFound        = errors.New("conversation not found")
+	ErrBusy            = errors.New("conversation has a running turn")
+	ErrExpired         = errors.New("conversation expired")
+	ErrConflict        = errors.New("conversation store conflict")
+	ErrLimit           = errors.New("conversation store limit exceeded")
+	ErrInvalid         = errors.New("invalid conversation store input")
+	ErrMessageTooLarge = errors.New("conversation display message exceeds page size")
 )
 
 type Store interface {
@@ -28,6 +29,7 @@ type Store interface {
 	CompleteTurn(context.Context, Owner, string, string, time.Time, time.Time, []llm.Message) error
 	FailTurn(context.Context, Owner, string, string, TurnStatus, string, time.Time) error
 	LoadHistory(context.Context, Owner, string) ([]llm.Message, error)
+	ListMessages(context.Context, Owner, string, MessageQuery) (MessagePage, error)
 
 	RecoverInterrupted(context.Context, time.Time) (int64, error)
 	DeleteExpired(context.Context, time.Time, int) (int64, error)

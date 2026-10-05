@@ -90,6 +90,10 @@ func TestLiveAskStreamsClusterHealth(t *testing.T) {
 
 type integrationConversationService struct{}
 
+func (integrationConversationService) Messages(context.Context, auth.Identity, string, conversation.MessageQuery) (conversation.MessagePage, error) {
+	return conversation.MessagePage{}, conversation.ErrNotFound
+}
+
 func (integrationConversationService) Create(context.Context, auth.Identity) (conversation.Conversation, error) {
 	return conversation.Conversation{}, nil
 }

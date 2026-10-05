@@ -94,6 +94,20 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 			t.Fatalf("turn %q status=%d body=%s", prompt, response.Code, response.Body.String())
 		}
 		if index == 0 {
+			messagesResponse := httptest.NewRecorder()
+			handler.ServeHTTP(messagesResponse, requestWithToken(http.MethodGet, "/v1/conversations/"+id+"/messages", "alice", ""))
+			var page conversation.MessagePage
+			if err := json.NewDecoder(messagesResponse.Body).Decode(&page); err != nil || messagesResponse.Code != http.StatusOK || len(page.Messages) != 2 || page.Messages[0].Text != "first" || page.Messages[1].Text != "answer first" {
+				t.Fatalf("persisted display = %+v, status = %d, error = %v", page, messagesResponse.Code, err)
+			}
+			if turnNumber != 1 {
+				t.Fatal("reading messages ran a model turn")
+			}
+			foreignMessages := httptest.NewRecorder()
+			handler.ServeHTTP(foreignMessages, requestWithToken(http.MethodGet, "/v1/conversations/"+id+"/messages", "bob", ""))
+			if foreignMessages.Code != http.StatusNotFound || strings.Contains(foreignMessages.Body.String(), "answer first") {
+				t.Fatalf("foreign display response = %d, %s", foreignMessages.Code, foreignMessages.Body)
+			}
 			getResponse := httptest.NewRecorder()
 			handler.ServeHTTP(getResponse, requestWithToken(http.MethodGet, "/v1/conversations/"+id, "alice", ""))
 			var afterFirst ConversationEnvelope

@@ -53,6 +53,56 @@ allowed before this check. Conversation ownership remains cluster + issuer
 from private request context; none is exposed to the model or stored as
 a credential. TLS verification and origin binding apply to all headers.
 
+## Conversation messages
+
+`GET /v1/conversations/{id}/messages` returns persisted user/assistant display
+text from completed turns only. Supply the same Bearer and target headers as
+other conversation operations. Every read verifies identity again; access is
+bound to cluster ID + issuer + subject. Missing and foreign IDs both return 404;
+owned expired conversations return 410. Successful responses use
+`Cache-Control: no-store`.
+
+```json
+{
+  "messages": [
+    {
+      "id": "turn-id:1",
+      "turn_id": "turn-id",
+      "role": "user",
+      "text": "Assess cluster health",
+      "created_at": "2026-10-05T12:00:00Z"
+    }
+  ],
+  "next_cursor": "1:1"
+}
+```
+
+The initial page contains the latest messages, ordered chronologically within
+that page. `limit` defaults to 50 and accepts 1 through 100. To load older
+messages, pass the returned opaque cursor as `before` and prepend the resulting
+page. An empty `next_cursor` means there are no older messages. Message IDs
+remain stable across reads and restarts; pagination is exclusive and does not
+shift when a new turn completes. Unknown, duplicate or invalid query parameters
+return 400.
+
+Pages are also bounded to 1 MiB of encoded JSON and may contain fewer than
+`limit` messages. A single message that cannot fit is not truncated: the API
+returns 413 with code `history_message_too_large`. An empty conversation returns
+`{"messages":[],"next_cursor":""}`.
+
+Only persisted text is projected. Empty assistant tool-call messages, tool
+arguments/results, system prompts and provider credentials/state are excluded.
+Tool activity and token usage are not returned in this V1. User timestamps use
+the turn start time; assistant timestamps use its completion time, not the exact
+time of each streaming chunk. Failed/canceled/interrupted turns do not persist
+their prompt or partial answer, and therefore cannot be reconstructed here.
+
+Reading does not invoke the model or tools, update retention, or change the
+model context. All retained display messages can be paged, independently of
+the smaller context window selected for model turns. Existing stored turns are
+readable without a schema change. Metadata routes and SSE remain unchanged;
+the `om ai` client does not call this new endpoint.
+
 ## CORS
 
 Set `OPENSVC_AI_CORS_ALLOWED_ORIGINS` in the agent environment and restart:

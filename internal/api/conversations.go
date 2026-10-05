@@ -21,6 +21,7 @@ type ConversationService interface {
 	Create(context.Context, auth.Identity) (conversation.Conversation, error)
 	Get(context.Context, auth.Identity, string) (conversation.Conversation, error)
 	List(context.Context, auth.Identity) ([]conversation.Conversation, error)
+	Messages(context.Context, auth.Identity, string, conversation.MessageQuery) (conversation.MessagePage, error)
 	UpdateTitle(context.Context, auth.Identity, string, string) (conversation.Conversation, error)
 	Delete(context.Context, auth.Identity, string) error
 	PrepareTurn(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error)
@@ -230,6 +231,8 @@ func writeConversationError(response http.ResponseWriter, request *http.Request,
 
 func conversationError(err error) (int, string, string) {
 	switch {
+	case errors.Is(err, conversation.ErrMessageTooLarge):
+		return http.StatusRequestEntityTooLarge, "history_message_too_large", "a stored message exceeds the display page size"
 	case errors.Is(err, conversation.ErrExpired):
 		return http.StatusGone, "conversation_expired", "the conversation has expired"
 	case errors.Is(err, conversation.ErrNotFound):
