@@ -15,7 +15,8 @@ const maxBearerTokenBytes = 16 << 10
 func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		rawToken, ok := bearerToken(request.Header.Get("Authorization"))
-		if !ok || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
+		targetCluster, targetErr := auth.TargetClusterFromHeader(request.Header)
+		if !ok || targetErr != nil || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -23,14 +24,15 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 			writeUnauthorized(response)
 			return
 		}
-		identity, err := verifier.Verify(request.Context(), rawToken)
+		ctx := auth.WithTargetCluster(request.Context(), targetCluster)
+		identity, err := verifier.Verify(ctx, rawToken)
 		if errors.Is(err, auth.ErrVerificationUnavailable) {
 			audit.event(request.Context(), "auth_unavailable", slog.Int("status", http.StatusServiceUnavailable), slog.String("code", "authentication_unavailable"))
 			response.Header().Set("Retry-After", "1")
 			writeJSONError(response, http.StatusServiceUnavailable, "authentication_unavailable", "OpenSVC identity verification is unavailable")
 			return
 		}
-		if err != nil || identity.Subject == "" || identity.Issuer == "" || identity.ClusterID == "" {
+		if err != nil || identity.Subject == "" || identity.Issuer == "" || identity.ClusterID == "" || targetCluster != "" && identity.ClusterID != targetCluster {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -38,7 +40,6 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 			writeUnauthorized(response)
 			return
 		}
-		ctx := request.Context()
 		if !identity.ExpiresAt.IsZero() {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithDeadline(ctx, identity.ExpiresAt)
@@ -47,6 +48,7 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 		ctx = auth.WithBearerToken(ctx, rawToken)
 		ctx = auth.WithIdentity(ctx, identity)
 		request.Header.Del("Authorization")
+		request.Header.Del(auth.ClusterIDHeader)
 		next.ServeHTTP(response, request.WithContext(ctx))
 	})
 }

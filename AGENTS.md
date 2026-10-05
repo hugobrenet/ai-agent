@@ -37,7 +37,7 @@ and SQLite through `database/sql` and `modernc.org/sqlite`.
 - `internal/api`: versioned HTTP routes, authentication middleware, SSE,
   concurrency admission, stable public errors and structured audit events.
   Keep handlers thin.
-- `internal/auth`: native JWT prechecks, verified identity and private
+- `internal/auth`: native/OpenID JWT prechecks, verified identity and private
   request-scoped credentials; remove authentication data from LLM contexts.
 - `internal/mcpclient`: verified HTTPS transport, remote whoami verification,
   request-scoped MCP sessions and bounded tool discovery/results.
@@ -61,13 +61,20 @@ Conversations must not retain MCP sessions or provider-specific state.
 - Before every protected operation, check the native RS256 access JWT shape,
   required `cluster_id/sub/iss/exp`, `token_use=access` and optional `nbf`.
   Decoded claims alone never establish identity.
+- OpenID requests require one `X-OpenSVC-Cluster-ID` header and a JWT with
+  `iss/sub/aud/exp`, an asymmetric signing algorithm and `kid`. Check optional
+  `nbf`; the MCP/daemon validates the issuer, audience and signature. Native
+  markers must not fall back to OpenID; an explicit native target must match
+  the token's cluster ID.
 - Authenticate through the configured MCP's `GET /mcp/auth/whoami` bridge,
   which delegates signature verification to daemon `GET /api/auth/whoami`.
-  Require returned identity and expiry to match the supplied token exactly.
+  Require returned issuer, subject and expiry to match the supplied token,
+  and the cluster ID to match the native claim or explicit OpenID target.
 - Complete authentication before reading prompts, accessing conversations or
   starting an SSE response. Invalid tokens return 401; unavailable verification
   returns 503. No offline fallback, identity cache or local verification keys.
-- Delegate the unchanged JWT to MCP in private request context. Never retain
+- Delegate the unchanged JWT and explicit target header to MCP in private
+  request context; hide both from LLM contexts. Never retain
   it in a shared client or global state. Daemon grants remain authoritative.
 - Keep OpenSVC and provider credentials separate. Never place OpenSVC JWTs,
   identities or grants in LLM contexts, prompts, tool arguments or provider

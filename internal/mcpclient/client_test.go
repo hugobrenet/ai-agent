@@ -17,6 +17,11 @@ import (
 )
 
 func TestClientListsAndCallsToolsWithDelegatedJWT(t *testing.T) {
+	t.Run("native", func(t *testing.T) { testClientListsAndCallsToolsWithDelegatedJWT(t, "") })
+	t.Run("explicit cluster", func(t *testing.T) { testClientListsAndCallsToolsWithDelegatedJWT(t, "cluster-a") })
+}
+
+func testClientListsAndCallsToolsWithDelegatedJWT(t *testing.T, clusterID string) {
 	const token = "delegated-test-token"
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test-mcp", Version: "v0.1.0"}, nil)
@@ -29,6 +34,11 @@ func TestClientListsAndCallsToolsWithDelegatedJWT(t *testing.T) {
 	streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	endpoint, caFile := serveHTTPS(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requestCount.Add(1)
+		if request.Header.Get(auth.ClusterIDHeader) != clusterID {
+			t.Error("MCP request lost its explicit target")
+			response.WriteHeader(401)
+			return
+		}
 		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
@@ -41,6 +51,7 @@ func TestClientListsAndCallsToolsWithDelegatedJWT(t *testing.T) {
 		t.Fatalf("create MCP client: %v", err)
 	}
 	ctx := auth.WithBearerToken(t.Context(), token)
+	ctx = auth.WithTargetCluster(ctx, clusterID)
 	session, err := client.Connect(ctx)
 	if err != nil {
 		t.Fatalf("connect MCP client: %v", err)
@@ -86,6 +97,37 @@ func TestClientRejectsMissingDelegatedJWT(t *testing.T) {
 	}
 	if requestCount.Load() != 0 {
 		t.Fatalf("server received %d requests without a JWT", requestCount.Load())
+	}
+}
+
+func TestClientTargetHeadersAreRequestScoped(t *testing.T) {
+	wantCluster := ""
+	endpoint, caFile := serveHTTPS(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(auth.ClusterIDHeader) != wantCluster || r.Header.Get("Authorization") != "Bearer token" {
+			t.Error("request used stale or caller-overridden headers")
+		}
+		w.WriteHeader(204)
+	}))
+	client, err := New(endpoint, caFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"cluster-a", "cluster-b", ""} {
+		wantCluster = target
+		ctx := auth.WithTargetCluster(auth.WithBearerToken(t.Context(), "token"), target)
+		r, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set(auth.ClusterIDHeader, "wrong-cluster")
+		response, err := client.httpClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if r.Header.Get(auth.ClusterIDHeader) != "wrong-cluster" {
+			t.Fatal("original request was mutated")
+		}
 	}
 }
 

@@ -18,10 +18,10 @@ const (
 	maxIdentityResponseBytes = 16 << 10
 )
 
-// Verify delegates native JWT signature verification to the daemon through a
+// Verify delegates JWT signature verification to the daemon through a
 // narrow HTTPS MCP route. No keys, identities or tokens are cached here.
 func (c *Client) Verify(ctx context.Context, raw string) (auth.Identity, error) {
-	delegation, err := auth.CheckDelegation(raw)
+	delegation, err := auth.CheckDelegation(raw, auth.TargetClusterFromContext(ctx))
 	if err != nil {
 		return auth.Identity{}, err
 	}
@@ -68,7 +68,8 @@ func (c *Client) Verify(ctx context.Context, raw string) (auth.Identity, error) 
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return auth.Identity{}, auth.ErrVerificationUnavailable
 	}
-	// The trusted MCP must confirm exactly this request's native identity.
+	// The trusted MCP must confirm this request's target, issuer, JWT subject
+	// and expiry. In OpenID, subject is not necessarily the daemon username.
 	if identity.ClusterID != delegation.ClusterID || identity.Subject != delegation.Subject || identity.Issuer != delegation.Issuer || !identity.ExpiresAt.Equal(delegation.ExpiresAt) || !time.Now().Before(identity.ExpiresAt) {
 		return auth.Identity{}, auth.ErrInvalidToken
 	}

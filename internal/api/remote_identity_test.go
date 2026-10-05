@@ -27,15 +27,33 @@ import (
 )
 
 func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {
+	t.Run("native", func(t *testing.T) { testRemoteIdentityProtectsLocalConversationsAndModelCalls(t, false) })
+	t.Run("openid", func(t *testing.T) { testRemoteIdentityProtectsLocalConversationsAndModelCalls(t, true) })
+}
+
+func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, openID bool) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
+	targets := make(map[string]string)
 	sign := func(cluster, user string, key *rsa.PrivateKey) string {
-		raw, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"cluster_id": cluster, "iss": "node-a", "sub": user, "exp": time.Now().Add(time.Hour).Unix(), "token_use": "access"}).SignedString(key)
+		claims := jwt.MapClaims{"cluster_id": cluster, "iss": "node-a", "sub": user, "exp": time.Now().Add(time.Hour).Unix(), "token_use": "access"}
+		if openID {
+			delete(claims, "cluster_id")
+			delete(claims, "token_use")
+			claims["iss"] = "https://idp.example.test/"
+			claims["sub"] = "opaque-" + user
+			claims["preferred_username"] = user
+			claims["aud"] = "client-" + cluster
+		}
+		unsigned := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		unsigned.Header["kid"] = "key"
+		raw, err := unsigned.SignedString(key)
 		if err != nil {
 			t.Fatal(err)
 		}
+		targets[raw] = cluster
 		return raw
 	}
 	alice := sign("cluster-a", "alice", key)
@@ -56,12 +74,24 @@ func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {
 		}
 		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		claims := jwt.MapClaims{}
-		if _, err := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return &key.PublicKey, nil }, jwt.WithValidMethods([]string{"RS256"}), jwt.WithExpirationRequired()); err != nil {
+		target := r.Header.Get(auth.ClusterIDHeader)
+		options := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"}), jwt.WithExpirationRequired()}
+		if openID {
+			if target != "cluster-a" && target != "cluster-b" {
+				w.WriteHeader(401)
+				return
+			}
+			options = append(options, jwt.WithIssuer("https://idp.example.test/"), jwt.WithAudience("client-"+target))
+		}
+		if _, err := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return &key.PublicKey, nil }, options...); err != nil {
 			w.WriteHeader(401)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(auth.Identity{ClusterID: claims["cluster_id"].(string), Issuer: claims["iss"].(string), Subject: claims["sub"].(string), ExpiresAt: time.Unix(int64(claims["exp"].(float64)), 0)})
+		if !openID {
+			target = claims["cluster_id"].(string)
+		}
+		_ = json.NewEncoder(w).Encode(auth.Identity{ClusterID: target, Issuer: claims["iss"].(string), Subject: claims["sub"].(string), ExpiresAt: time.Unix(int64(claims["exp"].(float64)), 0)})
 	}))
 	t.Cleanup(mcpServer.Close)
 	caFile := filepath.Join(t.TempDir(), "mcp-ca.pem")
@@ -96,6 +126,9 @@ func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {
 	}
 	call := func(method, path, token, body string) *httptest.ResponseRecorder {
 		request := requestWithToken(method, path, token, body)
+		if openID {
+			request.Header.Set(auth.ClusterIDHeader, targets[token])
+		}
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
