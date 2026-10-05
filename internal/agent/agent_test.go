@@ -20,6 +20,9 @@ func TestAskReturnsDirectAnswerAndExposesAllTools(t *testing.T) {
 		{Name: "refresh_instance_status", Description: "Refresh status", InputSchema: objectSchema()},
 	}}
 	model := &scriptedLLM{t: t, inspectContext: func(ctx context.Context) {
+		if auth.TargetClusterFromContext(ctx) != "" {
+			t.Fatal("LLM context contains explicit target cluster")
+		}
 		if _, ok := auth.BearerTokenFromContext(ctx); ok {
 			t.Fatal("LLM context contains delegated JWT")
 		}
@@ -44,6 +47,7 @@ func TestAskReturnsDirectAnswerAndExposesAllTools(t *testing.T) {
 	}}}
 	agent := newTestAgent(t, model, session, 4)
 	ctx := auth.WithBearerToken(t.Context(), "jwt-marker")
+	ctx = auth.WithTargetCluster(ctx, "cluster-id")
 	ctx = auth.WithIdentity(ctx, auth.Identity{ClusterID: "cluster-id", Subject: "alice", Issuer: "node-a", Grants: []string{"guest"}})
 	var events []Event
 	if err := agent.Ask(ctx, "health of my cluster", func(event Event) error {

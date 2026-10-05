@@ -43,22 +43,58 @@ type jwtClaims struct {
 	jwt.RegisteredClaims
 }
 
-func CheckDelegation(raw string) (Delegation, error) {
+// CheckDelegation only checks the token shape and proposed target. The MCP
+// must authenticate the exact token and confirm the returned identity.
+func CheckDelegation(raw, targetCluster string) (Delegation, error) {
 	if raw == "" || len(raw) > 16<<10 {
+		return Delegation{}, ErrInvalidToken
+	}
+	if targetCluster != "" && !validClaim(targetCluster) {
 		return Delegation{}, ErrInvalidToken
 	}
 	var claims jwtClaims
 	token, _, err := jwt.NewParser().ParseUnverified(raw, &claims)
-	if err != nil || token == nil || token.Method != jwt.SigningMethodRS256 {
+	if err != nil || token == nil {
 		return Delegation{}, ErrInvalidToken
 	}
 	if err := jwt.NewValidator(jwt.WithExpirationRequired()).Validate(&claims); err != nil {
 		return Delegation{}, ErrInvalidToken
 	}
-	if !validClaim(claims.ClusterID) || !validClaim(claims.Subject) || !validClaim(claims.Issuer) || claims.TokenUse != "access" || claims.ExpiresAt == nil {
+	if !validClaim(claims.Subject) || !validClaim(claims.Issuer) || claims.ExpiresAt == nil {
 		return Delegation{}, ErrInvalidToken
 	}
-	return Delegation{ClusterID: claims.ClusterID, Subject: claims.Subject, Issuer: claims.Issuer, ExpiresAt: claims.ExpiresAt.Time}, nil
+	if claims.ClusterID != "" || claims.TokenUse != "" {
+		// Native markers never fall back to OpenID after a failed check.
+		if token.Method != jwt.SigningMethodRS256 || !validClaim(claims.ClusterID) || claims.TokenUse != "access" || targetCluster != "" && targetCluster != claims.ClusterID {
+			return Delegation{}, ErrInvalidToken
+		}
+		targetCluster = claims.ClusterID
+	} else {
+		// OpenID routing is supplied separately. Neither the issuer nor the
+		// audience is an endpoint; only the MCP catalogue can select a daemon.
+		if targetCluster == "" || len(claims.Audience) == 0 || !openIDSigningMethod(token.Method.Alg()) {
+			return Delegation{}, ErrInvalidToken
+		}
+		kid, ok := token.Header["kid"].(string)
+		if !ok || !validClaim(kid) {
+			return Delegation{}, ErrInvalidToken
+		}
+		for _, audience := range claims.Audience {
+			if !validClaim(audience) {
+				return Delegation{}, ErrInvalidToken
+			}
+		}
+	}
+	return Delegation{ClusterID: targetCluster, Subject: claims.Subject, Issuer: claims.Issuer, ExpiresAt: claims.ExpiresAt.Time}, nil
+}
+
+func openIDSigningMethod(algorithm string) bool {
+	switch algorithm {
+	case "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512":
+		return true
+	default:
+		return false
+	}
 }
 
 func validClaim(value string) bool {

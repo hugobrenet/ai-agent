@@ -26,12 +26,29 @@ func identityToken(t testing.TB, key *rsa.PrivateKey, cluster, user string) stri
 }
 
 func TestVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T) {
+	t.Run("native", func(t *testing.T) { testVerifyIdentityThroughTrustedHTTPSMCP(t, false) })
+	t.Run("openid", func(t *testing.T) { testVerifyIdentityThroughTrustedHTTPSMCP(t, true) })
+}
+
+func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	token := identityToken(t, key, "cluster-a", "alice")
-	delegation, err := auth.CheckDelegation(token)
+	target := ""
+	ctx := t.Context()
+	if openID {
+		target = "cluster-a"
+		ctx = auth.WithTargetCluster(ctx, target)
+		unsigned := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": "https://idp.example.test/", "sub": "opaque-subject", "aud": "client", "preferred_username": "alice", "exp": time.Now().Add(time.Hour).Unix()})
+		unsigned.Header["kid"] = "key"
+		token, err = unsigned.SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	delegation, err := auth.CheckDelegation(token, target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +57,9 @@ func TestVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T) {
 	var calls atomic.Int32
 	endpoint, ca := serveHTTPS(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		if r.Header.Get(auth.ClusterIDHeader) != target {
+			t.Error("whoami request lost its explicit target")
+		}
 		if r.URL.Path != "/mcp/auth/whoami" || r.Method != "GET" || r.Header.Get("Authorization") != "Bearer "+token {
 			t.Error("identity request lost its route or exact JWT")
 		}
@@ -88,28 +108,28 @@ func TestVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.Verify(t.Context(), token)
+	got, err := client.Verify(ctx, token)
 	if err != nil || got.ClusterID != identity.ClusterID || got.Subject != identity.Subject || got.Issuer != identity.Issuer {
 		t.Fatalf("identity=%+v, err=%v", got, err)
 	}
 	for modeValue, want := range map[int32]error{1: auth.ErrInvalidToken, 2: auth.ErrVerificationUnavailable, 3: auth.ErrVerificationUnavailable, 4: auth.ErrVerificationUnavailable, 5: auth.ErrInvalidToken, 6: auth.ErrInvalidToken, 7: auth.ErrInvalidToken, 8: auth.ErrInvalidToken, 9: auth.ErrVerificationUnavailable} {
 		mode.Store(modeValue)
-		if _, err := client.Verify(t.Context(), token); !errors.Is(err, want) || strings.Contains(err.Error(), token) {
+		if _, err := client.Verify(ctx, token); !errors.Is(err, want) || strings.Contains(err.Error(), token) {
 			t.Fatalf("mode=%d err=%v", modeValue, err)
 		}
 	}
 	before := calls.Load()
-	if _, err := client.Verify(t.Context(), "malformed"); !errors.Is(err, auth.ErrInvalidToken) || calls.Load() != before {
+	if _, err := client.Verify(ctx, "malformed"); !errors.Is(err, auth.ErrInvalidToken) || calls.Load() != before {
 		t.Fatal("invalid token contacted MCP")
 	}
 	untrusted, err := New(endpoint, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := untrusted.Verify(t.Context(), token); !errors.Is(err, auth.ErrVerificationUnavailable) || calls.Load() != before {
+	if _, err := untrusted.Verify(ctx, token); !errors.Is(err, auth.ErrVerificationUnavailable) || calls.Load() != before {
 		t.Fatal("credentials sent to untrusted TLS server")
 	}
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(ctx)
 	cancel()
 	if _, err := client.Verify(ctx, token); err == nil {
 		t.Fatal("cancelled identity check accepted")

@@ -4,6 +4,7 @@ import "context"
 
 type bearerTokenContextKey struct{}
 type identityContextKey struct{}
+type targetClusterContextKey struct{}
 
 type contextWithoutAuthentication struct {
 	context.Context
@@ -19,6 +20,17 @@ func WithBearerToken(ctx context.Context, token string) context.Context {
 func BearerTokenFromContext(ctx context.Context) (string, bool) {
 	token, ok := ctx.Value(bearerTokenContextKey{}).(string)
 	return token, ok && token != ""
+}
+
+// WithTargetCluster carries the explicit routing hint for one request. It does
+// not establish identity or grant access to that cluster.
+func WithTargetCluster(ctx context.Context, clusterID string) context.Context {
+	return context.WithValue(ctx, targetClusterContextKey{}, clusterID)
+}
+
+func TargetClusterFromContext(ctx context.Context) string {
+	clusterID, _ := ctx.Value(targetClusterContextKey{}).(string)
+	return clusterID
 }
 
 // WithIdentity returns a context carrying the verified OpenSVC caller identity.
@@ -48,6 +60,9 @@ func (c contextWithoutAuthentication) Value(key any) any {
 		return nil
 	}
 	if _, ok := key.(identityContextKey); ok {
+		return nil
+	}
+	if _, ok := key.(targetClusterContextKey); ok {
 		return nil
 	}
 	return c.Context.Value(key)

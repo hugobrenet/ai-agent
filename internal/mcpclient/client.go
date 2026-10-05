@@ -152,5 +152,9 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	requestCopy := request.Clone(request.Context())
 	requestCopy.Header = request.Header.Clone()
 	requestCopy.Header.Set("Authorization", "Bearer "+token)
+	requestCopy.Header.Del(auth.ClusterIDHeader)
+	if clusterID := auth.TargetClusterFromContext(request.Context()); clusterID != "" {
+		requestCopy.Header.Set(auth.ClusterIDHeader, clusterID)
+	}
 	return t.base.RoundTrip(requestCopy)
 }

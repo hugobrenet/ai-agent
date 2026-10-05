@@ -86,6 +86,8 @@ om ai chat
 For a private agent CA, also set `OPENSVC_AI_AGENT_CA_FILE`.
 See the [client guide](docs/om-ai.md) for more commands.
 
+For OpenID clients, see the [HTTP header contract](docs/webapp.md).
+
 ## License
 
 See [LICENSE](LICENSE).
