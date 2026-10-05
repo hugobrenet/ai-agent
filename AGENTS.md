@@ -44,8 +44,8 @@ and SQLite through `database/sql` and `modernc.org/sqlite`.
 - `internal/agent`: provider-neutral turn loop, history validation, system
   prompt and sequential execution of model-requested MCP tools.
 - `internal/llm`: neutral model contracts and events. Protocol adapters under
-  `responses` and `chatcompletions` implement these contracts; the neutral
-  package must not import its adapters.
+  `responses`, `chatcompletions` and `messages` implement these contracts;
+  the neutral package must not import its adapters.
 - `internal/llmfactory`: client construction selected by protocol, not by
   provider brand or model name.
 - `internal/conversation`: ownership, turn lifecycle, retention and storage
@@ -100,8 +100,9 @@ Conversations must not retain MCP sessions or provider-specific state.
 - Functional MCP tool errors can return to the model; MCP transport failures
   stop the turn. Do not invent daemon data or hide authorization failures.
 - Protocol adapters translate wire events into neutral events, bound I/O,
-  disable redirects and set provider storage to false. Keep provider-specific
-  parsing and completion semantics out of the orchestration loop.
+  disable redirects and set provider storage to false where the protocol
+  supports it. Keep provider-specific parsing and completion semantics out of
+  the orchestration loop.
 - Bind all conversation operations to verified `cluster_id`, `issuer` and
   `subject`. Foreign and missing conversation IDs share the same public error.
 - Serialize turns per conversation without holding a database transaction

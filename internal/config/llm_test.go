@@ -124,3 +124,32 @@ func TestLoadLLMRequiresBearerTokenWithoutRetainingIt(t *testing.T) {
 		t.Fatal("LLM config retained the API token")
 	}
 }
+
+func TestLoadLLMMessagesAuthentication(t *testing.T) {
+	for _, mode := range []string{LLMAuthModeAPIKey, LLMAuthModeBearer, LLMAuthModeNone} {
+		t.Run(mode, func(t *testing.T) {
+			values := map[string]string{
+				"OPENSVC_AI_LLM_PROTOCOL":  LLMProtocolMessages,
+				"OPENSVC_AI_LLM_BASE_URL":  "https://api.anthropic.com/v1",
+				"OPENSVC_AI_LLM_MODEL":     "test-model",
+				"OPENSVC_AI_LLM_AUTH_MODE": mode,
+				LLMAPITokenEnv:             "not-retained",
+			}
+			getenv := func(key string) string { return values[key] }
+			config, err := loadLLM(getenv)
+			if err != nil || config.Protocol != LLMProtocolMessages || config.AuthMode != mode || config.APITokenEnv != LLMAPITokenEnv {
+				t.Fatalf("config=%#v error=%v", config, err)
+			}
+			delete(values, LLMAPITokenEnv)
+			if _, err := loadLLM(getenv); (err != nil) != (mode != LLMAuthModeNone) {
+				t.Fatalf("missing key error=%v", err)
+			}
+		})
+	}
+	for _, protocol := range []string{LLMProtocolResponses, LLMProtocolChatCompletions} {
+		values := map[string]string{"OPENSVC_AI_LLM_PROTOCOL": protocol, "OPENSVC_AI_LLM_BASE_URL": "https://api.example.test/v1", "OPENSVC_AI_LLM_MODEL": "test-model", "OPENSVC_AI_LLM_AUTH_MODE": LLMAuthModeAPIKey, LLMAPITokenEnv: "present"}
+		if _, err := loadLLM(func(key string) string { return values[key] }); err == nil || !strings.Contains(err.Error(), "requires the messages protocol") {
+			t.Fatalf("incompatible auth error=%v", err)
+		}
+	}
+}
