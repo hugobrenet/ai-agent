@@ -55,3 +55,37 @@ func TestTargetClusterHeaderIsCheckedBeforeProtectedOperation(t *testing.T) {
 		})
 	}
 }
+
+func TestTargetNodeHeaderIsCheckedBeforeProtectedOperation(t *testing.T) {
+	for _, values := range [][]string{nil, {"node-b"}, {""}, {"node-b", "node-b"}, {"node-a,node-b"}, {" node-b "}, {strings.Repeat("x", 257)}, {"node\nb"}} {
+		calls := 0
+		wantNode := ""
+		wantValid := len(values) == 0 || len(values) == 1 && values[0] == "node-b"
+		if len(values) == 1 {
+			wantNode = values[0]
+		}
+		verifier := tokenVerifierFunc(func(ctx context.Context, _ string) (auth.Identity, error) {
+			calls++
+			if auth.TargetNodeFromContext(ctx) != wantNode {
+				t.Fatal("verifier lost node routing hint")
+			}
+			return auth.Identity{ClusterID: "cluster-a", Issuer: "issuer", Subject: "subject"}, nil
+		})
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get(auth.NodeHeader) != "" || auth.TargetNodeFromContext(r.Context()) != wantNode {
+				t.Fatal("node header was not moved to private request context")
+			}
+			w.WriteHeader(204)
+		})
+		request := httptest.NewRequest("GET", "/v1/conversations", nil)
+		request.Header.Set("Authorization", "Bearer bearer")
+		for _, value := range values {
+			request.Header.Add(auth.NodeHeader, value)
+		}
+		response := httptest.NewRecorder()
+		requireAccessToken(verifier, auditLogger{logger: discardAuditLogger()}, next).ServeHTTP(response, request)
+		if wantValid && (calls != 1 || response.Code != 204) || !wantValid && (calls != 0 || response.Code != 401) {
+			t.Fatalf("headers=%q status=%d calls=%d", values, response.Code, calls)
+		}
+	}
+}

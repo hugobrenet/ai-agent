@@ -61,11 +61,12 @@ Conversations must not retain MCP sessions or provider-specific state.
 - Before every protected operation, check the native RS256 access JWT shape,
   required `cluster_id/sub/iss/exp`, `token_use=access` and optional `nbf`.
   Decoded claims alone never establish identity.
-- OpenID requests require one `X-OpenSVC-Cluster-ID` header and a JWT with
+- OpenID requests require one `X-OpenSVC-Cluster-ID` and one `X-OpenSVC-Node`
+  header, and a JWT with
   `iss/sub/aud/exp`, an asymmetric signing algorithm and `kid`. Check optional
   `nbf`; the MCP/daemon validates the issuer, audience and signature. Native
   markers must not fall back to OpenID; an explicit native target must match
-  the token's cluster ID.
+  the token's cluster ID and an explicit node must match its issuer.
 - Authenticate through the configured MCP's `GET /mcp/auth/whoami` bridge,
   which delegates signature verification to daemon `GET /api/auth/whoami`.
   Require returned issuer, subject and expiry to match the supplied token,
@@ -73,8 +74,8 @@ Conversations must not retain MCP sessions or provider-specific state.
 - Complete authentication before reading prompts, accessing conversations or
   starting an SSE response. Invalid tokens return 401; unavailable verification
   returns 503. No offline fallback, identity cache or local verification keys.
-- Delegate the unchanged JWT and explicit target header to MCP in private
-  request context; hide both from LLM contexts. Never retain
+- Delegate the unchanged JWT and explicit cluster/node headers to MCP in private
+  request context; hide all from LLM contexts. Never retain
   it in a shared client or global state. Daemon grants remain authoritative.
 - Keep OpenSVC and provider credentials separate. Never place OpenSVC JWTs,
   identities or grants in LLM contexts, prompts, tool arguments or provider
@@ -82,6 +83,11 @@ Conversations must not retain MCP sessions or provider-specific state.
 - Use HTTPS with TLS 1.2+, validate MCP chain and hostname, and bind delegated
   credentials to the configured origin. No MCP redirects or environment proxies.
   An explicit MCP CA bundle replaces system roots.
+- Browser CORS is opt-in through `OPENSVC_AI_CORS_ALLOWED_ORIGINS`: exact
+  origins or a standalone `*`. Handle preflights before JWT authentication;
+  real operations still authenticate. Never enable automatic browser credentials
+  or derive CORS trust from JWT claims or client targets. Preserve streaming
+  interfaces and put CORS headers on allowed-origin errors as well as successes.
 - Never expose credentials in logs, errors, API responses or stored history.
   Audit records contain identifiers, tool names, counters, durations and stable
   codes, not prompts, model text, tool arguments/results or raw upstream errors.

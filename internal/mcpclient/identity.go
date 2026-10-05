@@ -21,7 +21,7 @@ const (
 // Verify delegates JWT signature verification to the daemon through a
 // narrow HTTPS MCP route. No keys, identities or tokens are cached here.
 func (c *Client) Verify(ctx context.Context, raw string) (auth.Identity, error) {
-	delegation, err := auth.CheckDelegation(raw, auth.TargetClusterFromContext(ctx))
+	delegation, err := auth.CheckDelegation(raw, auth.TargetClusterFromContext(ctx), auth.TargetNodeFromContext(ctx))
 	if err != nil {
 		return auth.Identity{}, err
 	}

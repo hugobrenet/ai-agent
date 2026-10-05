@@ -45,11 +45,11 @@ type jwtClaims struct {
 
 // CheckDelegation only checks the token shape and proposed target. The MCP
 // must authenticate the exact token and confirm the returned identity.
-func CheckDelegation(raw, targetCluster string) (Delegation, error) {
+func CheckDelegation(raw, targetCluster, targetNode string) (Delegation, error) {
 	if raw == "" || len(raw) > 16<<10 {
 		return Delegation{}, ErrInvalidToken
 	}
-	if targetCluster != "" && !validClaim(targetCluster) {
+	if targetCluster != "" && !validTarget(targetCluster) || targetNode != "" && !validTarget(targetNode) {
 		return Delegation{}, ErrInvalidToken
 	}
 	var claims jwtClaims
@@ -69,10 +69,13 @@ func CheckDelegation(raw, targetCluster string) (Delegation, error) {
 			return Delegation{}, ErrInvalidToken
 		}
 		targetCluster = claims.ClusterID
+		if targetNode != "" && targetNode != claims.Issuer {
+			return Delegation{}, ErrInvalidToken
+		}
 	} else {
 		// OpenID routing is supplied separately. Neither the issuer nor the
 		// audience is an endpoint; only the MCP catalogue can select a daemon.
-		if targetCluster == "" || len(claims.Audience) == 0 || !openIDSigningMethod(token.Method.Alg()) {
+		if targetCluster == "" || targetNode == "" || len(claims.Audience) == 0 || !openIDSigningMethod(token.Method.Alg()) {
 			return Delegation{}, ErrInvalidToken
 		}
 		kid, ok := token.Header["kid"].(string)

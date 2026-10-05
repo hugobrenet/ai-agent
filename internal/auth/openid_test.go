@@ -31,17 +31,22 @@ func TestOpenIDDelegationRequiresTargetAndClaims(t *testing.T) {
 		return raw
 	}
 	raw := sign(nil)
-	delegation, err := CheckDelegation(raw, "cluster-a")
+	delegation, err := CheckDelegation(raw, "cluster-a", "node-b")
 	if err != nil || delegation.ClusterID != "cluster-a" || delegation.Subject != "opaque-subject" || delegation.Issuer != "https://idp.example.test/" {
 		t.Fatalf("delegation=%+v err=%v", delegation, err)
 	}
 	parts := strings.Split(raw, ".")
-	if _, err := CheckDelegation(parts[0]+"."+parts[1]+".aW52YWxpZA", "cluster-a"); err != nil {
+	if _, err := CheckDelegation(parts[0]+"."+parts[1]+".aW52YWxpZA", "cluster-a", "node-b"); err != nil {
 		t.Fatal("signature verification must be delegated to MCP/daemon")
 	}
 	for _, target := range []string{"", " padded ", "bad\ncluster", strings.Repeat("x", 257)} {
-		if _, err := CheckDelegation(raw, target); !errors.Is(err, ErrInvalidToken) {
+		if _, err := CheckDelegation(raw, target, "node-b"); !errors.Is(err, ErrInvalidToken) {
 			t.Fatal("missing or invalid target accepted")
+		}
+	}
+	for _, node := range []string{"", " padded ", "bad\nnode", "node-a,node-b", strings.Repeat("x", 257)} {
+		if _, err := CheckDelegation(raw, "cluster-a", node); !errors.Is(err, ErrInvalidToken) {
+			t.Fatal("missing or invalid node accepted")
 		}
 	}
 	for name, change := range map[string]func(jwt.MapClaims, map[string]any){
@@ -61,12 +66,12 @@ func TestOpenIDDelegationRequiresTargetAndClaims(t *testing.T) {
 		"native cluster must not fall back":    func(c jwt.MapClaims, _ map[string]any) { c["cluster_id"] = "cluster-a" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := CheckDelegation(sign(change), "cluster-a"); !errors.Is(err, ErrInvalidToken) {
+			if _, err := CheckDelegation(sign(change), "cluster-a", "node-b"); !errors.Is(err, ErrInvalidToken) {
 				t.Fatalf("got %v", err)
 			}
 		})
 	}
-	if _, err := CheckDelegation(sign(func(c jwt.MapClaims, _ map[string]any) { c["aud"] = []string{"client-a", "client-b"} }), "cluster-a"); err != nil {
+	if _, err := CheckDelegation(sign(func(c jwt.MapClaims, _ map[string]any) { c["aud"] = []string{"client-a", "client-b"} }), "cluster-a", "node-b"); err != nil {
 		t.Fatal("valid audience array rejected")
 	}
 	for _, method := range []jwt.SigningMethod{jwt.SigningMethodHS256, jwt.SigningMethodNone} {
@@ -80,7 +85,7 @@ func TestOpenIDDelegationRequiresTargetAndClaims(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := CheckDelegation(raw, "cluster-a"); !errors.Is(err, ErrInvalidToken) {
+		if _, err := CheckDelegation(raw, "cluster-a", "node-b"); !errors.Is(err, ErrInvalidToken) {
 			t.Fatal("unsafe OpenID signing algorithm accepted")
 		}
 	}
