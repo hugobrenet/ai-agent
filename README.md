@@ -47,6 +47,21 @@ Replace the example values. Use `chat_completions` instead of `responses` when
 required by the provider. For a provider without authentication, set
 `OPENSVC_AI_LLM_AUTH_MODE=none` and omit the API token.
 
+For the Anthropic Messages API, use:
+
+```dotenv
+OPENSVC_AI_LLM_PROTOCOL=messages
+OPENSVC_AI_LLM_BASE_URL=https://api.anthropic.com/v1
+OPENSVC_AI_LLM_MODEL=your-anthropic-model
+OPENSVC_AI_LLM_AUTH_MODE=api_key
+OPENSVC_AI_LLM_API_TOKEN=replace-me
+```
+
+`api_key` sends `x-api-key`; `bearer` remains available for Messages endpoints.
+Messages supports streamed text and MCP tool calls, without extended thinking
+or provider-hosted tools. Keep the API key only in the protected environment
+file, never in Git or conversation history.
+
 Optional: `OPENSVC_AI_MCP_CA_FILE` supplies a private CA bundle for MCP HTTPS.
 Otherwise, system CA roots are used. Restrict network access to the agent port.
 

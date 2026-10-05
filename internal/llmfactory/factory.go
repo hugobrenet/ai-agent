@@ -8,12 +8,26 @@ import (
 	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
 	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
 	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/chatcompletions"
+	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/messages"
 	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/responses"
 )
 
 // New creates an LLM client selected by wire protocol, never by provider name.
 func New(processConfig config.LLMConfig, httpClient *http.Client) (llm.Client, error) {
 	switch processConfig.Protocol {
+	case config.LLMProtocolMessages:
+		var tokenSource messages.TokenSource
+		if processConfig.AuthMode == config.LLMAuthModeBearer || processConfig.AuthMode == config.LLMAuthModeAPIKey {
+			tokenSource = environmentTokenSource(processConfig.APITokenEnv)
+		}
+		return messages.New(messages.Config{
+			BaseURL:         processConfig.BaseURL,
+			Model:           processConfig.Model,
+			AuthMode:        processConfig.AuthMode,
+			TokenSource:     tokenSource,
+			Timeout:         processConfig.Timeout,
+			MaxOutputTokens: processConfig.MaxOutputTokens,
+		}, httpClient)
 	case config.LLMProtocolResponses:
 		var tokenSource responses.TokenSource
 		if processConfig.AuthMode == config.LLMAuthModeBearer {

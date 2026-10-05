@@ -15,8 +15,10 @@ const (
 	maximumMaxOutputTokens     = 131072
 	LLMProtocolResponses       = "responses"
 	LLMProtocolChatCompletions = "chat_completions"
+	LLMProtocolMessages        = "messages"
 	LLMAuthModeNone            = "none"
 	LLMAuthModeBearer          = "bearer"
+	LLMAuthModeAPIKey          = "api_key"
 )
 
 // LLMConfig contains non-secret process configuration for one LLM backend.
@@ -51,7 +53,7 @@ func loadLLM(getenv func(string) string) (LLMConfig, error) {
 	if config.Protocol == "" {
 		return LLMConfig{}, fmt.Errorf("OPENSVC_AI_LLM_PROTOCOL is required")
 	}
-	if config.Protocol != LLMProtocolResponses && config.Protocol != LLMProtocolChatCompletions {
+	if config.Protocol != LLMProtocolResponses && config.Protocol != LLMProtocolChatCompletions && config.Protocol != LLMProtocolMessages {
 		return LLMConfig{}, fmt.Errorf("OPENSVC_AI_LLM_PROTOCOL %q is unsupported", config.Protocol)
 	}
 	if config.BaseURL == "" {
@@ -62,12 +64,15 @@ func loadLLM(getenv func(string) string) (LLMConfig, error) {
 	}
 	switch config.AuthMode {
 	case LLMAuthModeNone:
-	case LLMAuthModeBearer:
+	case LLMAuthModeBearer, LLMAuthModeAPIKey:
+		if config.AuthMode == LLMAuthModeAPIKey && config.Protocol != LLMProtocolMessages {
+			return LLMConfig{}, fmt.Errorf("OPENSVC_AI_LLM_AUTH_MODE api_key requires the messages protocol")
+		}
 		if getenv(LLMAPITokenEnv) == "" {
-			return LLMConfig{}, fmt.Errorf("%s is required for bearer authentication", LLMAPITokenEnv)
+			return LLMConfig{}, fmt.Errorf("%s is required for %s authentication", LLMAPITokenEnv, config.AuthMode)
 		}
 	default:
-		return LLMConfig{}, fmt.Errorf("OPENSVC_AI_LLM_AUTH_MODE must be %q or %q", LLMAuthModeNone, LLMAuthModeBearer)
+		return LLMConfig{}, fmt.Errorf("OPENSVC_AI_LLM_AUTH_MODE must be %q, %q or %q (messages only)", LLMAuthModeNone, LLMAuthModeBearer, LLMAuthModeAPIKey)
 	}
 
 	if value := strings.TrimSpace(getenv("OPENSVC_AI_LLM_TIMEOUT")); value != "" {
