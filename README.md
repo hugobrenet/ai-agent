@@ -50,6 +50,10 @@ required by the provider. For a provider without authentication, set
 Optional: `OPENSVC_AI_MCP_CA_FILE` supplies a private CA bundle for MCP HTTPS.
 Otherwise, system CA roots are used. Restrict network access to the agent port.
 
+For browser clients, set `OPENSVC_AI_CORS_ALLOWED_ORIGINS` to comma-separated
+webapp origins, or `*` to allow all origins. Empty by default. See the
+[browser client guide](docs/webapp.md#cors) for examples and restrictions.
+
 ## Start
 
 ```bash

@@ -14,8 +14,9 @@ type HealthResponse struct {
 }
 
 type HandlerConfig struct {
-	MaxConcurrentAsks int
-	AuditLogger       *slog.Logger
+	MaxConcurrentAsks  int
+	AuditLogger        *slog.Logger
+	CORSAllowedOrigins []string
 }
 
 func NewHandler(asker Asker, conversations ConversationService, verifier auth.TokenVerifier, config HandlerConfig) (http.Handler, error) {
@@ -45,7 +46,11 @@ func NewHandler(asker Asker, conversations ConversationService, verifier auth.To
 	mux.Handle("PATCH /v1/conversations/{id}", requireAccessToken(verifier, audit, serveUpdateConversationTitle(conversations, audit)))
 	mux.Handle("DELETE /v1/conversations/{id}", requireAccessToken(verifier, audit, serveDeleteConversation(conversations, audit)))
 	mux.Handle("POST /v1/conversations/{id}/turns", requireAccessToken(verifier, audit, serveConversationTurn(conversations, limiter, audit)))
-	return withRequestID(mux), nil
+	handler, err := withCORS(mux, config.CORSAllowedOrigins)
+	if err != nil {
+		return nil, err
+	}
+	return withRequestID(handler), nil
 }
 
 func getHealth(response http.ResponseWriter, _ *http.Request) {

@@ -37,10 +37,13 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 	}
 	token := identityToken(t, key, "cluster-a", "alice")
 	target := ""
+	node := ""
 	ctx := t.Context()
 	if openID {
 		target = "cluster-a"
+		node = "node-b"
 		ctx = auth.WithTargetCluster(ctx, target)
+		ctx = auth.WithTargetNode(ctx, node)
 		unsigned := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": "https://idp.example.test/", "sub": "opaque-subject", "aud": "client", "preferred_username": "alice", "exp": time.Now().Add(time.Hour).Unix()})
 		unsigned.Header["kid"] = "key"
 		token, err = unsigned.SignedString(key)
@@ -48,7 +51,7 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 			t.Fatal(err)
 		}
 	}
-	delegation, err := auth.CheckDelegation(token, target)
+	delegation, err := auth.CheckDelegation(token, target, node)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +60,7 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 	var calls atomic.Int32
 	endpoint, ca := serveHTTPS(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.Header.Get(auth.ClusterIDHeader) != target {
+		if r.Header.Get(auth.ClusterIDHeader) != target || r.Header.Get(auth.NodeHeader) != node {
 			t.Error("whoami request lost its explicit target")
 		}
 		if r.URL.Path != "/mcp/auth/whoami" || r.Method != "GET" || r.Header.Get("Authorization") != "Bearer "+token {

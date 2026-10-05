@@ -156,5 +156,9 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	if clusterID := auth.TargetClusterFromContext(request.Context()); clusterID != "" {
 		requestCopy.Header.Set(auth.ClusterIDHeader, clusterID)
 	}
+	requestCopy.Header.Del(auth.NodeHeader)
+	if node := auth.TargetNodeFromContext(request.Context()); node != "" {
+		requestCopy.Header.Set(auth.NodeHeader, node)
+	}
 	return t.base.RoundTrip(requestCopy)
 }

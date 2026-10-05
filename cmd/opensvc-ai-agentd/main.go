@@ -93,8 +93,9 @@ func main() {
 	}()
 	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	handler, err := api.NewHandler(orchestrator, conversationService, mcpClient, api.HandlerConfig{
-		MaxConcurrentAsks: processConfig.MaxConcurrentAsks,
-		AuditLogger:       auditLogger,
+		MaxConcurrentAsks:  processConfig.MaxConcurrentAsks,
+		AuditLogger:        auditLogger,
+		CORSAllowedOrigins: processConfig.CORSAllowedOrigins,
 	})
 	if err != nil {
 		_ = conversationStore.Close()

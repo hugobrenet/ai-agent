@@ -29,10 +29,14 @@ func TestWithoutAuthenticationPreservesUnrelatedContext(t *testing.T) {
 	base, cancel := context.WithCancel(context.WithValue(t.Context(), unrelatedKey{}, "value"))
 	ctx := WithBearerToken(base, "jwt-marker")
 	ctx = WithTargetCluster(ctx, "cluster-a")
+	ctx = WithTargetNode(ctx, "node-b")
 	ctx = WithIdentity(ctx, Identity{Subject: "alice", Issuer: "node-a", Grants: []string{"guest"}, ExpiresAt: time.Now().Add(time.Hour)})
 	sanitized := WithoutAuthentication(ctx)
 	if TargetClusterFromContext(ctx) != "cluster-a" || TargetClusterFromContext(sanitized) != "" {
 		t.Fatal("target cluster was lost or leaked into LLM context")
+	}
+	if TargetNodeFromContext(ctx) != "node-b" || TargetNodeFromContext(sanitized) != "" {
+		t.Fatal("target node was lost or leaked into LLM context")
 	}
 
 	if _, ok := BearerTokenFromContext(sanitized); ok {

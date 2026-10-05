@@ -25,15 +25,18 @@ func TestCheckDelegationChecksClaimsNotSignature(t *testing.T) {
 	// local check, must refuse this credential before it becomes an Identity.
 	parts := strings.Split(raw, ".")
 	raw = parts[0] + "." + parts[1] + ".aW52YWxpZA"
-	delegation, err := CheckDelegation(raw, "")
+	delegation, err := CheckDelegation(raw, "", "")
 	if err != nil || delegation.ClusterID != "cluster-id" || delegation.Subject != "alice" || delegation.Issuer != "node-a" {
 		t.Fatalf("unexpected delegation: %+v, %v", delegation, err)
 	}
-	if _, err := CheckDelegation(raw, "cluster-id"); err != nil {
+	if _, err := CheckDelegation(raw, "cluster-id", "node-a"); err != nil {
 		t.Fatal("matching native target rejected")
 	}
-	if _, err := CheckDelegation(raw, "other-cluster"); !errors.Is(err, ErrInvalidToken) {
+	if _, err := CheckDelegation(raw, "other-cluster", ""); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal("native target override accepted")
+	}
+	if _, err := CheckDelegation(raw, "cluster-id", "node-b"); !errors.Is(err, ErrInvalidToken) {
+		t.Fatal("native node override accepted")
 	}
 	for name, change := range map[string]func(jwt.MapClaims){
 		"no cluster":      func(c jwt.MapClaims) { delete(c, "cluster_id") },
@@ -55,13 +58,13 @@ func TestCheckDelegationChecksClaimsNotSignature(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := CheckDelegation(raw, ""); !errors.Is(err, ErrInvalidToken) {
+			if _, err := CheckDelegation(raw, "", ""); !errors.Is(err, ErrInvalidToken) {
 				t.Fatalf("got %v", err)
 			}
 		})
 	}
 	for _, raw := range []string{"", "bad", strings.Repeat("x", (16<<10)+1)} {
-		if _, err := CheckDelegation(raw, ""); !errors.Is(err, ErrInvalidToken) {
+		if _, err := CheckDelegation(raw, "", ""); !errors.Is(err, ErrInvalidToken) {
 			t.Fatalf("got %v", err)
 		}
 	}
@@ -69,7 +72,7 @@ func TestCheckDelegationChecksClaimsNotSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CheckDelegation(raw, ""); !errors.Is(err, ErrInvalidToken) {
+	if _, err := CheckDelegation(raw, "", ""); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal("non-native algorithm accepted")
 	}
 }

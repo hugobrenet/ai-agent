@@ -20,11 +20,12 @@ const (
 )
 
 type Config struct {
-	ListenAddress     string
-	TLSCertFile       string
-	TLSKeyFile        string
-	MaxConcurrentAsks int
-	ShutdownTimeout   time.Duration
+	ListenAddress      string
+	TLSCertFile        string
+	TLSKeyFile         string
+	MaxConcurrentAsks  int
+	ShutdownTimeout    time.Duration
+	CORSAllowedOrigins []string
 }
 
 func Load() (Config, error) {
@@ -74,12 +75,17 @@ func load(getenv func(string) string) (Config, error) {
 		}
 		shutdownTimeout = parsed
 	}
+	origins, err := parseCORSOrigins(getenv("OPENSVC_AI_CORS_ALLOWED_ORIGINS"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse OPENSVC_AI_CORS_ALLOWED_ORIGINS: %w", err)
+	}
 	return Config{
-		ListenAddress:     address,
-		TLSCertFile:       certFile,
-		TLSKeyFile:        keyFile,
-		MaxConcurrentAsks: maxConcurrentAsks,
-		ShutdownTimeout:   shutdownTimeout,
+		ListenAddress:      address,
+		TLSCertFile:        certFile,
+		TLSKeyFile:         keyFile,
+		MaxConcurrentAsks:  maxConcurrentAsks,
+		ShutdownTimeout:    shutdownTimeout,
+		CORSAllowedOrigins: origins,
 	}, nil
 }
 

@@ -16,7 +16,8 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		rawToken, ok := bearerToken(request.Header.Get("Authorization"))
 		targetCluster, targetErr := auth.TargetClusterFromHeader(request.Header)
-		if !ok || targetErr != nil || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
+		targetNode, nodeErr := auth.TargetNodeFromHeader(request.Header)
+		if !ok || targetErr != nil || nodeErr != nil || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -25,6 +26,7 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 			return
 		}
 		ctx := auth.WithTargetCluster(request.Context(), targetCluster)
+		ctx = auth.WithTargetNode(ctx, targetNode)
 		identity, err := verifier.Verify(ctx, rawToken)
 		if errors.Is(err, auth.ErrVerificationUnavailable) {
 			audit.event(request.Context(), "auth_unavailable", slog.Int("status", http.StatusServiceUnavailable), slog.String("code", "authentication_unavailable"))
@@ -49,6 +51,7 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 		ctx = auth.WithIdentity(ctx, identity)
 		request.Header.Del("Authorization")
 		request.Header.Del(auth.ClusterIDHeader)
+		request.Header.Del(auth.NodeHeader)
 		next.ServeHTTP(response, request.WithContext(ctx))
 	})
 }

@@ -77,7 +77,7 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		target := r.Header.Get(auth.ClusterIDHeader)
 		options := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"}), jwt.WithExpirationRequired()}
 		if openID {
-			if target != "cluster-a" && target != "cluster-b" {
+			if (target != "cluster-a" && target != "cluster-b") || r.Header.Get(auth.NodeHeader) != "node-b" {
 				w.WriteHeader(401)
 				return
 			}
@@ -128,6 +128,7 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		request := requestWithToken(method, path, token, body)
 		if openID {
 			request.Header.Set(auth.ClusterIDHeader, targets[token])
+			request.Header.Set(auth.NodeHeader, "node-b")
 		}
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
