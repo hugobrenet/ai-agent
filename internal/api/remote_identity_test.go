@@ -37,8 +37,8 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		t.Fatal(err)
 	}
 	targets := make(map[string]string)
-	sign := func(cluster, user string, key *rsa.PrivateKey) string {
-		claims := jwt.MapClaims{"cluster_id": cluster, "iss": "node-a", "sub": user, "exp": time.Now().Add(time.Hour).Unix(), "token_use": "access"}
+	signWithExpiry := func(cluster, user string, key *rsa.PrivateKey, expiresAt time.Time) string {
+		claims := jwt.MapClaims{"cluster_id": cluster, "iss": "node-a", "sub": user, "exp": expiresAt.Unix(), "token_use": "access"}
 		if openID {
 			delete(claims, "cluster_id")
 			delete(claims, "token_use")
@@ -55,6 +55,9 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		}
 		targets[raw] = cluster
 		return raw
+	}
+	sign := func(cluster, user string, key *rsa.PrivateKey) string {
+		return signWithExpiry(cluster, user, key, time.Now().Add(time.Hour))
 	}
 	alice := sign("cluster-a", "alice", key)
 	bob := sign("cluster-a", "bob", key)
@@ -167,14 +170,22 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		t.Fatal(err)
 	}
 	forged := sign("cluster-a", "alice", foreignKey)
-	for _, tc := range []struct{ method, path, body string }{
-		{"GET", "/v1/conversations", ""}, {"GET", path, ""}, {"DELETE", path, ""},
-		{"PATCH", path, `{"title":"forged"}`}, {"POST", path + "/turns", `{"prompt":"forged"}`},
-		{"POST", "/v1/ask", `{"prompt":"forged"}`}, {"POST", "/v1/conversations", ""},
-	} {
-		response := call(tc.method, tc.path, forged, tc.body)
-		if response.Code != 401 || strings.Contains(response.Body.String(), forged) {
-			t.Fatalf("forged JWT admitted: status=%d", response.Code)
+	expired := signWithExpiry("cluster-a", "alice", key, time.Now().Add(-time.Second))
+	targets["malformed"] = "cluster-a"
+	for _, token := range []string{forged, expired, "malformed"} {
+		for _, tc := range []struct{ method, path, body string }{
+			{"GET", "/v1/conversations", ""}, {"GET", path, ""}, {"GET", path + "/messages", ""}, {"DELETE", path, ""},
+			{"PATCH", path, `{"title":"refused"}`}, {"POST", path + "/turns", `{"prompt":"refused"}`},
+			{"POST", "/v1/ask", `{"prompt":"refused"}`}, {"POST", "/v1/conversations", ""},
+		} {
+			before := checks.Load()
+			response := call(tc.method, tc.path, token, tc.body)
+			if response.Code != 401 || strings.Contains(response.Body.String(), token) {
+				t.Fatalf("refused credential admitted: status=%d", response.Code)
+			}
+			if checks.Load() != before+1 {
+				t.Fatal("agent did not delegate credential validation to MCP")
+			}
 		}
 	}
 	if modelCalls.Load() != 0 {

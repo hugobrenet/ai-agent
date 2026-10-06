@@ -37,7 +37,7 @@ and SQLite through `database/sql` and `modernc.org/sqlite`.
 - `internal/api`: versioned HTTP routes, authentication middleware, SSE,
   concurrency admission, stable public errors and structured audit events.
   Keep handlers thin.
-- `internal/auth`: native/OpenID JWT prechecks, verified identity and private
+- `internal/auth`: verified identity, HTTP target bounds and private
   request-scoped credentials; remove authentication data from LLM contexts.
 - `internal/mcpclient`: verified HTTPS transport, remote whoami verification,
   request-scoped MCP sessions and bounded tool discovery/results.
@@ -58,19 +58,19 @@ Conversations must not retain MCP sessions or provider-specific state.
 
 ## Authentication and trust
 
-- Before every protected operation, check the native RS256 access JWT shape,
-  required `cluster_id/sub/iss/exp`, `token_use=access` and optional `nbf`.
-  Decoded claims alone never establish identity.
-- OpenID requests require one `X-OpenSVC-Cluster-ID` and one `X-OpenSVC-Node`
-  header, and a JWT with
-  `iss/sub/aud/exp`, an asymmetric signing algorithm and `kid`. Check optional
-  `nbf`; the MCP/daemon validates the issuer, audience and signature. Native
-  markers must not fall back to OpenID; an explicit native target must match
-  the token's cluster ID and an explicit node must match its issuer.
+- Treat the bearer token as opaque. Bound its size and reject missing,
+  duplicate or malformed Authorization headers and query-string tokens.
+  Do not decode JWTs or duplicate OpenSVC token rules: MCP owns profile
+  selection, claims, algorithms, dates, target coherence and catalogue routing;
+  the daemon verifies signatures and permissions.
+- Read optional `X-OpenSVC-Cluster-ID` and `X-OpenSVC-Node` headers as bounded,
+  unambiguous routing hints, without interpreting them against token claims.
+  Forward them unchanged; MCP decides which profile requires them.
 - Authenticate through the configured MCP's `GET /mcp/auth/whoami` bridge,
   which delegates signature verification to daemon `GET /api/auth/whoami`.
-  Require returned issuer, subject and expiry to match the supplied token,
-  and the cluster ID to match the native claim or explicit OpenID target.
+  Require a bounded JSON response with complete identity fields and a future
+  expiry. This returned identity is authoritative; an explicit requested cluster
+  must match the response. Apply the returned expiry to the operation deadline.
 - Complete authentication before reading prompts, accessing conversations or
   starting an SSE response. Invalid tokens return 401; unavailable verification
   returns 503. No offline fallback, identity cache or local verification keys.

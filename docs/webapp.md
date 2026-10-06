@@ -25,13 +25,14 @@ with a native JWT, they must match its `cluster_id` and `iss`, respectively.
 
 ## Verification and forwarding
 
-The agent checks structure, required `iss/sub/aud/exp`, optional `nbf`, a
+The MCP checks structure, required `iss/sub/aud/exp`, optional `nbf`, a
 nonempty `kid`, and asymmetric algorithms RS256/384/512, PS256/384/512 or
 ES256/384/512. OpenID tokens in this profile do not carry the native
 `cluster_id` or `token_use` markers: tokens carrying either are subject to
 native checks and never fall back to OpenID after a refusal.
 
-These checks do not establish authenticity. The agent forwards the exact
+These checks do not establish authenticity. The agent treats the token as
+opaque and forwards the exact
 Bearer and both target headers to its configured MCP's `GET /mcp/auth/whoami`.
 The MCP must validate through the target daemon, including the expected
 authentication strategy, signature, issuer and audience, and return:
@@ -45,13 +46,18 @@ authentication strategy, signature, issuer and audience, and return:
 }
 ```
 
-The agent requires an exact match, including the opaque OpenID `sub`, not
-`preferred_username`. Invalid credentials or identity mismatches return 401;
-unavailable verification returns 503. No conversation or model access is
+The agent validates this bounded JSON response: complete identity fields,
+a future expiry, and the requested cluster ID. It does not decode the JWT or
+compare claims locally. The returned subject remains the opaque OpenID `sub`,
+not `preferred_username`. MCP credential refusals, expired identities or a
+requested-cluster mismatch return 401; unavailable verification or malformed
+bridge responses return 503. No conversation or model access is
 allowed before this check. Conversation ownership remains cluster + issuer
 + subject. Each subsequent MCP request carries the same Bearer and targets
 from private request context; none is exposed to the model or stored as
 a credential. TLS verification and origin binding apply to all headers.
+The returned expiry bounds the protected operation. Authentication itself
+uses a short timeout, without locally reading the token's expiry.
 
 ## Conversation messages
 

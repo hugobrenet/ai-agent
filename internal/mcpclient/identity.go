@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
 )
@@ -18,13 +20,10 @@ const (
 	maxIdentityResponseBytes = 16 << 10
 )
 
-// Verify delegates JWT signature verification to the daemon through a
-// narrow HTTPS MCP route. No keys, identities or tokens are cached here.
+// Verify treats the bearer as opaque and obtains the authenticated identity
+// from the configured HTTPS MCP. OpenSVC token rules belong to MCP/daemon.
+// No keys, identities or tokens are cached here.
 func (c *Client) Verify(ctx context.Context, raw string) (auth.Identity, error) {
-	delegation, err := auth.CheckDelegation(raw, auth.TargetClusterFromContext(ctx), auth.TargetNodeFromContext(ctx))
-	if err != nil {
-		return auth.Identity{}, err
-	}
 	endpoint, err := url.Parse(c.endpoint)
 	if err != nil {
 		return auth.Identity{}, auth.ErrVerificationUnavailable
@@ -33,8 +32,6 @@ func (c *Client) Verify(ctx context.Context, raw string) (auth.Identity, error) 
 	if endpoint.RawPath != "" {
 		endpoint.RawPath = strings.TrimRight(endpoint.RawPath, "/") + "/auth/whoami"
 	}
-	ctx, cancel := context.WithDeadline(ctx, delegation.ExpiresAt)
-	defer cancel()
 	ctx, stop := context.WithTimeout(ctx, identityTimeout)
 	defer stop()
 	request, err := http.NewRequestWithContext(auth.WithBearerToken(ctx, raw), http.MethodGet, endpoint.String(), nil)
@@ -44,9 +41,6 @@ func (c *Client) Verify(ctx context.Context, raw string) (auth.Identity, error) 
 	request.Header.Set("Accept", "application/json")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		if !time.Now().Before(delegation.ExpiresAt) {
-			return auth.Identity{}, auth.ErrInvalidToken
-		}
 		return auth.Identity{}, auth.ErrVerificationUnavailable
 	}
 	defer response.Body.Close()
@@ -68,10 +62,17 @@ func (c *Client) Verify(ctx context.Context, raw string) (auth.Identity, error) 
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return auth.Identity{}, auth.ErrVerificationUnavailable
 	}
-	// The trusted MCP must confirm this request's target, issuer, JWT subject
-	// and expiry. In OpenID, subject is not necessarily the daemon username.
-	if identity.ClusterID != delegation.ClusterID || identity.Subject != delegation.Subject || identity.Issuer != delegation.Issuer || !identity.ExpiresAt.Equal(delegation.ExpiresAt) || !time.Now().Before(identity.ExpiresAt) {
+	// Validate the bridge response, not JWT claims. The trusted MCP owns
+	// profile selection and must return the original subject, not a username.
+	if !validIdentityField(identity.ClusterID) || !validIdentityField(identity.Subject) || !validIdentityField(identity.Issuer) || identity.ExpiresAt.IsZero() {
+		return auth.Identity{}, auth.ErrVerificationUnavailable
+	}
+	if !time.Now().Before(identity.ExpiresAt) {
 		return auth.Identity{}, auth.ErrInvalidToken
 	}
 	return identity, nil
+}
+
+func validIdentityField(value string) bool {
+	return len(value) > 0 && len(value) <= 256 && value == strings.TrimSpace(value) && utf8.ValidString(value) && !strings.ContainsFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.In(r, unicode.Cf) })
 }
