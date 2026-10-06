@@ -3,6 +3,8 @@ package auth
 import (
 	"net/http"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -23,7 +25,7 @@ func TargetNodeFromHeader(header http.Header) (string, error) {
 }
 
 func validTarget(value string) bool {
-	return validClaim(value) && !strings.Contains(value, ",")
+	return len(value) > 0 && len(value) <= 256 && value == strings.TrimSpace(value) && utf8.ValidString(value) && !strings.Contains(value, ",") && !strings.ContainsFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.In(r, unicode.Cf) })
 }
 
 func targetFromHeader(header http.Header, name string) (string, error) {

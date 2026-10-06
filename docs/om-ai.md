@@ -26,6 +26,11 @@ delegated for MCP tools. Persistent conversations are bound to authenticated
 cluster ID, issuer and subject. The client never stores
 the token, messages, or conversation state.
 
+The agent treats the token as opaque. MCP owns JWT decoding, native/OpenID
+profile checks and catalogue routing; the daemon authenticates the token and
+enforces grants. The agent uses the bridge's returned identity and expiry for
+conversation ownership and request deadlines.
+
 Configure the agent's TCP listener and certificate/key files with
 `OPENSVC_AI_LISTEN_ADDR`, `OPENSVC_AI_TLS_CERT_FILE`, and
 `OPENSVC_AI_TLS_KEY_FILE`. Configure its outbound MCP connection with
