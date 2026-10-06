@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/conversation"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 func completeDisplayTurn(t *testing.T, store *Store, id, turnID string, at time.Time, messages []llm.Message) {

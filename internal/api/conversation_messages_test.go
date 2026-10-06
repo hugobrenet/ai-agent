@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/agent"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
+	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/conversation"
 )
 
 func TestConversationMessagesRouteUsesVerifiedIdentityAndDoesNotLogText(t *testing.T) {

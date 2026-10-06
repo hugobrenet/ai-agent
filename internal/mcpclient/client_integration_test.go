@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/auth"
 )
 
 func TestLiveMCPListsTools(t *testing.T) {

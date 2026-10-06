@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/agent"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 var serviceTestNow = time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)

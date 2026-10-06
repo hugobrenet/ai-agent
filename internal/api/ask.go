@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/agent"
 )
 
 const (

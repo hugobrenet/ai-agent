@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
+	"github.com/opensvc/ai-agent/internal/conversation"
 )
 
 // ListMessages reads only display text. Raw tool payloads are deliberately not

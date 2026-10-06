@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 func TestClientStreamsTextAndUsage(t *testing.T) {

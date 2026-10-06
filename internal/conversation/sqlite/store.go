@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
+	"github.com/opensvc/ai-agent/internal/conversation"
 	_ "modernc.org/sqlite"
 )
 

@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/agent"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llmfactory"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/mcpclient"
+	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/config"
+	"github.com/opensvc/ai-agent/internal/llmfactory"
+	"github.com/opensvc/ai-agent/internal/mcpclient"
 )
 
 func TestLiveAgentUsesClusterHealthTool(t *testing.T) {
