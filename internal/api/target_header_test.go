@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/auth"
 )
 
 func TestTargetClusterHeaderIsCheckedBeforeProtectedOperation(t *testing.T) {

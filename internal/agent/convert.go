@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 const (

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/auth"
 )
 
 func TestRequireAccessTokenRemovesAuthorizationHeaderAndPreservesContext(t *testing.T) {

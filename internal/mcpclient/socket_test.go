@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/auth"
 )
 
 func TestClientDoesNotFollowRedirects(t *testing.T) {

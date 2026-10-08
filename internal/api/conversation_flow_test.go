@@ -12,11 +12,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/agent"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
-	conversationsqlite "github.com/hugobrenet/opensvc-ai-agent/internal/conversation/sqlite"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/conversation"
+	conversationsqlite "github.com/opensvc/ai-agent/internal/conversation/sqlite"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {

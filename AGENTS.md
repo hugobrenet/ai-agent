@@ -1,4 +1,4 @@
-# opensvc-ai-agent: context for coding agents
+# ai-agent: context for coding agents
 
 ## Purpose and scope
 
@@ -12,8 +12,11 @@ implementation and any particular LLM provider. OpenSVC semantics and factual
 data collection belong to MCP; orchestration and diagnostic reasoning belong
 to the agent and model.
 
-The binary is `opensvc-ai-agentd`. Use the Go standard library, the MCP Go SDK,
-and SQLite through `database/sql` and `modernc.org/sqlite`.
+The canonical Go module is `github.com/opensvc/ai-agent`, including when
+working in a fork. The binary remains `opensvc-ai-agentd`. Use the Go standard
+library, the MCP Go SDK, and SQLite through `database/sql` and
+`modernc.org/sqlite`. The project is licensed under Apache-2.0; preserve
+attribution notices.
 
 ## Before editing
 

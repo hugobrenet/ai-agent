@@ -18,12 +18,12 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/agent"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
-	conversationsqlite "github.com/hugobrenet/opensvc-ai-agent/internal/conversation/sqlite"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/mcpclient"
+	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/conversation"
+	conversationsqlite "github.com/opensvc/ai-agent/internal/conversation/sqlite"
+	"github.com/opensvc/ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/mcpclient"
 )
 
 func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {

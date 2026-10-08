@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/chatcompletions"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/messages"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/responses"
+	"github.com/opensvc/ai-agent/internal/config"
+	"github.com/opensvc/ai-agent/internal/llm/chatcompletions"
+	"github.com/opensvc/ai-agent/internal/llm/messages"
+	"github.com/opensvc/ai-agent/internal/llm/responses"
 )
 
 func TestNewSelectsResponsesProtocol(t *testing.T) {

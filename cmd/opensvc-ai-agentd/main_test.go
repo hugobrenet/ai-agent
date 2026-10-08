@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
+	"github.com/opensvc/ai-agent/internal/config"
 )
 
 func TestNewHTTPServerHardening(t *testing.T) {

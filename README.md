@@ -1,4 +1,4 @@
-# opensvc-ai-agent
+# ai-agent
 
 Standalone AI agent for OpenSVC cluster diagnostics, usable with `om ai`.
 
@@ -112,4 +112,5 @@ For OpenID clients, see the [HTTP header contract](docs/webapp.md).
 
 ## License
 
-See [LICENSE](LICENSE).
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE).

@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/conversation"
+	"github.com/opensvc/ai-agent/internal/llm"
 	sqliteDriver "modernc.org/sqlite"
 	sqliteLib "modernc.org/sqlite/lib"
 )
