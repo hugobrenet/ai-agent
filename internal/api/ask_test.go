@@ -74,6 +74,7 @@ func TestAskStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health of my cluster"}`))
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -128,6 +129,7 @@ func TestAskRejectsTokenRejectedByVerifier(t *testing.T) {
 	body := &readTrackingBody{reader: strings.NewReader(`{"prompt":"health"}`)}
 	request.Body = body
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -177,6 +179,7 @@ func TestAskRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(test.body))
 			if test.authorization != "" {
 				request.Header.Set("Authorization", test.authorization)
+				request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 			}
 			if test.contentType != "" {
 				request.Header.Set("Content-Type", test.contentType)
@@ -208,6 +211,7 @@ func TestAskStreamsGenericRuntimeError(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -230,6 +234,7 @@ func TestAskStreamsTimeoutError(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -247,6 +252,7 @@ func TestAskSetsAndClearsWriteDeadline(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(response, request)
 
@@ -270,6 +276,7 @@ func TestAskDoesNotEmitAfterCompleted(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -288,6 +295,7 @@ func TestAskDoesNotStreamErrorAfterCancellation(t *testing.T) {
 	cancel()
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`)).WithContext(ctx)
 	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -480,6 +488,7 @@ func allowTestTokenVerifier() auth.TokenVerifier {
 func newAuthenticatedAskRequest(body string) *http.Request {
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	return request
 }

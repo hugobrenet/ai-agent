@@ -5,9 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
-	"encoding/pem"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,9 +38,8 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	}
 	targets := make(map[string]string)
 	signWithExpiry := func(cluster, user string, key *rsa.PrivateKey, expiresAt time.Time) string {
-		claims := jwt.MapClaims{"cluster_id": cluster, "iss": "node-a", "sub": user, "exp": expiresAt.Unix(), "token_use": "access"}
+		claims := jwt.MapClaims{"iss": "node-a", "sub": user, "exp": expiresAt.Unix(), "token_use": "access"}
 		if openID {
-			delete(claims, "cluster_id")
 			delete(claims, "token_use")
 			claims["iss"] = "https://idp.example.test/"
 			claims["sub"] = "opaque-" + user
@@ -61,10 +60,18 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	}
 	alice := sign("cluster-a", "alice", key)
 	bob := sign("cluster-a", "bob", key)
-	otherCluster := sign("cluster-b", "alice", key)
+	// Each cluster's daemon signs native tokens with its own key; one OpenID
+	// provider signs for every cluster and distinguishes them by audience.
+	clusterKeys := map[string]*rsa.PrivateKey{"cluster-a": key, "cluster-b": key}
+	if !openID {
+		if clusterKeys["cluster-b"], err = rsa.GenerateKey(rand.Reader, 2048); err != nil {
+			t.Fatal(err)
+		}
+	}
+	otherCluster := sign("cluster-b", "alice", clusterKeys["cluster-b"])
 	var unavailable atomic.Bool
 	var checks atomic.Int32
-	mcpServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	socket := serveUnixMCP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		checks.Add(1)
 		if unavailable.Load() {
 			w.WriteHeader(502)
@@ -86,22 +93,21 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 			}
 			options = append(options, jwt.WithIssuer("https://idp.example.test/"), jwt.WithAudience("client-"+target))
 		}
-		if _, err := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return &key.PublicKey, nil }, options...); err != nil {
+		// The header selects the daemon that verifies the token: a token of
+		// another cluster fails there, so the requested cluster ID is returned.
+		verifyKey, ok := clusterKeys[target]
+		if !ok {
+			w.WriteHeader(401)
+			return
+		}
+		if _, err := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return &verifyKey.PublicKey, nil }, options...); err != nil {
 			w.WriteHeader(401)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if !openID {
-			target = claims["cluster_id"].(string)
-		}
 		_ = json.NewEncoder(w).Encode(auth.Identity{ClusterID: target, Issuer: claims["iss"].(string), Subject: claims["sub"].(string), ExpiresAt: time.Unix(int64(claims["exp"].(float64)), 0)})
 	}))
-	t.Cleanup(mcpServer.Close)
-	caFile := filepath.Join(t.TempDir(), "mcp-ca.pem")
-	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: mcpServer.Certificate().Raw}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	verifier, err := mcpclient.New(mcpServer.URL+"/mcp", caFile)
+	verifier, err := mcpclient.New(socket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,8 +135,8 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	}
 	call := func(method, path, token, body string) *httptest.ResponseRecorder {
 		request := requestWithToken(method, path, token, body)
+		request.Header.Set(auth.ClusterIDHeader, targets[token])
 		if openID {
-			request.Header.Set(auth.ClusterIDHeader, targets[token])
 			request.Header.Set(auth.NodeHeader, "node-b")
 		}
 		request.Header.Set("Content-Type", "application/json")
@@ -205,4 +211,25 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	if checks.Load() < 16 {
 		t.Fatal("identity was not checked independently for each API operation")
 	}
+}
+
+// serveUnixMCP serves a fake MCP on a Unix socket in a short directory, so the
+// path stays within the sun_path limit.
+func serveUnixMCP(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "mcp.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	t.Cleanup(server.Close)
+	return path
 }

@@ -17,7 +17,8 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 		rawToken, ok := bearerToken(request.Header.Get("Authorization"))
 		targetCluster, targetErr := auth.TargetClusterFromHeader(request.Header)
 		targetNode, nodeErr := auth.TargetNodeFromHeader(request.Header)
-		if !ok || targetErr != nil || nodeErr != nil || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
+		// The cluster ID selects which daemon verifies the token: it is required.
+		if !ok || targetErr != nil || nodeErr != nil || targetCluster == "" || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -34,7 +35,7 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 			writeJSONError(response, http.StatusServiceUnavailable, "authentication_unavailable", "OpenSVC identity verification is unavailable")
 			return
 		}
-		if err != nil || identity.Subject == "" || identity.Issuer == "" || identity.ClusterID == "" || targetCluster != "" && identity.ClusterID != targetCluster {
+		if err != nil || identity.Subject == "" || identity.Issuer == "" || identity.ClusterID != targetCluster {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -66,5 +67,5 @@ func bearerToken(authorization string) (string, bool) {
 
 func writeUnauthorized(response http.ResponseWriter) {
 	response.Header().Set("WWW-Authenticate", "Bearer")
-	writeJSONError(response, http.StatusUnauthorized, "unauthorized", "a valid OpenSVC access token is required")
+	writeJSONError(response, http.StatusUnauthorized, "unauthorized", "a valid OpenSVC access token and its cluster ID are required")
 }

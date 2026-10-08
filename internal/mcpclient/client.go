@@ -2,12 +2,10 @@ package mcpclient
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
-	"os"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opensvc/ai-agent/internal/auth"
@@ -25,36 +23,30 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// New creates a verified HTTPS MCP client. An empty CA file uses system roots.
-func New(endpoint string, caFile string) (*Client, error) {
-	parsed, err := config.ParseMCPURL(endpoint)
+// MCP is reached through a local Unix socket: the path selects the server and
+// this fixed origin only names it in request URLs.
+const (
+	socketOrigin   = "http://opensvc-mcp"
+	socketEndpoint = socketOrigin + "/mcp"
+)
+
+// New creates an MCP client over the trusted local Unix socket. MCP accepts
+// delegated OpenSVC tokens only there; filesystem permissions protect it.
+func New(socketPath string) (*Client, error) {
+	path, err := config.ParseMCPSocket(socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("parse MCP URL: %w", err)
+		return nil, fmt.Errorf("parse MCP socket: %w", err)
 	}
-	var roots *x509.CertPool
-	if caFile != "" {
-		file, err := os.Open(caFile)
-		if err != nil {
-			return nil, fmt.Errorf("open MCP CA file: %w", err)
-		}
-		defer file.Close()
-		const maxCABytes = 1 << 20
-		data, err := io.ReadAll(io.LimitReader(file, maxCABytes+1))
-		if err != nil {
-			return nil, fmt.Errorf("read MCP CA file: %w", err)
-		}
-		roots = x509.NewCertPool()
-		if len(data) > maxCABytes || !roots.AppendCertsFromPEM(data) {
-			return nil, fmt.Errorf("MCP CA file must contain PEM certificates and be at most 1 MiB")
-		}
-	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, "unix", path)
+	}
 
 	return &Client{
-		endpoint:   parsed.String(),
-		httpClient: securedHTTPClient(&http.Client{Transport: transport}, parsed.Scheme+"://"+parsed.Host),
+		endpoint:   socketEndpoint,
+		httpClient: securedHTTPClient(&http.Client{Transport: transport}, socketOrigin),
 	}, nil
 }
 
@@ -142,7 +134,7 @@ type bearerTransport struct {
 
 func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request.URL.Scheme+"://"+request.URL.Host != t.origin || (request.Host != "" && request.Host != request.URL.Host) {
-		return nil, fmt.Errorf("send MCP request: destination differs from configured HTTPS origin")
+		return nil, fmt.Errorf("send MCP request: destination differs from the configured MCP socket origin")
 	}
 	token, ok := auth.BearerTokenFromContext(request.Context())
 	if !ok {

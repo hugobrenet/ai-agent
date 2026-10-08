@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -34,7 +35,7 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 	}
 	var mode atomic.Int32
 	var calls atomic.Int32
-	endpoint, ca := serveHTTPS(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	endpoint := serveUnix(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.Header.Get(auth.ClusterIDHeader) != target || r.Header.Get(auth.NodeHeader) != node {
 			t.Error("whoami request lost its explicit target")
@@ -122,7 +123,7 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 			_ = json.NewEncoder(w).Encode(identity)
 		}
 	}))
-	client, err := New(endpoint, ca)
+	client, err := New(endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,12 +166,12 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 		t.Fatal("malformed credential was not delegated to MCP for refusal")
 	}
 	before = calls.Load()
-	untrusted, err := New(endpoint, "")
+	missing, err := New(filepath.Join(filepath.Dir(endpoint), "missing.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := untrusted.Verify(ctx, token); !errors.Is(err, auth.ErrVerificationUnavailable) || calls.Load() != before {
-		t.Fatal("credentials sent to untrusted TLS server")
+	if _, err := missing.Verify(ctx, token); !errors.Is(err, auth.ErrVerificationUnavailable) || calls.Load() != before {
+		t.Fatal("unavailable MCP socket was not reported as unavailable")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	cancel()
@@ -181,11 +182,11 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 
 func TestVerifyPreservesCallerDeadline(t *testing.T) {
 	entered := make(chan struct{})
-	endpoint, ca := serveHTTPS(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	endpoint := serveUnix(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
 		<-r.Context().Done()
 	}))
-	client, err := New(endpoint, ca)
+	client, err := New(endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,42 +8,46 @@ The client connects to the agent over HTTPS using its configured remote address.
 
 ## Architecture
 
-The target architecture keeps token issuance at the local OpenSVC daemon but
-allows the agent and MCP to run centrally:
+Token issuance stays at the OpenSVC daemon. The agent and MCP run in the
+operator's infrastructure, on the same host:
 
 ```text
-om ai ── access token ──> OpenSVC daemon
+om ai ── access token + cluster ID ──> OpenSVC daemon
   │
   └── HTTPS request ──> AI agent ──> LLM provider
-                                      │
-                                      └──> OpenSVC MCP ──> OpenSVC daemon
+                          │
+                          └── Unix socket ──> OpenSVC MCP ──> cluster VIP daemon
 ```
 
-The client obtains a short-lived OpenSVC access token from the local daemon.
-Before each protected API operation, the agent verifies the token through
-MCP GET /mcp/auth/whoami and daemon GET /api/auth/whoami. The same token is
-delegated for MCP tools. Persistent conversations are bound to authenticated
-cluster ID, issuer and subject. The client never stores
-the token, messages, or conversation state.
+The client obtains a short-lived access token and the cluster ID from the same
+daemon, and sends them as `Authorization: Bearer` and `X-OpenSVC-Cluster-ID`.
+Both are required. Before each protected API operation, the agent verifies the
+token through MCP `GET /mcp/auth/whoami`, which MCP serves only on its local
+socket: MCP selects the cluster from the header and relays the token to that
+daemon's `GET /api/auth/whoami`. The same token and cluster ID are delegated
+for MCP tools. Persistent conversations are bound to the authenticated cluster
+ID, issuer and subject. The client never stores the token, messages, or
+conversation state.
 
-The agent treats the token as opaque. MCP owns JWT decoding, native/OpenID
-profile checks and catalogue routing; the daemon authenticates the token and
-enforces grants. The agent uses the bridge's returned identity and expiry for
-conversation ownership and request deadlines.
+The agent treats the token as opaque. MCP owns catalogue routing; the daemon
+authenticates the token and enforces grants. The agent uses the returned
+identity and expiry for conversation ownership and request deadlines. The
+cluster header only selects where the token is verified: a token issued by
+another cluster is refused by the selected daemon.
 
 Configure the agent's TCP listener and certificate/key files with
 `OPENSVC_AI_LISTEN_ADDR`, `OPENSVC_AI_TLS_CERT_FILE`, and
-`OPENSVC_AI_TLS_KEY_FILE`. Configure its outbound MCP connection with
-`OPENSVC_AI_MCP_URL` and optional `OPENSVC_AI_MCP_CA_FILE`. These are agent
-settings, not CLI settings. The TCP/HTTPS CLI uses OPENSVC_AI_AGENT_URL and
-optional OPENSVC_AI_AGENT_CA_FILE for its remote endpoint and TLS trust.
+`OPENSVC_AI_TLS_KEY_FILE`. Configure its MCP connection with the absolute
+socket path `OPENSVC_AI_MCP_SOCKET`. These are agent settings, not CLI
+settings. The CLI requires `OPENSVC_AI_AGENT_URL` and accepts an optional
+`OPENSVC_AI_AGENT_CA_FILE` for its HTTPS endpoint and TLS trust.
 
 ## Prerequisites
 
 Before using the client:
 
 1. Start the OpenSVC daemon on the node.
-2. Start the OpenSVC MCP server used by the agent.
+2. Start the OpenSVC MCP server on the agent host, with its local socket.
 3. Configure and start `opensvc-ai-agent`.
 4. Verify the agent health endpoint:
 
@@ -110,7 +114,8 @@ The unavailable service is lab/svc/redis.
 
 Prompts are read one line at a time. A successful turn is stored by the agent
 and becomes context for later turns. The client requests a fresh short-lived
-access token for conversation creation or resume and for every prompt.
+access token and the cluster ID for conversation creation or resume and for
+every prompt.
 
 After the first successful turn, the agent derives a title from that prompt.
 Whitespace is normalized and titles longer than 80 characters are truncated.

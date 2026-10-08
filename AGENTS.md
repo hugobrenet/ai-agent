@@ -42,7 +42,7 @@ attribution notices.
   Keep handlers thin.
 - `internal/auth`: verified identity, HTTP target bounds and private
   request-scoped credentials; remove authentication data from LLM contexts.
-- `internal/mcpclient`: verified HTTPS transport, remote whoami verification,
+- `internal/mcpclient`: local Unix socket transport, remote whoami verification,
   request-scoped MCP sessions and bounded tool discovery/results.
 - `internal/agent`: provider-neutral turn loop, history validation, system
   prompt and sequential execution of model-requested MCP tools.
@@ -66,14 +66,17 @@ Conversations must not retain MCP sessions or provider-specific state.
   Do not decode JWTs or duplicate OpenSVC token rules: MCP owns profile
   selection, claims, algorithms, dates, target coherence and catalogue routing;
   the daemon verifies signatures and permissions.
-- Read optional `X-OpenSVC-Cluster-ID` and `X-OpenSVC-Node` headers as bounded,
-  unambiguous routing hints, without interpreting them against token claims.
-  Forward them unchanged; MCP decides which profile requires them.
-- Authenticate through the configured MCP's `GET /mcp/auth/whoami` bridge,
+- Require one bounded `X-OpenSVC-Cluster-ID` header and read an optional
+  `X-OpenSVC-Node` header, without interpreting them against token claims.
+  Forward them unchanged; the cluster ID selects where MCP verifies the token.
+- Reach MCP only through its local Unix socket (`OPENSVC_AI_MCP_SOCKET`). MCP
+  accepts delegated OpenSVC tokens there, never on its OAuth HTTPS listener.
+  Do not add a network fallback.
+- Authenticate through MCP's `GET /mcp/auth/whoami` bridge on that socket,
   which delegates signature verification to daemon `GET /api/auth/whoami`.
   Require a bounded JSON response with complete identity fields and a future
-  expiry. This returned identity is authoritative; an explicit requested cluster
-  must match the response. Apply the returned expiry to the operation deadline.
+  expiry. This returned identity is authoritative; the requested cluster must
+  match the response. Apply the returned expiry to the operation deadline.
 - Complete authentication before reading prompts, accessing conversations or
   starting an SSE response. Invalid tokens return 401; unavailable verification
   returns 503. No offline fallback, identity cache or local verification keys.

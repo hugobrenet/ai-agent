@@ -2,15 +2,14 @@ package config
 
 import (
 	"fmt"
-	"net/url"
 	"os"
-	"strconv"
-	"strings"
 )
 
+// maxUnixSocketPathBytes is the portable sun_path limit, including the NUL.
+const maxUnixSocketPathBytes = 103
+
 type MCPConfig struct {
-	URL    string
-	CAFile string
+	SocketPath string
 }
 
 func LoadMCP() (MCPConfig, error) {
@@ -18,36 +17,23 @@ func LoadMCP() (MCPConfig, error) {
 }
 
 func loadMCP(getenv func(string) string) (MCPConfig, error) {
-	endpoint, err := ParseMCPURL(getenv("OPENSVC_AI_MCP_URL"))
+	path, err := ParseMCPSocket(getenv("OPENSVC_AI_MCP_SOCKET"))
 	if err != nil {
-		return MCPConfig{}, fmt.Errorf("parse OPENSVC_AI_MCP_URL: %w", err)
+		return MCPConfig{}, fmt.Errorf("parse OPENSVC_AI_MCP_SOCKET: %w", err)
 	}
-	caFile := strings.TrimSpace(getenv("OPENSVC_AI_MCP_CA_FILE"))
-	if caFile != "" {
-		caFile, err = absoluteFile(caFile)
-		if err != nil {
-			return MCPConfig{}, fmt.Errorf("parse OPENSVC_AI_MCP_CA_FILE: %w", err)
-		}
-	}
-	return MCPConfig{URL: endpoint.String(), CAFile: caFile}, nil
+	return MCPConfig{SocketPath: path}, nil
 }
 
-// ParseMCPURL requires a credential-free HTTPS endpoint, including its route.
-func ParseMCPURL(value string) (*url.URL, error) {
-	endpoint, err := url.Parse(strings.TrimSpace(value))
-	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.Opaque != "" || endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" {
-		return nil, fmt.Errorf("expected an HTTPS MCP URL without credentials, query or fragment")
+// ParseMCPSocket requires an absolute Unix socket path. MCP accepts delegated
+// OpenSVC tokens only on this local socket. The socket need not exist yet: it
+// is dialed per request, so MCP may start after the agent.
+func ParseMCPSocket(value string) (string, error) {
+	path, err := absoluteFile(value)
+	if err != nil {
+		return "", err
 	}
-	if endpoint.Path == "" || endpoint.Path == "/" {
-		return nil, fmt.Errorf("MCP URL must include its endpoint path (for example /mcp)")
+	if len(path) > maxUnixSocketPathBytes {
+		return "", fmt.Errorf("socket path exceeds %d bytes", maxUnixSocketPathBytes)
 	}
-	if endpoint.Port() != "" {
-		port, err := strconv.Atoi(endpoint.Port())
-		if err != nil || port < 1 || port > 65535 {
-			return nil, fmt.Errorf("invalid MCP URL port")
-		}
-	} else if strings.HasSuffix(endpoint.Host, ":") {
-		return nil, fmt.Errorf("invalid MCP URL port")
-	}
-	return endpoint, nil
+	return path, nil
 }

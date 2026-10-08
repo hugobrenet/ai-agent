@@ -1,34 +1,26 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestLoadMCPHTTPS(t *testing.T) {
+func TestLoadMCPSocket(t *testing.T) {
 	for _, tc := range []struct {
-		name, url, ca string
-		wantErr       bool
+		name, socket string
+		wantErr      bool
 	}{
-		{"default missing URL", "", "", true},
-		{"https", "https://mcp.example.test/mcp", "", false},
-		{"explicit CA", " https://mcp.example.test:8443/mcp ", "/etc/opensvc-ai/mcp-ca.pem", false},
-		{"ipv6", "https://[::1]:8443/mcp", "", false},
-		{"http", "http://mcp.example.test/mcp", "", true},
-		{"credentials", "https://user:pass@mcp.example.test/mcp", "", true},
-		{"query", "https://mcp.example.test/mcp?token=x", "", true},
-		{"fragment", "https://mcp.example.test/mcp#x", "", true},
-		{"missing path", "https://mcp.example.test", "", true},
-		{"relative CA", "https://mcp.example.test/mcp", "ca.pem", true},
-		{"root CA path", "https://mcp.example.test/mcp", "/", true},
-		{"zero port", "https://mcp.example.test:0/mcp", "", true},
-		{"empty port", "https://mcp.example.test:/mcp", "", true},
-		{"invalid port", "https://mcp.example.test:65536/mcp", "", true},
+		{"missing", "", true},
+		{"absolute", "/run/opensvc-mcp/delegated.sock", false},
+		{"trimmed", " /run/opensvc-mcp/delegated.sock ", false},
+		{"relative", "run/delegated.sock", true},
+		{"root", "/", true},
+		{"too long", "/" + strings.Repeat("a", maxUnixSocketPathBytes), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, err := loadMCP(func(key string) string {
-				switch key {
-				case "OPENSVC_AI_MCP_URL":
-					return tc.url
-				case "OPENSVC_AI_MCP_CA_FILE":
-					return tc.ca
+				if key == "OPENSVC_AI_MCP_SOCKET" {
+					return tc.socket
 				}
 				return ""
 			})
@@ -41,7 +33,7 @@ func TestLoadMCPHTTPS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cfg.URL == "" || cfg.CAFile != tc.ca {
+			if cfg.SocketPath != strings.TrimSpace(tc.socket) {
 				t.Fatalf("unexpected config: %+v", cfg)
 			}
 		})
