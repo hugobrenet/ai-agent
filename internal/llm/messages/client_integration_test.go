@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llmfactory"
+	"github.com/opensvc/ai-agent/internal/config"
+	"github.com/opensvc/ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/llmfactory"
 )
 
 func TestLiveMessagesText(t *testing.T) {

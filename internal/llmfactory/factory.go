@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/config"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/chatcompletions"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/messages"
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm/responses"
+	"github.com/opensvc/ai-agent/internal/config"
+	"github.com/opensvc/ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/llm/chatcompletions"
+	"github.com/opensvc/ai-agent/internal/llm/messages"
+	"github.com/opensvc/ai-agent/internal/llm/responses"
 )
 
 // New creates an LLM client selected by wire protocol, never by provider name.

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/opensvc/ai-agent/internal/auth"
 )
 
 func TestResponseLimitTransportBoundsUnknownLengthBodies(t *testing.T) {

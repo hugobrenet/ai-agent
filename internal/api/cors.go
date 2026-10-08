@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/auth"
 )
 
 const corsMethods = "GET, POST, PATCH, DELETE"

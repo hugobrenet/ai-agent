@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/conversation"
+	"github.com/opensvc/ai-agent/internal/conversation"
 )
 
 const DefaultConversationDatabasePath = "/var/lib/opensvc-ai-agent/conversations.db"

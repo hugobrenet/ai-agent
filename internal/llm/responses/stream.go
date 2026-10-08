@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/hugobrenet/opensvc-ai-agent/internal/llm"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 const (
