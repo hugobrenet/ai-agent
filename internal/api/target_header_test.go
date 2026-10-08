@@ -19,6 +19,7 @@ func TestTargetClusterHeaderIsCheckedBeforeProtectedOperation(t *testing.T) {
 		wantStatus      int
 	}{
 		{"valid", []string{"cluster-a"}, "cluster-a", 1, 204},
+		{"missing", nil, "cluster-a", 0, 401},
 		{"empty", []string{""}, "cluster-a", 0, 401},
 		{"duplicate", []string{"cluster-a", "cluster-a"}, "cluster-a", 0, 401},
 		{"combined", []string{"cluster-a,cluster-b"}, "cluster-a", 0, 401},
@@ -79,6 +80,7 @@ func TestTargetNodeHeaderIsCheckedBeforeProtectedOperation(t *testing.T) {
 		})
 		request := httptest.NewRequest("GET", "/v1/conversations", nil)
 		request.Header.Set("Authorization", "Bearer bearer")
+		request.Header.Set(auth.ClusterIDHeader, "cluster-a")
 		for _, value := range values {
 			request.Header.Add(auth.NodeHeader, value)
 		}

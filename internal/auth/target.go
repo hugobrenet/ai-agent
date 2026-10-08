@@ -12,8 +12,9 @@ const (
 	NodeHeader      = "X-OpenSVC-Node"
 )
 
-// TargetClusterFromHeader reads an optional, untrusted routing hint. A single
-// exact value is required; combined/duplicate headers cannot select a target.
+// TargetClusterFromHeader reads the untrusted cluster routing value. The API
+// requires it; combined/duplicate headers cannot select a target. Identity is
+// established only when the selected cluster's daemon accepts the token.
 func TargetClusterFromHeader(header http.Header) (string, error) {
 	return targetFromHeader(header, ClusterIDHeader)
 }

@@ -34,7 +34,7 @@ OPENSVC_AI_LISTEN_ADDR=0.0.0.0:8090
 OPENSVC_AI_TLS_CERT_FILE=/etc/opensvc-ai/agent.crt
 OPENSVC_AI_TLS_KEY_FILE=/etc/opensvc-ai/agent.key
 OPENSVC_AI_CONVERSATION_DB_PATH=/var/lib/opensvc-ai-agent/conversations.db
-OPENSVC_AI_MCP_URL=https://mcp.example.test/mcp
+OPENSVC_AI_MCP_SOCKET=/run/opensvc-mcp/delegated.sock
 
 OPENSVC_AI_LLM_PROTOCOL=responses
 OPENSVC_AI_LLM_BASE_URL=https://llm.example.test/v1
@@ -62,8 +62,10 @@ Messages supports streamed text and MCP tool calls, without extended thinking
 or provider-hosted tools. Keep the API key only in the protected environment
 file, never in Git or conversation history.
 
-Optional: `OPENSVC_AI_MCP_CA_FILE` supplies a private CA bundle for MCP HTTPS.
-Otherwise, system CA roots are used. Restrict network access to the agent port.
+The agent reaches MCP only through its local Unix socket: run both on the same
+host, typically as two resources of one OpenSVC service, and give the
+`opensvc-ai` user access to the socket through its group. The socket need not
+exist when the agent starts. Restrict network access to the agent port.
 
 For browser clients, set `OPENSVC_AI_CORS_ALLOWED_ORIGINS` to comma-separated
 webapp origins, or `*` to allow all origins. Empty by default. See the
@@ -102,7 +104,8 @@ om ai ask "Assess the health of my cluster"
 om ai chat
 ```
 
-For a private agent CA, also set `OPENSVC_AI_AGENT_CA_FILE`.
+For a private agent CA, also set `OPENSVC_AI_AGENT_CA_FILE`. `om ai` sends a
+daemon-issued token and the cluster ID of the daemon that issued it.
 See the [client guide](docs/om-ai.md) for more commands.
 
 For OpenID clients, see the [HTTP header contract](docs/webapp.md).

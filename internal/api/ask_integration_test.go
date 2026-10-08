@@ -22,9 +22,9 @@ import (
 )
 
 func TestLiveAskStreamsClusterHealth(t *testing.T) {
-	mcpURL := os.Getenv("OPENSVC_AI_TEST_MCP_URL")
+	mcpSocket := os.Getenv("OPENSVC_AI_TEST_MCP_SOCKET")
 	mcpJWT := os.Getenv("OPENSVC_AI_TEST_MCP_JWT")
-	if mcpURL == "" || mcpJWT == "" || os.Getenv("OPENSVC_AI_LLM_PROTOCOL") == "" {
+	if mcpSocket == "" || mcpJWT == "" || os.Getenv("OPENSVC_AI_LLM_PROTOCOL") == "" {
 		t.Skip("live MCP and LLM configuration is unavailable")
 	}
 	llmConfig, err := config.LoadLLM()
@@ -39,7 +39,7 @@ func TestLiveAskStreamsClusterHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create live LLM client: %v", err)
 	}
-	mcpClient, err := mcpclient.New(mcpURL, os.Getenv("OPENSVC_AI_TEST_MCP_CA_FILE"))
+	mcpClient, err := mcpclient.New(mcpSocket)
 	if err != nil {
 		t.Fatalf("create live MCP client: %v", err)
 	}

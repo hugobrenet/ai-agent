@@ -20,8 +20,8 @@ surrounding whitespace, control characters or commas. Duplicate headers are
 rejected. Both are required for OpenID: the MCP resolves the exact cluster/node
 pair in its administrator-owned catalogue, never a client-supplied URL or DNS
 lookup. Missing or unknown targets are refused without fallback.
-Native `om ai` requests still work without either target header. If supplied
-with a native JWT, they must match its `cluster_id` and `iss`, respectively.
+The cluster header is required for every client, including `om ai` with a
+daemon-issued native token, which carries no cluster claim.
 
 ## Verification and forwarding
 
@@ -54,8 +54,8 @@ requested-cluster mismatch return 401; unavailable verification or malformed
 bridge responses return 503. No conversation or model access is
 allowed before this check. Conversation ownership remains cluster + issuer
 + subject. Each subsequent MCP request carries the same Bearer and targets
-from private request context; none is exposed to the model or stored as
-a credential. TLS verification and origin binding apply to all headers.
+from private request context over MCP's local Unix socket; none is exposed to
+the model or stored as a credential. Origin binding applies to all headers.
 The returned expiry bounds the protected operation. Authentication itself
 uses a short timeout, without locally reading the token's expiry.
 
@@ -149,8 +149,10 @@ clients. No CORS headers or origin registrations are sent to MCP or daemons.
 
 ## Integration status
 
-This is the agent-side OpenSVC delegation contract, not generic MCP OAuth
-discovery or token exchange. The MCP must implement OpenID routing and the
-identity bridge described above before an actual OpenID request can succeed.
+This is the agent-side OpenSVC delegation contract. It uses MCP's local Unix
+socket, not MCP's OAuth HTTPS endpoint reserved for external agents. The MCP
+must serve OpenID routing and the identity bridge described above on that
+socket before an actual OpenID request can succeed; the MCP-side checks listed
+above are subject to that work.
 Browser cross-origin access is configurable as described above. The webapp
 chatbot page is separate client work.

@@ -96,6 +96,7 @@ func TestCORSActualRequestsKeepAuthenticationAndNonBrowserClients(t *testing.T) 
 		for _, origin := range []string{"", "https://a.example", "https://unknown.example"} {
 			r := httptest.NewRequest("GET", "/v1/conversations", nil)
 			r.Header.Set("Authorization", "Bearer invalid")
+			r.Header.Set(auth.ClusterIDHeader, "cluster-id")
 			if origin != "" {
 				r.Header.Set("Origin", origin)
 			}

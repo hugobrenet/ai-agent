@@ -35,6 +35,7 @@ func TestRequireAccessTokenRemovesAuthorizationHeaderAndPreservesContext(t *test
 	handler := requireAccessToken(verifier, auditLogger{logger: discardAuditLogger()}, next)
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -62,6 +63,7 @@ func TestRequireAccessTokenUsesVerifiedIdentityExpiry(t *testing.T) {
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", nil)
 	request.Header.Set("Authorization", "Bearer opaque-access-token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	requireAccessToken(verifier, auditLogger{logger: discardAuditLogger()}, next).ServeHTTP(httptest.NewRecorder(), request)
 	if !called {
 		t.Fatal("protected operation did not receive the verified identity")

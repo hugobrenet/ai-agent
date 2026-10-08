@@ -154,5 +154,6 @@ func (f apiTurnRunnerFunc) RunTurn(ctx context.Context, history []llm.Message, p
 func requestWithToken(method string, path string, token string, body string) *http.Request {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	return request
 }

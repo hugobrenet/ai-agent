@@ -21,7 +21,7 @@ const (
 )
 
 // Verify treats the bearer as opaque and obtains the authenticated identity
-// from the configured HTTPS MCP. OpenSVC token rules belong to MCP/daemon.
+// from MCP over its local socket. OpenSVC token rules belong to MCP/daemon.
 // No keys, identities or tokens are cached here.
 func (c *Client) Verify(ctx context.Context, raw string) (auth.Identity, error) {
 	endpoint, err := url.Parse(c.endpoint)

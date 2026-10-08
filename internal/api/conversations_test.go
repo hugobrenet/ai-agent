@@ -312,5 +312,6 @@ func newConversationTestHandler(t *testing.T, service ConversationService) http.
 func authenticatedRequest(method string, path string, body string) *http.Request {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	return request
 }

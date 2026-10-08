@@ -47,6 +47,7 @@ func TestAuditRecordsAskLifecycleWithoutSensitiveData(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"`+promptMarker+`"}`))
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(requestIDHeader, callerID)
 	response := httptest.NewRecorder()
@@ -104,6 +105,7 @@ func TestAuditRecordsAuthenticationRejectionWithoutTokenOrVerifierError(t *testi
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -150,6 +152,7 @@ func TestAuditRecordsValidatedRequestRejection(t *testing.T) {
 	}), allowTestTokenVerifier())
 	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 

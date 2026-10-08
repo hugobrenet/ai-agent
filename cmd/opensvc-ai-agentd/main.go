@@ -51,7 +51,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create LLM client: %v", err)
 	}
-	mcpClient, err := mcpclient.New(mcpConfig.URL, mcpConfig.CAFile)
+	mcpClient, err := mcpclient.New(mcpConfig.SocketPath)
 	if err != nil {
 		log.Fatalf("create MCP client: %v", err)
 	}
