@@ -8,8 +8,10 @@ import (
 // maxUnixSocketPathBytes is the portable sun_path limit, including the NUL.
 const maxUnixSocketPathBytes = 103
 
+// MCPConfig holds the MCP socket of each backend. om3 is the only backend
+// and is required.
 type MCPConfig struct {
-	SocketPath string
+	OM3SocketPath string
 }
 
 func LoadMCP() (MCPConfig, error) {
@@ -17,11 +19,11 @@ func LoadMCP() (MCPConfig, error) {
 }
 
 func loadMCP(getenv func(string) string) (MCPConfig, error) {
-	path, err := ParseMCPSocket(getenv("OPENSVC_AI_MCP_SOCKET"))
+	path, err := ParseMCPSocket(getenv("OPENSVC_AI_OM3_MCP_SOCKET"))
 	if err != nil {
-		return MCPConfig{}, fmt.Errorf("parse OPENSVC_AI_MCP_SOCKET: %w", err)
+		return MCPConfig{}, fmt.Errorf("parse OPENSVC_AI_OM3_MCP_SOCKET: %w", err)
 	}
-	return MCPConfig{SocketPath: path}, nil
+	return MCPConfig{OM3SocketPath: path}, nil
 }
 
 // ParseMCPSocket requires an absolute Unix socket path. MCP accepts delegated

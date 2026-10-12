@@ -193,7 +193,7 @@ type serviceTestStore struct {
 
 func newServiceTestStore() *serviceTestStore {
 	return &serviceTestStore{item: Conversation{
-		ID: "conversation-id", Owner: Owner{ClusterID: "cluster-id", Issuer: "cluster", Subject: "user"},
+		ID: "conversation-id", Owner: Owner{Backend: "om3", ClusterID: "cluster-id", Issuer: "cluster", Subject: "user"},
 		CreatedAt: serviceTestNow.Add(-time.Hour), UpdatedAt: serviceTestNow.Add(-time.Hour),
 		ExpiresAt: serviceTestNow.Add(time.Hour),
 	}}
@@ -201,7 +201,7 @@ func newServiceTestStore() *serviceTestStore {
 
 func newTestService(t *testing.T, store *serviceTestStore, runner TurnRunner) *Service {
 	t.Helper()
-	service, err := NewService(store, runner, ServiceConfig{})
+	service, err := NewService(store, runner, ServiceConfig{Backend: "om3"})
 	if err != nil {
 		t.Fatalf("create service: %v", err)
 	}
@@ -289,4 +289,21 @@ func (s *serviceTestStore) ClaimConfirmation(_ context.Context, _ Owner, _ strin
 
 func (s *serviceTestStore) GetPendingConfirmation(context.Context, Owner, string, time.Time) (*PendingConfirmation, error) {
 	return s.suspended, nil
+}
+
+func TestServiceBindsConversationsToItsBackend(t *testing.T) {
+	store := newServiceTestStore()
+	for _, name := range []string{"", "OM3", "om/3"} {
+		if _, err := NewService(store, turnRunnerFunc(nil), ServiceConfig{Backend: name}); err == nil {
+			t.Fatalf("NewService() accepted backend name %q", name)
+		}
+	}
+	other, err := NewService(store, turnRunnerFunc(nil), ServiceConfig{Backend: "oc3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.now = func() time.Time { return serviceTestNow }
+	if _, err := other.Get(t.Context(), serviceTestIdentity(), store.item.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("another backend read the conversation: %v", err)
+	}
 }

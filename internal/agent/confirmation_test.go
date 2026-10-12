@@ -188,26 +188,6 @@ func TestResumeTurnSuspendsAgainOnTheNextDestructiveCall(t *testing.T) {
 	}
 }
 
-func TestAskDoesNotRunACallRequiringConfirmation(t *testing.T) {
-	session := &fakeSession{tools: []*mcp.Tool{destructiveTool("stop_object")}}
-	model := &scriptedLLM{t: t, steps: []llmStep{
-		callsStep(llm.ToolCall{ID: "call-1", Name: "stop_object", Arguments: json.RawMessage(`{"path":"web"}`)}),
-		answerStep(t, func(request llm.Request) {
-			results := lastToolResults(request)
-			if len(results) != 1 || !results[0].IsError || !strings.Contains(string(results[0].Content), "conversation") {
-				t.Fatalf("the model was not told the action needs a conversation: %#v", results)
-			}
-		}),
-	}}
-	agent := newTestAgent(t, model, session, 4)
-	if err := agent.Ask(t.Context(), "stop web", func(Event) error { return nil }); err != nil {
-		t.Fatal(err)
-	}
-	if len(session.calls) != 0 {
-		t.Fatalf("a call requiring confirmation ran from ask: %#v", session.calls)
-	}
-}
-
 func TestRunTurnRunsANonDestructiveActionWithoutConfirmation(t *testing.T) {
 	session := &fakeSession{tools: []*mcp.Tool{{Name: "freeze_object", InputSchema: objectSchema(), Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(false)}}}}
 	model := &scriptedLLM{t: t, steps: []llmStep{

@@ -1,11 +1,11 @@
 # ai-agent
 
-Standalone AI agent for OpenSVC cluster diagnostics, usable with `om ai`.
+Standalone AI agent for OpenSVC cluster diagnostics, used by the OpenSVC webapp.
 
 ## Requirements
 
 - Go 1.25.5 or later to build.
-- A configured OpenSVC MCP server accessible over HTTPS.
+- An OpenSVC MCP server on the same host, with its local Unix socket.
 - An LLM endpoint and model.
 - A TLS certificate covering the agent's hostname, with its private key.
 
@@ -34,7 +34,7 @@ OPENSVC_AI_LISTEN_ADDR=0.0.0.0:8090
 OPENSVC_AI_TLS_CERT_FILE=/etc/opensvc-ai/agent.crt
 OPENSVC_AI_TLS_KEY_FILE=/etc/opensvc-ai/agent.key
 OPENSVC_AI_CONVERSATION_DB_PATH=/var/lib/opensvc-ai-agent/conversations.db
-OPENSVC_AI_MCP_SOCKET=/run/opensvc-mcp/delegated.sock
+OPENSVC_AI_OM3_MCP_SOCKET=/run/opensvc-mcp/delegated.sock
 
 OPENSVC_AI_LLM_PROTOCOL=responses
 OPENSVC_AI_LLM_BASE_URL=https://llm.example.test/v1
@@ -64,7 +64,8 @@ Messages supports streamed text and MCP tool calls, without extended thinking
 or provider-hosted tools. Keep the API key only in the protected environment
 file, never in Git or conversation history.
 
-The agent reaches MCP only through its local Unix socket: run both on the same
+The agent serves the `om3` backend under `/v1/om3` and reaches its MCP only
+through the local Unix socket `OPENSVC_AI_OM3_MCP_SOCKET`: run both on the same
 host, typically as two resources of one OpenSVC service, and give the
 `opensvc-ai` user access to the socket through its group. The socket need not
 exist when the agent starts. Restrict network access to the agent port.
@@ -96,21 +97,11 @@ curl https://agent.example.test:8090/health
 
 Add `--cacert /path/to/ca.pem` if the agent uses a private CA.
 
-## Use with `om ai`
+## Use
 
-On an OpenSVC node:
-
-```bash
-export OPENSVC_AI_AGENT_URL=https://agent.example.test:8090
-om ai ask "Assess the health of my cluster"
-om ai chat
-```
-
-For a private agent CA, also set `OPENSVC_AI_AGENT_CA_FILE`. `om ai` sends a
-daemon-issued token and the cluster ID of the daemon that issued it.
-See the [client guide](docs/om-ai.md) for more commands.
-
-For OpenID clients, see the [HTTP header contract](docs/webapp.md).
+The [client API](docs/api.md) lists the routes of each backend and how they
+authenticate. Browser clients, such as the webapp, also follow the
+[browser client guide](docs/webapp.md).
 
 ## License
 

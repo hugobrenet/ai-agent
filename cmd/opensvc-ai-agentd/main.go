@@ -51,15 +51,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("create LLM client: %v", err)
 	}
-	mcpClient, err := mcpclient.New(mcpConfig.SocketPath)
+	om3MCPClient, err := mcpclient.New(mcpConfig.OM3SocketPath)
 	if err != nil {
-		log.Fatalf("create MCP client: %v", err)
+		log.Fatalf("create om3 MCP client: %v", err)
 	}
-	orchestrator, err := agent.New(model, func(ctx context.Context) (agent.MCPSession, error) {
-		return mcpClient.Connect(ctx)
-	}, agent.Config{MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
+	om3Agent, err := agent.New(model, func(ctx context.Context) (agent.MCPSession, error) {
+		return om3MCPClient.Connect(ctx)
+	}, agent.Config{SystemPrompt: agent.OM3SystemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
 	if err != nil {
-		log.Fatalf("create agent: %v", err)
+		log.Fatalf("create om3 agent: %v", err)
 	}
 	startupContext, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
 	conversationStore, err := conversationsqlite.Open(startupContext, conversationsqlite.Config{Path: conversationConfig.DatabasePath})
@@ -67,20 +67,21 @@ func main() {
 		cancelStartup()
 		log.Fatalf("open conversation store: %v", err)
 	}
-	conversationService, err := conversation.NewService(conversationStore, orchestrator, conversation.ServiceConfig{Lifetime: conversationConfig.Lifetime})
+	om3Conversations, err := conversation.NewService(conversationStore, om3Agent, conversation.ServiceConfig{Backend: "om3", Lifetime: conversationConfig.Lifetime})
 	if err != nil {
 		cancelStartup()
 		_ = conversationStore.Close()
 		log.Fatalf("create conversation service: %v", err)
 	}
-	if recovered, recoverErr := conversationService.Recover(startupContext); recoverErr != nil {
+	// Recovery and expiry apply to the whole store, every backend included.
+	if recovered, recoverErr := om3Conversations.Recover(startupContext); recoverErr != nil {
 		cancelStartup()
 		_ = conversationStore.Close()
 		log.Fatalf("recover interrupted conversation turns: %v", recoverErr)
 	} else if recovered != 0 {
 		log.Printf("recovered %d interrupted conversation turns", recovered)
 	}
-	if _, err := conversationService.DeleteExpired(startupContext); err != nil {
+	if _, err := om3Conversations.DeleteExpired(startupContext); err != nil {
 		cancelStartup()
 		_ = conversationStore.Close()
 		log.Fatalf("delete expired conversations: %v", err)
@@ -92,7 +93,9 @@ func main() {
 		}
 	}()
 	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	handler, err := api.NewHandler(orchestrator, conversationService, mcpClient, api.HandlerConfig{
+	handler, err := api.NewHandler([]api.Backend{
+		{Name: "om3", Conversations: om3Conversations, Verifier: om3MCPClient},
+	}, api.HandlerConfig{
 		MaxConcurrentAsks:  processConfig.MaxConcurrentAsks,
 		AuditLogger:        auditLogger,
 		CORSAllowedOrigins: processConfig.CORSAllowedOrigins,

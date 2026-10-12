@@ -20,16 +20,16 @@ func TestCORSPreflightRunsBeforeAuthentication(t *testing.T) {
 			checks++
 			return auth.Identity{}, auth.ErrInvalidToken
 		})
-		handler, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error {
+		handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error {
 			t.Fatal("preflight reached model")
 			return nil
-		}), noopConversationService{}, verifier, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
+		})}, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, origin := range []string{"https://a.example", "https://b.example", "https://unknown.example"} {
 			for _, method := range []string{"GET", "POST", "PATCH", "DELETE"} {
-				r := httptest.NewRequest("OPTIONS", "/v1/conversations", nil)
+				r := httptest.NewRequest("OPTIONS", "/v1/om3/conversations", nil)
 				r.Header.Set("Origin", origin)
 				r.Header.Set("Access-Control-Request-Method", method)
 				r.Header.Set("Access-Control-Request-Headers", "authorization, Content-Type, x-opensvc-cluster-id, X-OpenSVC-Node")
@@ -65,7 +65,7 @@ func TestCORSRejectsInvalidPreflight(t *testing.T) {
 		{[]string{"PUT"}, nil}, {[]string{"POST", "POST"}, nil}, {[]string{""}, nil}, {[]string{"post"}, nil},
 		{[]string{"POST"}, []string{"X-Unexpected"}}, {[]string{"POST"}, []string{"Authorization,"}}, {[]string{"POST"}, []string{""}},
 	} {
-		r := httptest.NewRequest("OPTIONS", "/v1/conversations", nil)
+		r := httptest.NewRequest("OPTIONS", "/v1/om3/conversations", nil)
 		r.Header.Set("Origin", "https://a.example")
 		for _, value := range tc.methods {
 			r.Header.Add("Access-Control-Request-Method", value)
@@ -88,13 +88,12 @@ func TestCORSActualRequestsKeepAuthenticationAndNonBrowserClients(t *testing.T) 
 			checks++
 			return auth.Identity{}, auth.ErrInvalidToken
 		})
-		handler, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }), noopConversationService{}, verifier,
-			HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
+		handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, origin := range []string{"", "https://a.example", "https://unknown.example"} {
-			r := httptest.NewRequest("GET", "/v1/conversations", nil)
+			r := httptest.NewRequest("GET", "/v1/om3/conversations", nil)
 			r.Header.Set("Authorization", "Bearer invalid")
 			r.Header.Set(auth.ClusterIDHeader, "cluster-id")
 			if origin != "" {
@@ -124,7 +123,7 @@ func TestCORSActualRequestsKeepAuthenticationAndNonBrowserClients(t *testing.T) 
 			}
 		}
 		// CORS must never make a missing token sufficient for access.
-		r := httptest.NewRequest("GET", "/v1/conversations", nil)
+		r := httptest.NewRequest("GET", "/v1/om3/conversations", nil)
 		r.Header.Set("Origin", "https://a.example")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
@@ -145,12 +144,11 @@ func TestCORSPreservesStreamingConversationTurns(t *testing.T) {
 		service := conversationServiceFuncs{prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
 			return execution, nil
 		}}
-		handler, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }), service, allowTestTokenVerifier(),
-			HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
+		handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := authenticatedRequest("POST", "/v1/conversations/id/turns", `{"prompt":"hello"}`)
+		r := authenticatedRequest("POST", "/v1/om3/conversations/id/turns", `{"prompt":"hello"}`)
 		r.Header.Set("Origin", "https://a.example")
 		r.Header.Set("Content-Type", "application/json")
 		w := &writeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}

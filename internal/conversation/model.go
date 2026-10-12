@@ -5,10 +5,30 @@ import (
 	"time"
 )
 
+// Owner binds a conversation to the backend it was created on and to the
+// verified identity of its user. A conversation is never visible from
+// another backend.
 type Owner struct {
+	Backend   string
 	ClusterID string
 	Issuer    string
 	Subject   string
+}
+
+const maxBackendNameBytes = 32
+
+// ValidBackendName accepts the short lowercase name of a backend, such as
+// om3, which also names its API routes.
+func ValidBackendName(name string) bool {
+	if name == "" || len(name) > maxBackendNameBytes {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 type Conversation struct {

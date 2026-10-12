@@ -50,24 +50,20 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 			{Role: llm.RoleUser, Text: prompt}, {Role: llm.RoleAssistant, Text: answer},
 		}, FinishReason: llm.FinishReasonCompleted}, nil
 	})
-	service, err := conversation.NewService(store, runner, conversation.ServiceConfig{})
+	service, err := conversation.NewService(store, runner, conversation.ServiceConfig{Backend: "om3"})
 	if err != nil {
 		t.Fatalf("create conversation service: %v", err)
 	}
 	verifier := tokenVerifierFunc(func(_ context.Context, token string) (auth.Identity, error) {
 		return auth.Identity{ClusterID: "cluster-id", Issuer: "cluster", Subject: token}, nil
 	})
-	handler, err := NewHandler(
-		askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }),
-		service, verifier,
-		HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewTextHandler(io.Discard, nil))},
-	)
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
 	}
 
 	createResponse := httptest.NewRecorder()
-	handler.ServeHTTP(createResponse, requestWithToken(http.MethodPost, "/v1/conversations", "alice", ""))
+	handler.ServeHTTP(createResponse, requestWithToken(http.MethodPost, "/v1/om3/conversations", "alice", ""))
 	if createResponse.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", createResponse.Code, createResponse.Body.String())
 	}
@@ -81,14 +77,14 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 	}
 
 	otherOwnerResponse := httptest.NewRecorder()
-	handler.ServeHTTP(otherOwnerResponse, requestWithToken(http.MethodGet, "/v1/conversations/"+id, "bob", ""))
+	handler.ServeHTTP(otherOwnerResponse, requestWithToken(http.MethodGet, "/v1/om3/conversations/"+id, "bob", ""))
 	if otherOwnerResponse.Code != http.StatusNotFound {
 		t.Fatalf("other owner status=%d body=%s", otherOwnerResponse.Code, otherOwnerResponse.Body.String())
 	}
 
 	for index, prompt := range []string{"first", "second"} {
 		response := httptest.NewRecorder()
-		request := requestWithToken(http.MethodPost, "/v1/conversations/"+id+"/turns", "alice", `{"prompt":"`+prompt+`"}`)
+		request := requestWithToken(http.MethodPost, "/v1/om3/conversations/"+id+"/turns", "alice", `{"prompt":"`+prompt+`"}`)
 		request.Header.Set("Content-Type", "application/json")
 		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"type":"completed"`) {
@@ -96,7 +92,7 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 		}
 		if index == 0 {
 			messagesResponse := httptest.NewRecorder()
-			handler.ServeHTTP(messagesResponse, requestWithToken(http.MethodGet, "/v1/conversations/"+id+"/messages", "alice", ""))
+			handler.ServeHTTP(messagesResponse, requestWithToken(http.MethodGet, "/v1/om3/conversations/"+id+"/messages", "alice", ""))
 			var page conversation.MessagePage
 			if err := json.NewDecoder(messagesResponse.Body).Decode(&page); err != nil || messagesResponse.Code != http.StatusOK || len(page.Messages) != 2 || page.Messages[0].Text != "first" || page.Messages[1].Text != "answer first" {
 				t.Fatalf("persisted display = %+v, status = %d, error = %v", page, messagesResponse.Code, err)
@@ -105,18 +101,18 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 				t.Fatal("reading messages ran a model turn")
 			}
 			foreignMessages := httptest.NewRecorder()
-			handler.ServeHTTP(foreignMessages, requestWithToken(http.MethodGet, "/v1/conversations/"+id+"/messages", "bob", ""))
+			handler.ServeHTTP(foreignMessages, requestWithToken(http.MethodGet, "/v1/om3/conversations/"+id+"/messages", "bob", ""))
 			if foreignMessages.Code != http.StatusNotFound || strings.Contains(foreignMessages.Body.String(), "answer first") {
 				t.Fatalf("foreign display response = %d, %s", foreignMessages.Code, foreignMessages.Body)
 			}
 			getResponse := httptest.NewRecorder()
-			handler.ServeHTTP(getResponse, requestWithToken(http.MethodGet, "/v1/conversations/"+id, "alice", ""))
+			handler.ServeHTTP(getResponse, requestWithToken(http.MethodGet, "/v1/om3/conversations/"+id, "alice", ""))
 			var afterFirst ConversationEnvelope
 			if err := json.NewDecoder(getResponse.Body).Decode(&afterFirst); err != nil || afterFirst.Conversation.Title != "first" {
 				t.Fatalf("first title response=%+v error=%v", afterFirst, err)
 			}
 
-			foreignUpdate := requestWithToken(http.MethodPatch, "/v1/conversations/"+id, "bob", `{"title":"Foreign"}`)
+			foreignUpdate := requestWithToken(http.MethodPatch, "/v1/om3/conversations/"+id, "bob", `{"title":"Foreign"}`)
 			foreignUpdate.Header.Set("Content-Type", "application/json")
 			foreignUpdateResponse := httptest.NewRecorder()
 			handler.ServeHTTP(foreignUpdateResponse, foreignUpdate)
@@ -124,7 +120,7 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 				t.Fatalf("foreign update status=%d body=%s", foreignUpdateResponse.Code, foreignUpdateResponse.Body.String())
 			}
 
-			update := requestWithToken(http.MethodPatch, "/v1/conversations/"+id, "alice", `{"title":"Renamed incident"}`)
+			update := requestWithToken(http.MethodPatch, "/v1/om3/conversations/"+id, "alice", `{"title":"Renamed incident"}`)
 			update.Header.Set("Content-Type", "application/json")
 			updateResponse := httptest.NewRecorder()
 			handler.ServeHTTP(updateResponse, update)
@@ -135,12 +131,12 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 		}
 	}
 	getResponse := httptest.NewRecorder()
-	handler.ServeHTTP(getResponse, requestWithToken(http.MethodGet, "/v1/conversations/"+id, "alice", ""))
+	handler.ServeHTTP(getResponse, requestWithToken(http.MethodGet, "/v1/om3/conversations/"+id, "alice", ""))
 	var afterSecond ConversationEnvelope
 	if err := json.NewDecoder(getResponse.Body).Decode(&afterSecond); err != nil || afterSecond.Conversation.Title != "Renamed incident" {
 		t.Fatalf("final title response=%+v error=%v", afterSecond, err)
 	}
-	history, err := store.LoadHistory(t.Context(), conversation.Owner{ClusterID: "cluster-id", Issuer: "cluster", Subject: "alice"}, id)
+	history, err := store.LoadHistory(t.Context(), conversation.Owner{Backend: "om3", ClusterID: "cluster-id", Issuer: "cluster", Subject: "alice"}, id)
 	if err != nil || len(history) != 4 {
 		t.Fatalf("stored history=%#v error=%v", history, err)
 	}

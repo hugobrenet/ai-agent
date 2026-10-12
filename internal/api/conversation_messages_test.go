@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/auth"
 	"github.com/opensvc/ai-agent/internal/conversation"
 )
@@ -29,17 +28,14 @@ func TestConversationMessagesRouteUsesVerifiedIdentityAndDoesNotLogText(t *testi
 		}
 		return page, nil
 	}}
-	handler, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error {
-		t.Fatal("history read invoked ask")
-		return nil
-	}), service, tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
 		return identity, nil
-	}), HandlerConfig{MaxConcurrentAsks: 1, AuditLogger: slog.New(slog.NewTextHandler(&logs, nil)), CORSAllowedOrigins: []string{"https://webapp.example"}})
+	})}}, HandlerConfig{MaxConcurrentAsks: 1, AuditLogger: slog.New(slog.NewTextHandler(&logs, nil)), CORSAllowedOrigins: []string{"https://webapp.example"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()
-	request := authenticatedRequest(http.MethodGet, "/v1/conversations/conversation-1/messages?limit=2&before=3%3A4", "")
+	request := authenticatedRequest(http.MethodGet, "/v1/om3/conversations/conversation-1/messages?limit=2&before=3%3A4", "")
 	request.Header.Set("Origin", "https://webapp.example")
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Access-Control-Allow-Origin") != "https://webapp.example" {
@@ -66,7 +62,7 @@ func TestConversationMessagesRejectsInvalidPaginationBeforeStorage(t *testing.T)
 	} {
 		t.Run(query, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/conversations/id/messages?"+query, ""))
+			handler.ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/om3/conversations/id/messages?"+query, ""))
 			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
 				t.Fatalf("query %s response = %d, %s", query, response.Code, response.Body)
 			}
@@ -95,7 +91,7 @@ func TestConversationMessagesDefaultEmptyPageAndStableErrors(t *testing.T) {
 				return conversation.MessagePage{}, test.err
 			}})
 			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/conversations/id/messages", ""))
+			handler.ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/om3/conversations/id/messages", ""))
 			if response.Code != test.status || strings.Contains(response.Body.String(), "private database detail") {
 				t.Fatalf("error response = %d, %s", response.Code, response.Body)
 			}

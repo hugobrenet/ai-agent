@@ -27,10 +27,6 @@ func (d Decision) Valid() bool {
 // user rejected: the call was not executed.
 var rejectedToolResult = json.RawMessage(`{"content":[{"type":"text","text":"The user rejected this action. It was not executed."}]}`)
 
-// unconfirmableToolResult is the tool result the model receives for an action
-// requiring confirmation in a request that cannot wait for one.
-var unconfirmableToolResult = json.RawMessage(`{"content":[{"type":"text","text":"This action requires the confirmation of the user, which only a conversation can request. It was not executed."}]}`)
-
 // SuspendedTurn is the state of a turn waiting for the user to confirm a tool
 // call. It holds everything RunTurn needs to resume: the messages of the turn
 // so far, and the calls of the current model iteration with the results

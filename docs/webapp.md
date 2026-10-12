@@ -9,8 +9,9 @@ X-OpenSVC-Cluster-ID: <cluster.config.id>
 X-OpenSVC-Node: <daemon.nodename>
 ```
 
-Use these headers for conversation creation, listing, reading, renaming,
-deletion and turns, as well as one-shot asks. The request bodies and SSE
+Use these headers for every backend route: conversation creation, listing,
+reading, renaming, deletion, turns and confirmations. The routes
+are listed in the [client API](api.md#routes). The request bodies and SSE
 events are unchanged: a turn still sends only `{"prompt":"..."}`. The target
 belongs in the header so authentication completes before reading the body.
 Use the current token after renewal; the agent does not refresh tokens.
@@ -20,8 +21,8 @@ surrounding whitespace, control characters or commas. Duplicate headers are
 rejected. Both are required for OpenID: the MCP resolves the exact cluster/node
 pair in its administrator-owned catalogue, never a client-supplied URL or DNS
 lookup. Missing or unknown targets are refused without fallback.
-The cluster header is required for every client, including `om ai` with a
-daemon-issued native token, which carries no cluster claim.
+The cluster header is required for every token, including a daemon-issued
+native token, which carries no cluster claim.
 
 ## Verification and forwarding
 
@@ -52,8 +53,8 @@ compare claims locally. The returned subject remains the opaque OpenID `sub`,
 not `preferred_username`. MCP credential refusals, expired identities or a
 requested-cluster mismatch return 401; unavailable verification or malformed
 bridge responses return 503. No conversation or model access is
-allowed before this check. Conversation ownership remains cluster + issuer
-+ subject. Each subsequent MCP request carries the same Bearer and targets
+allowed before this check. Conversation ownership is backend + cluster +
+issuer + subject. Each subsequent MCP request carries the same Bearer and targets
 from private request context over MCP's local Unix socket; none is exposed to
 the model or stored as a credential. Origin binding applies to all headers.
 The returned expiry bounds the protected operation. Authentication itself
@@ -61,7 +62,7 @@ uses a short timeout, without locally reading the token's expiry.
 
 ## Conversation messages
 
-`GET /v1/conversations/{id}/messages` returns persisted user/assistant display
+`GET /v1/om3/conversations/{id}/messages` returns persisted user/assistant display
 text from completed turns only. Supply the same Bearer and target headers as
 other conversation operations. Every read verifies identity again; access is
 bound to cluster ID + issuer + subject. Missing and foreign IDs both return 404;
@@ -106,8 +107,7 @@ their prompt or partial answer, and therefore cannot be reconstructed here.
 Reading does not invoke the model or tools, update retention, or change the
 model context. All retained display messages can be paged, independently of
 the smaller context window selected for model turns. Existing stored turns are
-readable without a schema change. Metadata routes and SSE remain unchanged;
-the `om ai` client does not call this new endpoint.
+readable without a schema change. Metadata routes and SSE remain unchanged.
 
 ## Action confirmation
 
@@ -140,7 +140,7 @@ differently. The confirmation expires after 10 minutes.
 ### Decision
 
 ```http
-POST /v1/conversations/{id}/turns/{turn_id}/confirmation
+POST /v1/om3/conversations/{id}/turns/{turn_id}/confirmation
 Content-Type: application/json
 
 {"confirmation_id":"<confirmation ID>","decision":"approve"}
@@ -165,14 +165,12 @@ model calls a further destructive tool.
 
 ### While it waits
 
-- `GET /v1/conversations/{id}` returns `pending_confirmation`, with the same
+- `GET /v1/om3/conversations/{id}` returns `pending_confirmation`, with the same
   fields as the event, while a confirmation waits: show it again after a page
   reload.
 - A new turn returns 409 `conversation_busy` until the user decides or the
   confirmation expires; an expired one no longer blocks the conversation.
 - A pending confirmation survives an agent restart.
-- `POST /v1/ask` cannot wait for a decision: it does not run such a call, and
-  the model is told it requires a conversation.
 
 ## CORS
 
@@ -208,7 +206,7 @@ origins receive CORS headers on errors and SSE responses too. Unlisted origins
 in restrictive mode return 403; invalid preflight methods/headers also return
 403 without invoking authentication, conversation storage or the model.
 
-Clients without `Origin`, including `om ai`, are unaffected. CORS is a browser
+Clients without `Origin` are unaffected. CORS is a browser
 policy, not an authentication mechanism or protection against non-browser
 clients. No CORS headers or origin registrations are sent to MCP or daemons.
 
@@ -219,5 +217,4 @@ socket, not MCP's OAuth HTTPS endpoint reserved for external agents. The MCP
 must serve OpenID routing and the identity bridge described above on that
 socket before an actual OpenID request can succeed; the MCP-side checks listed
 above are subject to that work.
-Browser cross-origin access is configurable as described above. The webapp
-chatbot page is separate client work.
+Browser cross-origin access is configurable as described above.

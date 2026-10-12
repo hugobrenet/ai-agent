@@ -30,7 +30,7 @@ func TestAskReturnsDirectAnswerAndExposesAllTools(t *testing.T) {
 			t.Fatal("LLM context contains verified OpenSVC identity")
 		}
 	}, steps: []llmStep{func(request llm.Request, emit llm.EmitFunc) error {
-		if len(request.Messages) != 2 || request.Messages[0].Role != llm.RoleSystem || request.Messages[0].Text != systemPrompt {
+		if len(request.Messages) != 2 || request.Messages[0].Role != llm.RoleSystem || request.Messages[0].Text != OM3SystemPrompt {
 			t.Fatalf("unexpected initial messages: %#v", request.Messages)
 		}
 		if len(request.Tools) != 2 || request.Tools[1].Name != "refresh_instance_status" {
@@ -50,7 +50,7 @@ func TestAskReturnsDirectAnswerAndExposesAllTools(t *testing.T) {
 	ctx = auth.WithTargetCluster(ctx, "cluster-id")
 	ctx = auth.WithIdentity(ctx, auth.Identity{ClusterID: "cluster-id", Subject: "alice", Issuer: "node-a", Grants: []string{"guest"}})
 	var events []Event
-	if err := agent.Ask(ctx, "health of my cluster", func(event Event) error {
+	if _, err := agent.RunTurn(ctx, nil, "health of my cluster", func(event Event) error {
 		events = append(events, event)
 		return nil
 	}); err != nil {
@@ -101,7 +101,7 @@ func TestAskExecutesToolAndReturnsResultToLLM(t *testing.T) {
 	}}
 	agent := newTestAgent(t, model, session, 4)
 	var events []Event
-	if err := agent.Ask(auth.WithBearerToken(t.Context(), "jwt-marker"), "check health", func(event Event) error {
+	if _, err := agent.RunTurn(auth.WithBearerToken(t.Context(), "jwt-marker"), nil, "check health", func(event Event) error {
 		events = append(events, event)
 		return nil
 	}); err != nil {
@@ -143,7 +143,7 @@ func TestAskReturnsFunctionalToolErrorToLLM(t *testing.T) {
 	}}
 	agent := newTestAgent(t, model, session, 3)
 	var finished Event
-	if err := agent.Ask(t.Context(), "health", func(event Event) error {
+	if _, err := agent.RunTurn(t.Context(), nil, "health", func(event Event) error {
 		if event.Type == EventToolFinished {
 			finished = event
 		}
@@ -183,7 +183,7 @@ func TestAskRejectsUnsafeToolRequests(t *testing.T) {
 				return emit(llm.Event{Type: llm.EventCompleted, FinishReason: llm.FinishReasonToolCalls})
 			}}}
 			agent := newTestAgent(t, model, session, 3)
-			err := agent.Ask(t.Context(), "health", func(Event) error { return nil })
+			_, err := agent.RunTurn(t.Context(), nil, "health", func(Event) error { return nil })
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Ask() error = %v, want containing %q", err, test.want)
 			}
@@ -201,7 +201,7 @@ func TestAskEnforcesMaxIterationsBeforeCallingTool(t *testing.T) {
 	session := &fakeSession{tools: []*mcp.Tool{{Name: "get_cluster_health", InputSchema: objectSchema()}}}
 	model := &scriptedLLM{t: t, steps: []llmStep{toolCallStep("get_cluster_health", "call-1")}}
 	agent := newTestAgent(t, model, session, 1)
-	err := agent.Ask(t.Context(), "health", func(Event) error { return nil })
+	_, err := agent.RunTurn(t.Context(), nil, "health", func(Event) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "maximum of 1 iterations") {
 		t.Fatalf("Ask() error = %v", err)
 	}
@@ -218,7 +218,7 @@ func TestAskEnforcesTotalToolCallLimit(t *testing.T) {
 	}
 	model := &scriptedLLM{t: t, steps: steps}
 	agent := newTestAgent(t, model, session, len(steps)+1)
-	err := agent.Ask(t.Context(), "health", func(Event) error { return nil })
+	_, err := agent.RunTurn(t.Context(), nil, "health", func(Event) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "maximum of 16") {
 		t.Fatalf("Ask() error = %v, want total tool call limit", err)
 	}
@@ -254,7 +254,7 @@ func TestAskPropagatesMCPAndConsumerErrorsAndClosesSession(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			agent := newTestAgent(t, test.model, test.session, 3)
-			err := agent.Ask(t.Context(), "health", test.emit)
+			_, err := agent.RunTurn(t.Context(), nil, "health", test.emit)
 			if err == nil {
 				t.Fatal("Ask() succeeded, want error")
 			}
@@ -273,11 +273,11 @@ func TestAskTimesOutAndClosesMCPSession(t *testing.T) {
 	model := &deadlineLLM{}
 	agent, err := New(model, func(context.Context) (MCPSession, error) {
 		return session, nil
-	}, Config{MaxIterations: 2, Timeout: 20 * time.Millisecond})
+	}, Config{SystemPrompt: OM3SystemPrompt, MaxIterations: 2, Timeout: 20 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	err = agent.Ask(t.Context(), "health", func(Event) error { return nil })
+	_, err = agent.RunTurn(t.Context(), nil, "health", func(Event) error { return nil })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Ask() error = %v, want deadline exceeded", err)
 	}
@@ -368,7 +368,7 @@ func newTestAgent(t *testing.T, model llm.Client, session *fakeSession, maxItera
 			session.connectedWithJWT = true
 		}
 		return session, nil
-	}, Config{MaxIterations: maxIterations, Timeout: time.Minute})
+	}, Config{SystemPrompt: OM3SystemPrompt, MaxIterations: maxIterations, Timeout: time.Minute})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
@@ -407,4 +407,11 @@ func emitEvents(emit llm.EmitFunc, events ...llm.Event) error {
 		}
 	}
 	return nil
+}
+
+func TestNewRequiresASystemPrompt(t *testing.T) {
+	connect := func(context.Context) (MCPSession, error) { return nil, nil }
+	if _, err := New(&scriptedLLM{}, connect, Config{SystemPrompt: " ", MaxIterations: 2, Timeout: time.Minute}); err == nil {
+		t.Fatal("New() accepted an empty system prompt")
+	}
 }

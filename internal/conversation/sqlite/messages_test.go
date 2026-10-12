@@ -94,9 +94,10 @@ func TestDisplayMessagesAreBoundToOwner(t *testing.T) {
 	}
 	completeDisplayTurn(t, store, item.ID, "turn-1", testNow, toolTranscript())
 	for _, owner := range []conversation.Owner{
-		{ClusterID: "other-cluster", Issuer: testOwner.Issuer, Subject: testOwner.Subject},
-		{ClusterID: testOwner.ClusterID, Issuer: "other-issuer", Subject: testOwner.Subject},
-		{ClusterID: testOwner.ClusterID, Issuer: testOwner.Issuer, Subject: "other-user"},
+		{Backend: "oc3", ClusterID: testOwner.ClusterID, Issuer: testOwner.Issuer, Subject: testOwner.Subject},
+		{Backend: testOwner.Backend, ClusterID: "other-cluster", Issuer: testOwner.Issuer, Subject: testOwner.Subject},
+		{Backend: testOwner.Backend, ClusterID: testOwner.ClusterID, Issuer: "other-issuer", Subject: testOwner.Subject},
+		{Backend: testOwner.Backend, ClusterID: testOwner.ClusterID, Issuer: testOwner.Issuer, Subject: "other-user"},
 	} {
 		page, err := store.ListMessages(t.Context(), owner, item.ID, conversation.MessageQuery{Before: "2:1"})
 		if !errors.Is(err, conversation.ErrNotFound) || len(page.Messages) != 0 {
