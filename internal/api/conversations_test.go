@@ -47,7 +47,7 @@ func TestConversationLifecycleRoutes(t *testing.T) {
 	}
 	handler := newConversationTestHandler(t, service)
 
-	create := authenticatedRequest(http.MethodPost, "/v1/conversations", "")
+	create := authenticatedRequest(http.MethodPost, "/v1/om3/conversations", "")
 	createResponse := httptest.NewRecorder()
 	handler.ServeHTTP(createResponse, create)
 	if createResponse.Code != http.StatusCreated {
@@ -59,18 +59,18 @@ func TestConversationLifecycleRoutes(t *testing.T) {
 	}
 
 	listResponse := httptest.NewRecorder()
-	handler.ServeHTTP(listResponse, authenticatedRequest(http.MethodGet, "/v1/conversations", ""))
+	handler.ServeHTTP(listResponse, authenticatedRequest(http.MethodGet, "/v1/om3/conversations", ""))
 	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), item.ID) {
 		t.Fatalf("list status=%d body=%s", listResponse.Code, listResponse.Body.String())
 	}
 
 	getResponse := httptest.NewRecorder()
-	handler.ServeHTTP(getResponse, authenticatedRequest(http.MethodGet, "/v1/conversations/"+item.ID, ""))
+	handler.ServeHTTP(getResponse, authenticatedRequest(http.MethodGet, "/v1/om3/conversations/"+item.ID, ""))
 	if getResponse.Code != http.StatusOK || !strings.Contains(getResponse.Body.String(), item.ID) {
 		t.Fatalf("get status=%d body=%s", getResponse.Code, getResponse.Body.String())
 	}
 
-	updateRequest := authenticatedRequest(http.MethodPatch, "/v1/conversations/"+item.ID, `{"title":"Renamed conversation"}`)
+	updateRequest := authenticatedRequest(http.MethodPatch, "/v1/om3/conversations/"+item.ID, `{"title":"Renamed conversation"}`)
 	updateRequest.Header.Set("Content-Type", "application/json")
 	updateResponse := httptest.NewRecorder()
 	handler.ServeHTTP(updateResponse, updateRequest)
@@ -82,7 +82,7 @@ func TestConversationLifecycleRoutes(t *testing.T) {
 	}
 
 	deleteResponse := httptest.NewRecorder()
-	handler.ServeHTTP(deleteResponse, authenticatedRequest(http.MethodDelete, "/v1/conversations/"+item.ID, ""))
+	handler.ServeHTTP(deleteResponse, authenticatedRequest(http.MethodDelete, "/v1/om3/conversations/"+item.ID, ""))
 	if deleteResponse.Code != http.StatusNoContent || !deleted {
 		t.Fatalf("delete status=%d deleted=%t", deleteResponse.Code, deleted)
 	}
@@ -105,7 +105,7 @@ func TestConversationTitleUpdateRejectsInvalidRequests(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			handler := newConversationTestHandler(t, conversationServiceFuncs{})
-			request := authenticatedRequest(http.MethodPatch, "/v1/conversations/id", test.body)
+			request := authenticatedRequest(http.MethodPatch, "/v1/om3/conversations/id", test.body)
 			if test.contentType != "" {
 				request.Header.Set("Content-Type", test.contentType)
 			}
@@ -138,7 +138,7 @@ func TestConversationTitleUpdateReturnsStableServiceErrors(t *testing.T) {
 				return conversation.Conversation{}, test.err
 			}}
 			handler := newConversationTestHandler(t, service)
-			request := authenticatedRequest(http.MethodPatch, "/v1/conversations/id", `{"title":"valid"}`)
+			request := authenticatedRequest(http.MethodPatch, "/v1/om3/conversations/id", `{"title":"valid"}`)
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
@@ -167,7 +167,7 @@ func TestConversationTurnStreamsPreparedExecution(t *testing.T) {
 		return execution, nil
 	}}
 	handler := newConversationTestHandler(t, service)
-	request := authenticatedRequest(http.MethodPost, "/v1/conversations/conversation-id/turns", `{"prompt":"health"}`)
+	request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/conversation-id/turns", `{"prompt":"health"}`)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -196,7 +196,7 @@ func TestConversationTurnReturnsStablePreStreamErrors(t *testing.T) {
 				return nil, test.err
 			}}
 			handler := newConversationTestHandler(t, service)
-			request := authenticatedRequest(http.MethodPost, "/v1/conversations/id/turns", `{"prompt":"health"}`)
+			request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/id/turns", `{"prompt":"health"}`)
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
@@ -214,13 +214,13 @@ func TestConversationTurnReturnsStablePreStreamErrors(t *testing.T) {
 func TestConversationRoutesRequireAuthentication(t *testing.T) {
 	handler := newConversationTestHandler(t, conversationServiceFuncs{})
 	for _, route := range []struct{ method, path string }{
-		{http.MethodPost, "/v1/conversations"},
-		{http.MethodGet, "/v1/conversations"},
-		{http.MethodGet, "/v1/conversations/id"},
-		{http.MethodGet, "/v1/conversations/id/messages"},
-		{http.MethodPatch, "/v1/conversations/id"},
-		{http.MethodDelete, "/v1/conversations/id"},
-		{http.MethodPost, "/v1/conversations/id/turns"},
+		{http.MethodPost, "/v1/om3/conversations"},
+		{http.MethodGet, "/v1/om3/conversations"},
+		{http.MethodGet, "/v1/om3/conversations/id"},
+		{http.MethodGet, "/v1/om3/conversations/id/messages"},
+		{http.MethodPatch, "/v1/om3/conversations/id"},
+		{http.MethodDelete, "/v1/om3/conversations/id"},
+		{http.MethodPost, "/v1/om3/conversations/id/turns"},
 	} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(route.method, route.path, nil))
@@ -315,11 +315,7 @@ func (e *testTurnExecution) Cancel(string) error {
 
 func newConversationTestHandler(t *testing.T, service ConversationService) http.Handler {
 	t.Helper()
-	handler, err := NewHandler(
-		askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }),
-		service, allowTestTokenVerifier(),
-		HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()},
-	)
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()})
 	if err != nil {
 		t.Fatalf("create conversation test handler: %v", err)
 	}

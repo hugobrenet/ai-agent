@@ -22,6 +22,8 @@ type MCPSession interface {
 type MCPConnectFunc func(context.Context) (MCPSession, error)
 
 type Config struct {
+	// SystemPrompt instructs the model for the backend the agent serves.
+	SystemPrompt  string
 	MaxIterations int
 	Timeout       time.Duration
 }
@@ -49,6 +51,9 @@ func New(llmClient llm.Client, connectMCP MCPConnectFunc, config Config) (*Agent
 	if connectMCP == nil {
 		return nil, fmt.Errorf("agent MCP connector is nil")
 	}
+	if strings.TrimSpace(config.SystemPrompt) == "" {
+		return nil, fmt.Errorf("agent system prompt is empty")
+	}
 	if config.MaxIterations <= 0 {
 		return nil, fmt.Errorf("agent max iterations must be positive")
 	}
@@ -56,16 +61,6 @@ func New(llmClient llm.Client, connectMCP MCPConnectFunc, config Config) (*Agent
 		return nil, fmt.Errorf("agent timeout must be positive")
 	}
 	return &Agent{llm: llmClient, connectMCP: connectMCP, config: config}, nil
-}
-
-// Ask runs a turn that cannot wait for a confirmation: a tool call requiring
-// one is not executed, and the model is told so.
-func (a *Agent) Ask(ctx context.Context, prompt string, emit EmitFunc) (err error) {
-	if strings.TrimSpace(prompt) == "" {
-		return fmt.Errorf("agent prompt is empty")
-	}
-	_, err = a.run(ctx, nil, &SuspendedTurn{Messages: []llm.Message{{Role: llm.RoleUser, Text: prompt}}}, "", emit, false)
-	return err
 }
 
 // RunTurn executes one user turn after a complete provider-neutral history.
@@ -77,7 +72,7 @@ func (a *Agent) RunTurn(ctx context.Context, history []llm.Message, prompt strin
 	if strings.TrimSpace(prompt) == "" {
 		return result, fmt.Errorf("agent prompt is empty")
 	}
-	return a.run(ctx, history, &SuspendedTurn{Messages: []llm.Message{{Role: llm.RoleUser, Text: prompt}}}, "", emit, true)
+	return a.run(ctx, history, &SuspendedTurn{Messages: []llm.Message{{Role: llm.RoleUser, Text: prompt}}}, "", emit)
 }
 
 // ResumeTurn continues a suspended turn with the decision of the user on its
@@ -96,13 +91,13 @@ func (a *Agent) ResumeTurn(ctx context.Context, history []llm.Message, suspended
 	}
 	state.Calls = append([]llm.ToolCall(nil), suspended.Calls...)
 	state.Results = append([]llm.ToolResult(nil), suspended.Results...)
-	return a.run(ctx, history, &state, decision, emit, true)
+	return a.run(ctx, history, &state, decision, emit)
 }
 
-// run drives the turn held by state until the model answers, or, when
-// canSuspend is set, until a tool call requires a confirmation. decision
-// applies to the first call left to run, the one a suspended turn waits on.
-func (a *Agent) run(ctx context.Context, history []llm.Message, state *SuspendedTurn, decision Decision, emit EmitFunc, canSuspend bool) (result TurnResult, err error) {
+// run drives the turn held by state until the model answers, or until a tool
+// call requires a confirmation. decision applies to the first call left to
+// run, the one a suspended turn waits on.
+func (a *Agent) run(ctx context.Context, history []llm.Message, state *SuspendedTurn, decision Decision, emit EmitFunc) (result TurnResult, err error) {
 	if emit == nil {
 		return result, fmt.Errorf("agent event consumer is nil")
 	}
@@ -136,7 +131,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		toolsByName[tool.Name] = tool
 	}
 	messages := make([]llm.Message, 0, len(history)+len(state.Messages)+3)
-	messages = append(messages, llm.Message{Role: llm.RoleSystem, Text: systemPrompt})
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Text: a.config.SystemPrompt})
 	messages = append(messages, history...)
 	messages = append(messages, state.Messages...)
 	llmContext := auth.WithoutAuthentication(ctx)
@@ -161,10 +156,6 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				continue
 			}
 			if callDecision != DecisionApprove && requiresConfirmation(tool) {
-				if !canSuspend {
-					state.Results = append(state.Results, llm.ToolResult{CallID: call.ID, Content: unconfirmableToolResult, IsError: true})
-					continue
-				}
 				state.ToolTitle = toolTitle(tool)
 				return true, nil
 			}

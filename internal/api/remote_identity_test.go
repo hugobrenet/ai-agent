@@ -125,11 +125,11 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		modelCalls.Add(1)
 		return agent.TurnResult{Messages: []llm.Message{{Role: llm.RoleUser, Text: prompt}, {Role: llm.RoleAssistant, Text: "answer"}}, FinishReason: llm.FinishReasonCompleted}, nil
 	})
-	service, err := conversation.NewService(store, runner, conversation.ServiceConfig{})
+	service, err := conversation.NewService(store, runner, conversation.ServiceConfig{Backend: "om3"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error { modelCalls.Add(1); return nil }), service, verifier, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		handler.ServeHTTP(response, request)
 		return response
 	}
-	created := call("POST", "/v1/conversations", alice, "")
+	created := call("POST", "/v1/om3/conversations", alice, "")
 	if created.Code != 201 {
 		t.Fatalf("create: %d", created.Code)
 	}
@@ -152,7 +152,7 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	if err := json.Unmarshal(created.Body.Bytes(), &item); err != nil {
 		t.Fatal(err)
 	}
-	path := "/v1/conversations/" + item.Conversation.ID
+	path := "/v1/om3/conversations/" + item.Conversation.ID
 	for _, token := range []string{bob, otherCluster} {
 		for _, method := range []string{"GET", "PATCH", "DELETE"} {
 			body := ""
@@ -166,7 +166,7 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		if response := call("POST", path+"/turns", token, `{"prompt":"read history"}`); response.Code != 404 {
 			t.Fatalf("foreign turn: %d", response.Code)
 		}
-		response := call("GET", "/v1/conversations", token, "")
+		response := call("GET", "/v1/om3/conversations", token, "")
 		if response.Code != 200 || strings.Contains(response.Body.String(), item.Conversation.ID) {
 			t.Fatal("foreign conversation leaked")
 		}
@@ -180,9 +180,9 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	targets["malformed"] = "cluster-a"
 	for _, token := range []string{forged, expired, "malformed"} {
 		for _, tc := range []struct{ method, path, body string }{
-			{"GET", "/v1/conversations", ""}, {"GET", path, ""}, {"GET", path + "/messages", ""}, {"DELETE", path, ""},
+			{"GET", "/v1/om3/conversations", ""}, {"GET", path, ""}, {"GET", path + "/messages", ""}, {"DELETE", path, ""},
 			{"PATCH", path, `{"title":"refused"}`}, {"POST", path + "/turns", `{"prompt":"refused"}`},
-			{"POST", "/v1/ask", `{"prompt":"refused"}`}, {"POST", "/v1/conversations", ""},
+			{"POST", "/v1/om3/conversations/conversation-1/turns", `{"prompt":"refused"}`}, {"POST", "/v1/om3/conversations", ""},
 		} {
 			before := checks.Load()
 			response := call(tc.method, tc.path, token, tc.body)

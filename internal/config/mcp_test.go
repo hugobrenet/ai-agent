@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestLoadMCPSocket(t *testing.T) {
+func TestLoadOM3MCPSocket(t *testing.T) {
 	for _, tc := range []struct {
 		name, socket string
 		wantErr      bool
@@ -19,7 +19,7 @@ func TestLoadMCPSocket(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, err := loadMCP(func(key string) string {
-				if key == "OPENSVC_AI_MCP_SOCKET" {
+				if key == "OPENSVC_AI_OM3_MCP_SOCKET" {
 					return tc.socket
 				}
 				return ""
@@ -33,7 +33,7 @@ func TestLoadMCPSocket(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cfg.SocketPath != strings.TrimSpace(tc.socket) {
+			if cfg.OM3SocketPath != strings.TrimSpace(tc.socket) {
 				t.Fatalf("unexpected config: %+v", cfg)
 			}
 		})

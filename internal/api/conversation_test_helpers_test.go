@@ -45,3 +45,24 @@ func (noopConversationService) PrepareConfirmation(context.Context, auth.Identit
 func (noopConversationService) PendingConfirmation(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error) {
 	return nil, conversation.ErrNotFound
 }
+
+// testConversationID is the conversation whose turns turnService runs.
+const testConversationID = "conversation-1"
+
+// turnFunc runs one conversation turn in tests of the turn stream.
+type turnFunc func(context.Context, string, agent.EmitFunc) error
+
+// turnService runs every turn of testConversationID with run.
+type turnService struct {
+	noopConversationService
+	run turnFunc
+}
+
+func (s turnService) PrepareTurn(_ context.Context, _ auth.Identity, id string, prompt string) (conversation.TurnExecution, error) {
+	if id != testConversationID {
+		return nil, conversation.ErrNotFound
+	}
+	return &testTurnExecution{run: func(ctx context.Context, emit agent.EmitFunc) error {
+		return s.run(ctx, prompt, emit)
+	}}, nil
+}

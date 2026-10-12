@@ -17,7 +17,7 @@ import (
 	"github.com/opensvc/ai-agent/internal/llm"
 )
 
-func TestAuditRecordsAskLifecycleWithoutSensitiveData(t *testing.T) {
+func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 	const (
 		tokenMarker  = "sensitive-jwt-marker"
 		promptMarker = "sensitive-prompt-marker"
@@ -25,7 +25,7 @@ func TestAuditRecordsAskLifecycleWithoutSensitiveData(t *testing.T) {
 		callerID     = "caller-controlled-request-id"
 	)
 	var output bytes.Buffer
-	handler := newAuditTestHandler(t, &output, askerFunc(func(_ context.Context, prompt string, emit agent.EmitFunc) error {
+	handler := newAuditTestHandler(t, &output, turnFunc(func(_ context.Context, prompt string, emit agent.EmitFunc) error {
 		if prompt != promptMarker {
 			t.Fatalf("prompt = %q", prompt)
 		}
@@ -45,7 +45,7 @@ func TestAuditRecordsAskLifecycleWithoutSensitiveData(t *testing.T) {
 		return auth.Identity{ClusterID: "cluster-id", Subject: "alice\noperator", Issuer: "node-a"}, nil
 	}))
 
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"`+promptMarker+`"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"`+promptMarker+`"}`))
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
@@ -64,7 +64,7 @@ func TestAuditRecordsAskLifecycleWithoutSensitiveData(t *testing.T) {
 	}
 
 	events := decodeAuditEvents(t, output.String())
-	wantEvents := []string{"ask_started", "tool_started", "tool_finished", "llm_usage", "ask_completed"}
+	wantEvents := []string{"conversation_turn_started", "tool_started", "tool_finished", "llm_usage", "conversation_turn_completed"}
 	if len(events) != len(wantEvents) {
 		t.Fatalf("audit events = %#v", events)
 	}
@@ -75,7 +75,7 @@ func TestAuditRecordsAskLifecycleWithoutSensitiveData(t *testing.T) {
 		if events[index]["request_id"] != requestID {
 			t.Fatalf("audit request ID = %v, want %q", events[index]["request_id"], requestID)
 		}
-		if events[index]["subject"] != "alice operator" || events[index]["issuer"] != "node-a" {
+		if events[index]["backend"] != "om3" || events[index]["subject"] != "alice operator" || events[index]["issuer"] != "node-a" {
 			t.Fatalf("audit identity = %#v", events[index])
 		}
 	}
@@ -97,13 +97,13 @@ func TestAuditRecordsAuthenticationRejectionWithoutTokenOrVerifierError(t *testi
 		errorMarker = "sensitive-verifier-error"
 	)
 	var output bytes.Buffer
-	handler := newAuditTestHandler(t, &output, askerFunc(func(context.Context, string, agent.EmitFunc) error {
+	handler := newAuditTestHandler(t, &output, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		t.Fatal("agent was called")
 		return nil
 	}), tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
 		return auth.Identity{ClusterID: "cluster-id"}, errors.New(errorMarker)
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	response := httptest.NewRecorder()
@@ -129,14 +129,14 @@ func TestAuditRecordsAuthenticationRejectionWithoutTokenOrVerifierError(t *testi
 func TestAuditRecordsStableAgentFailureCodeWithoutRawError(t *testing.T) {
 	const errorMarker = "sensitive-provider-error"
 	var output bytes.Buffer
-	handler := newAuditTestHandler(t, &output, askerFunc(func(context.Context, string, agent.EmitFunc) error {
+	handler := newAuditTestHandler(t, &output, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		return errors.New(errorMarker)
 	}), allowTestTokenVerifier())
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, newAuthenticatedAskRequest(`{"prompt":"health"}`))
+	handler.ServeHTTP(response, newAuthenticatedTurnRequest(`{"prompt":"health"}`))
 
 	events := decodeAuditEvents(t, output.String())
-	if len(events) != 2 || events[1]["event"] != "ask_failed" || events[1]["code"] != "agent_failed" {
+	if len(events) != 2 || events[1]["event"] != "conversation_turn_failed" || events[1]["code"] != "agent_failed" {
 		t.Fatalf("audit events = %#v", events)
 	}
 	if strings.Contains(output.String(), errorMarker) {
@@ -146,18 +146,18 @@ func TestAuditRecordsStableAgentFailureCodeWithoutRawError(t *testing.T) {
 
 func TestAuditRecordsValidatedRequestRejection(t *testing.T) {
 	var output bytes.Buffer
-	handler := newAuditTestHandler(t, &output, askerFunc(func(context.Context, string, agent.EmitFunc) error {
+	handler := newAuditTestHandler(t, &output, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		t.Fatal("agent was called")
 		return nil
 	}), allowTestTokenVerifier())
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
 	events := decodeAuditEvents(t, output.String())
-	if len(events) != 1 || events[0]["event"] != "ask_rejected" || events[0]["code"] != "unsupported_media_type" {
+	if len(events) != 1 || events[0]["event"] != "conversation_turn_rejected" || events[0]["code"] != "unsupported_media_type" {
 		t.Fatalf("audit events = %#v", events)
 	}
 	if events[0]["subject"] != "test-user" || events[0]["status"] != float64(http.StatusUnsupportedMediaType) {
@@ -175,15 +175,11 @@ func TestAuditDoesNotRecordConversationTitle(t *testing.T) {
 		}
 		return conversation.Conversation{ID: id, Title: titleMarker}, nil
 	}}
-	handler, err := NewHandler(
-		askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }),
-		service, allowTestTokenVerifier(),
-		HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: logger},
-	)
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: logger})
 	if err != nil {
 		t.Fatalf("create audited API handler: %v", err)
 	}
-	request := authenticatedRequest(http.MethodPatch, "/v1/conversations/conversation-id", `{"title":"`+titleMarker+`"}`)
+	request := authenticatedRequest(http.MethodPatch, "/v1/om3/conversations/conversation-id", `{"title":"`+titleMarker+`"}`)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -234,10 +230,10 @@ func TestBoundedAuditIdentityNormalizesAndTruncates(t *testing.T) {
 	}
 }
 
-func newAuditTestHandler(t *testing.T, output *bytes.Buffer, asker Asker, verifier auth.TokenVerifier) http.Handler {
+func newAuditTestHandler(t *testing.T, output *bytes.Buffer, asker turnFunc, verifier auth.TokenVerifier) http.Handler {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(output, nil))
-	handler, err := NewHandler(asker, noopConversationService{}, verifier, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: logger})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: logger})
 	if err != nil {
 		t.Fatalf("create audited API handler: %v", err)
 	}

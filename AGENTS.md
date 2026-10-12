@@ -4,8 +4,7 @@
 
 This project is a standalone Go daemon that orchestrates LLM turns and
 authenticated OpenSVC MCP tool calls for cluster diagnostics. It exposes an
-HTTPS API used by clients such as `om ai`, with one-shot requests and persistent
-conversations. It does not issue OpenSVC tokens or implement daemon operations.
+HTTPS API used by the OpenSVC webapp, with persistent conversations, under one route prefix per backend (`/v1/om3`). It does not issue OpenSVC tokens or implement daemon operations.
 
 Keep the agent independent from the om3 binary, a local daemon, the MCP
 implementation and any particular LLM provider. OpenSVC semantics and factual
@@ -22,13 +21,14 @@ attribution notices.
 
 - Inspect the working tree and preserve unrelated user changes.
 - Read the relevant implementation, [README](README.md) and
-  [client contract](docs/om-ai.md) before changing behavior.
+  [client contract](docs/api.md) before changing behavior.
 - Identify the responsible layer and preserve its boundary. Prefer focused
   changes to existing capabilities over new frameworks or abstractions.
 - Check actual API, MCP and provider contracts; do not invent compatibility,
   permissions or persistence guarantees.
-- Changes to the agent API or SSE contract may affect the separate om3 client.
-  Coordinate such changes explicitly; do not modify other projects implicitly.
+- Changes to the agent API or SSE contract may affect the separate webapp
+  client. Coordinate such changes explicitly; do not modify other projects
+  implicitly.
 
 ## Architecture
 
@@ -59,8 +59,14 @@ attribution notices.
   interface. `internal/conversation/sqlite` owns the current embedded schema,
   transactions and provider-neutral message encoding.
 
-`Agent.Ask` is a non-persistent wrapper around `Agent.RunTurn` with empty
-history. Each turn opens and closes its own authenticated MCP session.
+A backend is one product the agent serves, today only `om3`. The composition
+root builds, per backend, its MCP client, an agent with its system prompt and
+a conversation service bound to its name; the API registers its routes under
+`/v1/{backend}`. The route alone selects the backend: never choose it from a
+request header, body or token. LLM client, storage, limits and audit are
+shared; conversations stay bound to their backend.
+
+Each turn opens and closes its own authenticated MCP session.
 Conversations must not retain MCP sessions or provider-specific state.
 
 ## Authentication and trust
@@ -73,7 +79,7 @@ Conversations must not retain MCP sessions or provider-specific state.
 - Require one bounded `X-OpenSVC-Cluster-ID` header and read an optional
   `X-OpenSVC-Node` header, without interpreting them against token claims.
   Forward them unchanged; the cluster ID selects where MCP verifies the token.
-- Reach MCP only through its local Unix socket (`OPENSVC_AI_MCP_SOCKET`). MCP
+- Reach MCP only through its local Unix socket (`OPENSVC_AI_OM3_MCP_SOCKET`). MCP
   accepts delegated OpenSVC tokens there, never on its OAuth HTTPS listener.
   Do not add a network fallback.
 - Authenticate through MCP's `GET /mcp/auth/whoami` bridge on that socket,
@@ -105,7 +111,7 @@ Conversations must not retain MCP sessions or provider-specific state.
 ## Turn and conversation invariants
 
 - Preserve bounds on history, iterations, tool calls, arguments, results,
-  catalogs, streams and concurrent asks. Keep discovered tools request-scoped;
+  catalogs, streams and concurrent turns. Keep discovered tools request-scoped;
   do not introduce a caller-independent catalog that bypasses visibility.
 - Functional MCP tool errors can return to the model; MCP transport failures
   stop the turn. Do not invent daemon data or hide authorization failures.
@@ -113,8 +119,8 @@ Conversations must not retain MCP sessions or provider-specific state.
   disable redirects and set provider storage to false where the protocol
   supports it. Keep provider-specific parsing and completion semantics out of
   the orchestration loop.
-- Bind all conversation operations to verified `cluster_id`, `issuer` and
-  `subject`. Foreign and missing conversation IDs share the same public error.
+- Bind all conversation operations to their backend and to verified
+  `cluster_id`, `issuer` and `subject`. Foreign and missing conversation IDs share the same public error.
 - Serialize turns per conversation without holding a database transaction
   during LLM or MCP work. Commit complete messages before terminal completion;
   failed, canceled and interrupted turns must not replay partial output.

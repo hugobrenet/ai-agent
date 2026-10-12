@@ -40,7 +40,7 @@ func TestLiveAgentUsesClusterHealthTool(t *testing.T) {
 	}
 	orchestrator, err := agent.New(model, func(ctx context.Context) (agent.MCPSession, error) {
 		return mcpClient.Connect(ctx)
-	}, agent.Config{MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
+	}, agent.Config{SystemPrompt: agent.OM3SystemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
 	if err != nil {
 		t.Fatalf("create live agent: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestLiveAgentUsesClusterHealthTool(t *testing.T) {
 		toolNames []string
 		completed bool
 	)
-	err = orchestrator.Ask(ctx, "Use get_cluster_health to assess the current OpenSVC cluster health, then answer concisely.", func(event agent.Event) error {
+	_, err = orchestrator.RunTurn(ctx, nil, "Use get_cluster_health to assess the current OpenSVC cluster health, then answer concisely.", func(event agent.Event) error {
 		switch event.Type {
 		case agent.EventTextDelta:
 			text.WriteString(event.TextDelta)

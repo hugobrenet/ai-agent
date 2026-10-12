@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	testOwner = conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "alice"}
+	testOwner = conversation.Owner{Backend: "om3", ClusterID: "cluster-id", Issuer: "node-a", Subject: "alice"}
 	testNow   = time.Date(2026, 7, 24, 10, 0, 0, 123456789, time.UTC)
 )
 
@@ -32,8 +32,16 @@ func TestStorePersistsConversationAndToolHistory(t *testing.T) {
 	if err := store.CreateConversation(t.Context(), item); !errors.Is(err, conversation.ErrConflict) {
 		t.Fatalf("duplicate CreateConversation() error = %v", err)
 	}
-	if _, err := store.GetConversation(t.Context(), conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID); !errors.Is(err, conversation.ErrNotFound) {
+	if _, err := store.GetConversation(t.Context(), conversation.Owner{Backend: "om3", ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID); !errors.Is(err, conversation.ErrNotFound) {
 		t.Fatalf("cross-owner GetConversation() error = %v", err)
+	}
+	otherBackend := testOwner
+	otherBackend.Backend = "oc3"
+	if _, err := store.GetConversation(t.Context(), otherBackend, item.ID); !errors.Is(err, conversation.ErrNotFound) {
+		t.Fatalf("cross-backend GetConversation() error = %v", err)
+	}
+	if listed, err := store.ListConversations(t.Context(), otherBackend, 10); err != nil || len(listed) != 0 {
+		t.Fatalf("cross-backend ListConversations() = %#v, %v", listed, err)
 	}
 	got, err := store.GetConversation(t.Context(), testOwner, item.ID)
 	if err != nil {
@@ -90,7 +98,7 @@ func TestStorePersistsConversationAndToolHistory(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(history, messages) {
 		t.Fatalf("reopened LoadHistory() = %#v, %v", history, err)
 	}
-	if err := reopened.DeleteConversation(t.Context(), conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID); !errors.Is(err, conversation.ErrNotFound) {
+	if err := reopened.DeleteConversation(t.Context(), conversation.Owner{Backend: "om3", ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID); !errors.Is(err, conversation.ErrNotFound) {
 		t.Fatalf("cross-owner DeleteConversation() error = %v", err)
 	}
 	if err := reopened.DeleteConversation(t.Context(), testOwner, item.ID); err != nil {
@@ -120,7 +128,7 @@ func TestStoreUpdatesTitleWithoutOverwritingItOnCompletion(t *testing.T) {
 	if updated.Title != "Database incident" || !updated.UpdatedAt.Equal(testNow.Add(time.Second)) {
 		t.Fatalf("UpdateConversationTitle() = %#v", updated)
 	}
-	if _, err := store.UpdateConversationTitle(t.Context(), conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID, "Foreign", testNow.Add(time.Second)); !errors.Is(err, conversation.ErrNotFound) {
+	if _, err := store.UpdateConversationTitle(t.Context(), conversation.Owner{Backend: "om3", ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}, item.ID, "Foreign", testNow.Add(time.Second)); !errors.Is(err, conversation.ErrNotFound) {
 		t.Fatalf("cross-owner UpdateConversationTitle() error = %v", err)
 	}
 	if _, err := store.UpdateConversationTitle(t.Context(), testOwner, item.ID, " not normalized ", testNow.Add(time.Second)); !errors.Is(err, conversation.ErrInvalid) {

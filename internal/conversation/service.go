@@ -35,6 +35,9 @@ type TurnRunner interface {
 }
 
 type ServiceConfig struct {
+	// Backend names the backend the service runs turns on. Its conversations
+	// are bound to it and invisible to the services of other backends.
+	Backend            string
 	Lifetime           time.Duration
 	ListLimit          int
 	FinalizeTimeout    time.Duration
@@ -60,6 +63,9 @@ func NewService(store Store, runner TurnRunner, config ServiceConfig) (*Service,
 	}
 	if runner == nil {
 		return nil, fmt.Errorf("conversation turn runner is nil")
+	}
+	if !ValidBackendName(config.Backend) {
+		return nil, fmt.Errorf("conversation service backend name %q is invalid", config.Backend)
 	}
 	config = withServiceDefaults(config)
 	if config.Lifetime <= 0 || config.ListLimit <= 0 || config.FinalizeTimeout <= 0 ||
@@ -95,7 +101,7 @@ func withServiceDefaults(config ServiceConfig) ServiceConfig {
 }
 
 func (s *Service) Create(ctx context.Context, identity auth.Identity) (Conversation, error) {
-	owner, err := ownerFromIdentity(identity)
+	owner, err := s.ownerFromIdentity(identity)
 	if err != nil {
 		return Conversation{}, err
 	}
@@ -118,7 +124,7 @@ func (s *Service) Create(ctx context.Context, identity auth.Identity) (Conversat
 }
 
 func (s *Service) Get(ctx context.Context, identity auth.Identity, id string) (Conversation, error) {
-	owner, err := ownerFromIdentity(identity)
+	owner, err := s.ownerFromIdentity(identity)
 	if err != nil {
 		return Conversation{}, err
 	}
@@ -133,7 +139,7 @@ func (s *Service) Get(ctx context.Context, identity auth.Identity, id string) (C
 }
 
 func (s *Service) List(ctx context.Context, identity auth.Identity) ([]Conversation, error) {
-	owner, err := ownerFromIdentity(identity)
+	owner, err := s.ownerFromIdentity(identity)
 	if err != nil {
 		return nil, err
 	}
@@ -435,8 +441,8 @@ func turnFailure(err error, contextErr error) (TurnStatus, string) {
 	return TurnFailed, "agent_failed"
 }
 
-func ownerFromIdentity(identity auth.Identity) (Owner, error) {
-	owner := Owner{ClusterID: strings.TrimSpace(identity.ClusterID), Issuer: strings.TrimSpace(identity.Issuer), Subject: strings.TrimSpace(identity.Subject)}
+func (s *Service) ownerFromIdentity(identity auth.Identity) (Owner, error) {
+	owner := Owner{Backend: s.config.Backend, ClusterID: strings.TrimSpace(identity.ClusterID), Issuer: strings.TrimSpace(identity.Issuer), Subject: strings.TrimSpace(identity.Subject)}
 	if owner.ClusterID == "" || owner.Issuer == "" || owner.Subject == "" {
 		return Owner{}, fmt.Errorf("%w: authenticated conversation owner is invalid", ErrInvalid)
 	}

@@ -23,10 +23,6 @@ const (
 	askWriteTimeout    = 15 * time.Second
 )
 
-type Asker interface {
-	Ask(context.Context, string, agent.EmitFunc) error
-}
-
 type AskRequest struct {
 	Prompt string `json:"prompt"`
 }
@@ -73,27 +69,6 @@ type ErrorResponse struct {
 type APIError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
-}
-
-func serveAsk(asker Asker, limiter *askLimiter, audit auditLogger) http.HandlerFunc {
-	return func(response http.ResponseWriter, request *http.Request) {
-		askRequest, status, apiError := decodeAskRequest(response, request)
-		if apiError != nil {
-			audit.event(request.Context(), "ask_rejected",
-				slog.Int("status", status),
-				slog.String("code", apiError.Code),
-			)
-			writeJSONError(response, status, apiError.Code, apiError.Message)
-			return
-		}
-		if !acquireAgentSlot(response, request, limiter, audit, "ask", nil) {
-			return
-		}
-		defer limiter.release()
-		streamAgent(response, request, audit, "ask", nil, func(emit agent.EmitFunc) error {
-			return asker.Ask(request.Context(), askRequest.Prompt, emit)
-		})
-	}
 }
 
 func acquireAgentSlot(response http.ResponseWriter, request *http.Request, limiter *askLimiter, audit auditLogger, prefix string, attributes []slog.Attr) bool {

@@ -1,0 +1,86 @@
+# Client API
+
+`opensvc-ai-agentd` serves its clients over HTTPS. The OpenSVC webapp is its
+client; see the [browser client guide](webapp.md) for the headers, message
+history, action confirmation and CORS.
+
+## Backends
+
+The agent serves each backend under its own routes, `/v1/{backend}`. A backend
+is one product: its MCP, the identity check of its users and the instructions
+given to the model. The route selects the backend; nothing in the request can
+select another one.
+
+| Backend | Routes | MCP | Configuration |
+|---|---|---|---|
+| `om3` | `/v1/om3/...` | OpenSVC daemon MCP, on its local Unix socket | `OPENSVC_AI_OM3_MCP_SOCKET` |
+
+A conversation belongs to the backend it was created on. It is not listed,
+read or continued through the routes of another backend.
+
+## Routes
+
+The routes of a backend, here `om3`:
+
+| Method and path | Purpose |
+|---|---|
+| `POST /v1/om3/conversations` | Create a conversation |
+| `GET /v1/om3/conversations` | List the conversations of the caller |
+| `GET /v1/om3/conversations/{id}` | Read a conversation and its pending confirmation |
+| `GET /v1/om3/conversations/{id}/messages` | Read its stored messages |
+| `PATCH /v1/om3/conversations/{id}` | Rename it |
+| `DELETE /v1/om3/conversations/{id}` | Delete it |
+| `POST /v1/om3/conversations/{id}/turns` | Send a prompt, streamed |
+| `POST /v1/om3/conversations/{id}/turns/{turn_id}/confirmation` | Approve or reject a pending action, streamed |
+
+`GET /health` is shared by all backends and needs no authentication.
+
+## Authentication
+
+Every backend route requires:
+
+```http
+Authorization: Bearer <daemon-issued access token>
+X-OpenSVC-Cluster-ID: <ID of the cluster that issued it>
+```
+
+The client obtains the token and the cluster ID from the same daemon. Before
+each operation, the agent verifies the token through the om3 MCP
+`GET /mcp/auth/whoami`, served only on its local socket: MCP selects the
+cluster from the header and relays the token to that daemon's
+`GET /api/auth/whoami`. The cluster header only selects where the token is
+verified: a token issued by another cluster is refused by the selected daemon.
+
+The agent treats the token as opaque. It uses the returned identity and
+expiry for conversation ownership and request deadlines, and delegates the
+same token and cluster ID to MCP for the tools. The daemon enforces grants.
+The token is never stored, logged or given to the model.
+
+## Conversations
+
+A conversation stores the successful turns of the caller, as context for the
+next ones. Each turn takes `{"prompt":"..."}` and streams its events as
+server-sent events. Only one turn runs at a time in a conversation.
+
+- **Title.** After the first successful turn, the agent derives a title from
+  its prompt: whitespace is normalized and titles longer than 80 characters
+  are truncated, without an additional model request. A failed first turn
+  sets no title. A title set with `PATCH` is not replaced by later prompts.
+- **Failures.** Canceled, failed, timed-out and interrupted turns are not
+  added to the model context and their partial output is not stored.
+- **Busy.** A second turn while one runs, or while an action waits for a
+  decision, returns 409 `conversation_busy`.
+- **Expiry.** A conversation expires after its configured lifetime, counted
+  from its creation and then from its last completed turn; an expired
+  conversation returns 410.
+
+## Identity and isolation
+
+A conversation is bound to its backend and to the verified cluster ID, issuer
+and subject of its creator. Listing returns only the conversations of the
+caller on that backend. Reading, renaming or deleting another identity's
+conversation returns 404, as for a missing one, without revealing whether it
+exists.
+
+Provider credentials remain in the agent configuration and are never returned
+through the API.

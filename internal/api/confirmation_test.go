@@ -27,7 +27,7 @@ func TestConversationTurnStreamsAConfirmationRequest(t *testing.T) {
 	service := conversationServiceFuncs{prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
 		return execution, nil
 	}}
-	request := authenticatedRequest(http.MethodPost, "/v1/conversations/conversation-id/turns", `{"prompt":"stop web"}`)
+	request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/conversation-id/turns", `{"prompt":"stop web"}`)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	newConversationTestHandler(t, service).ServeHTTP(response, request)
@@ -50,7 +50,7 @@ func TestConversationConfirmationResumesTheTurnWithTheDecision(t *testing.T) {
 			}
 			return execution, nil
 		}}
-		request := authenticatedRequest(http.MethodPost, "/v1/conversations/conversation-id/turns/turn-id/confirmation",
+		request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/conversation-id/turns/turn-id/confirmation",
 			`{"confirmation_id":"confirmation-id","decision":"`+string(decision)+`"}`)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -75,7 +75,7 @@ func TestConversationConfirmationRejectsAnyOtherBody(t *testing.T) {
 			t.Fatalf("%s reached the service", name)
 			return nil, nil
 		}}
-		request := authenticatedRequest(http.MethodPost, "/v1/conversations/conversation-id/turns/turn-id/confirmation", body)
+		request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/conversation-id/turns/turn-id/confirmation", body)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		newConversationTestHandler(t, service).ServeHTTP(response, request)
@@ -98,7 +98,7 @@ func TestConversationConfirmationReturnsStableErrors(t *testing.T) {
 		service := conversationServiceFuncs{confirm: func(context.Context, auth.Identity, string, string, string, agent.Decision) (conversation.TurnExecution, error) {
 			return nil, test.err
 		}}
-		request := authenticatedRequest(http.MethodPost, "/v1/conversations/conversation-id/turns/turn-id/confirmation", `{"confirmation_id":"confirmation-id","decision":"approve"}`)
+		request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/conversation-id/turns/turn-id/confirmation", `{"confirmation_id":"confirmation-id","decision":"approve"}`)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		newConversationTestHandler(t, service).ServeHTTP(response, request)
@@ -121,7 +121,7 @@ func TestConversationReadReturnsThePendingConfirmation(t *testing.T) {
 		},
 	}
 	response := httptest.NewRecorder()
-	newConversationTestHandler(t, service).ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/conversations/conversation-id", ""))
+	newConversationTestHandler(t, service).ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/om3/conversations/conversation-id", ""))
 	want := `"pending_confirmation":{"id":"confirmation-id","turn_id":"turn-id","tool":{"name":"stop_object","title":"Stop object","destructive":true},"arguments":{"path":"prod/svc/web"},"expires_at":"2026-10-09T17:45:00Z"}`
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), want) {
 		t.Fatalf("got %d %s", response.Code, response.Body.String())

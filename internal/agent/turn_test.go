@@ -26,7 +26,7 @@ func TestRunTurnUsesIsolatedHistoryAndReturnsNewMessages(t *testing.T) {
 		if len(request.Messages) != 6 {
 			t.Fatalf("message count = %d, want system, four history messages and user", len(request.Messages))
 		}
-		if request.Messages[0].Role != llm.RoleSystem || request.Messages[0].Text != systemPrompt {
+		if request.Messages[0].Role != llm.RoleSystem || request.Messages[0].Text != OM3SystemPrompt {
 			t.Fatalf("system message = %#v", request.Messages[0])
 		}
 		if !reflect.DeepEqual(request.Messages[1:5], history) {
@@ -149,7 +149,7 @@ func TestRunTurnRejectsInvalidHistoryBeforeMCP(t *testing.T) {
 			agent, err := New(&scriptedLLM{t: t}, func(context.Context) (MCPSession, error) {
 				connectCalls++
 				return &fakeSession{}, nil
-			}, Config{MaxIterations: 2, Timeout: time.Minute})
+			}, Config{SystemPrompt: OM3SystemPrompt, MaxIterations: 2, Timeout: time.Minute})
 			if err != nil {
 				t.Fatalf("create agent: %v", err)
 			}

@@ -20,8 +20,6 @@ import (
 	"github.com/opensvc/ai-agent/internal/llm"
 )
 
-type askerFunc func(context.Context, string, agent.EmitFunc) error
-
 type tokenVerifierFunc func(context.Context, string) (auth.Identity, error)
 
 type readTrackingBody struct {
@@ -36,18 +34,14 @@ func (b *readTrackingBody) Read(data []byte) (int, error) {
 
 func (*readTrackingBody) Close() error { return nil }
 
-func (f askerFunc) Ask(ctx context.Context, prompt string, emit agent.EmitFunc) error {
-	return f(ctx, prompt, emit)
-}
-
 func (f tokenVerifierFunc) Verify(ctx context.Context, token string) (auth.Identity, error) {
 	return f(ctx, token)
 }
 
-func TestAskStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
+func TestTurnStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 	const token = "test-jwt-marker"
 	var called bool
-	handler := newTestHandler(t, askerFunc(func(ctx context.Context, prompt string, emit agent.EmitFunc) error {
+	handler := newTestHandler(t, turnFunc(func(ctx context.Context, prompt string, emit agent.EmitFunc) error {
 		called = true
 		if got, ok := auth.BearerTokenFromContext(ctx); !ok || got != token {
 			t.Fatalf("delegated JWT = %q, %v", got, ok)
@@ -72,7 +66,7 @@ func TestAskStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 		return nil
 	}))
 
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health of my cluster"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health of my cluster"}`))
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
@@ -112,7 +106,7 @@ func TestAskStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 	}
 }
 
-func TestAskRejectsTokenRejectedByVerifier(t *testing.T) {
+func TestTurnRejectsTokenRejectedByVerifier(t *testing.T) {
 	const token = "forged-jwt-marker"
 	var agentCalls atomic.Int64
 	verifier := tokenVerifierFunc(func(_ context.Context, got string) (auth.Identity, error) {
@@ -121,11 +115,11 @@ func TestAskRejectsTokenRejectedByVerifier(t *testing.T) {
 		}
 		return auth.Identity{ClusterID: "cluster-id"}, auth.ErrInvalidToken
 	})
-	handler := newTestHandlerWithVerifier(t, askerFunc(func(context.Context, string, agent.EmitFunc) error {
+	handler := newTestHandlerWithVerifier(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		agentCalls.Add(1)
 		return nil
 	}), verifier)
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", nil)
 	body := &readTrackingBody{reader: strings.NewReader(`{"prompt":"health"}`)}
 	request.Body = body
 	request.Header.Set("Authorization", "Bearer "+token)
@@ -151,7 +145,7 @@ func TestAskRejectsTokenRejectedByVerifier(t *testing.T) {
 	}
 }
 
-func TestAskRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
+func TestTurnRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		authorization string
@@ -172,11 +166,11 @@ func TestAskRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var calls atomic.Int64
-			handler := newTestHandler(t, askerFunc(func(context.Context, string, agent.EmitFunc) error {
+			handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 				calls.Add(1)
 				return nil
 			}))
-			request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(test.body))
+			request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(test.body))
 			if test.authorization != "" {
 				request.Header.Set("Authorization", test.authorization)
 				request.Header.Set(auth.ClusterIDHeader, "cluster-id")
@@ -204,12 +198,12 @@ func TestAskRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 	}
 }
 
-func TestAskStreamsGenericRuntimeError(t *testing.T) {
+func TestTurnStreamsGenericRuntimeError(t *testing.T) {
 	const sensitiveDetail = "provider failed with secret detail"
-	handler := newTestHandler(t, askerFunc(func(context.Context, string, agent.EmitFunc) error {
+	handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		return errors.New(sensitiveDetail)
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
@@ -228,11 +222,11 @@ func TestAskStreamsGenericRuntimeError(t *testing.T) {
 	}
 }
 
-func TestAskStreamsTimeoutError(t *testing.T) {
-	handler := newTestHandler(t, askerFunc(func(context.Context, string, agent.EmitFunc) error {
+func TestTurnStreamsTimeoutError(t *testing.T) {
+	handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		return context.DeadlineExceeded
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
@@ -245,12 +239,12 @@ func TestAskStreamsTimeoutError(t *testing.T) {
 	}
 }
 
-func TestAskSetsAndClearsWriteDeadline(t *testing.T) {
+func TestTurnSetsAndClearsWriteDeadline(t *testing.T) {
 	response := &writeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
-	handler := newTestHandler(t, askerFunc(func(_ context.Context, _ string, emit agent.EmitFunc) error {
+	handler := newTestHandler(t, turnFunc(func(_ context.Context, _ string, emit agent.EmitFunc) error {
 		return emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, Iteration: 1})
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
@@ -267,14 +261,14 @@ func TestAskSetsAndClearsWriteDeadline(t *testing.T) {
 	}
 }
 
-func TestAskDoesNotEmitAfterCompleted(t *testing.T) {
-	handler := newTestHandler(t, askerFunc(func(_ context.Context, _ string, emit agent.EmitFunc) error {
+func TestTurnDoesNotEmitAfterCompleted(t *testing.T) {
+	handler := newTestHandler(t, turnFunc(func(_ context.Context, _ string, emit agent.EmitFunc) error {
 		if err := emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, Iteration: 1}); err != nil {
 			return err
 		}
 		return errors.New("session close failed")
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
@@ -287,13 +281,13 @@ func TestAskDoesNotEmitAfterCompleted(t *testing.T) {
 	}
 }
 
-func TestAskDoesNotStreamErrorAfterCancellation(t *testing.T) {
-	handler := newTestHandler(t, askerFunc(func(ctx context.Context, _ string, _ agent.EmitFunc) error {
+func TestTurnDoesNotStreamErrorAfterCancellation(t *testing.T) {
+	handler := newTestHandler(t, turnFunc(func(ctx context.Context, _ string, _ agent.EmitFunc) error {
 		return ctx.Err()
 	}))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(`{"prompt":"health"}`)).WithContext(ctx)
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`)).WithContext(ctx)
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
@@ -317,12 +311,12 @@ func TestWriteSSEEnforcesStreamBound(t *testing.T) {
 	}
 }
 
-func TestAskRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
+func TestTurnRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	firstDone := make(chan struct{})
 	var calls atomic.Int64
-	asker := askerFunc(func(_ context.Context, _ string, emit agent.EmitFunc) error {
+	asker := turnFunc(func(_ context.Context, _ string, emit agent.EmitFunc) error {
 		if calls.Add(1) == 1 {
 			close(started)
 			<-release
@@ -331,7 +325,7 @@ func TestAskRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	})
 	handler := newTestHandlerWithLimit(t, asker, 1)
 
-	firstRequest := newAuthenticatedAskRequest(`{"prompt":"first"}`)
+	firstRequest := newAuthenticatedTurnRequest(`{"prompt":"first"}`)
 	firstResponse := httptest.NewRecorder()
 	go func() {
 		defer close(firstDone)
@@ -340,7 +334,7 @@ func TestAskRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	<-started
 
 	secondResponse := httptest.NewRecorder()
-	handler.ServeHTTP(secondResponse, newAuthenticatedAskRequest(`{"prompt":"second"}`))
+	handler.ServeHTTP(secondResponse, newAuthenticatedTurnRequest(`{"prompt":"second"}`))
 	if secondResponse.Code != http.StatusTooManyRequests {
 		t.Fatalf("second status = %d, want 429", secondResponse.Code)
 	}
@@ -362,7 +356,7 @@ func TestAskRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	}
 
 	thirdResponse := httptest.NewRecorder()
-	handler.ServeHTTP(thirdResponse, newAuthenticatedAskRequest(`{"prompt":"third"}`))
+	handler.ServeHTTP(thirdResponse, newAuthenticatedTurnRequest(`{"prompt":"third"}`))
 	if thirdResponse.Code != http.StatusOK {
 		t.Fatalf("third status = %d, want released slot", thirdResponse.Code)
 	}
@@ -371,16 +365,16 @@ func TestAskRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	}
 }
 
-func TestAskReleasesConcurrencySlotAfterAgentError(t *testing.T) {
+func TestTurnReleasesConcurrencySlotAfterAgentError(t *testing.T) {
 	var calls atomic.Int64
-	handler := newTestHandlerWithLimit(t, askerFunc(func(context.Context, string, agent.EmitFunc) error {
+	handler := newTestHandlerWithLimit(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		calls.Add(1)
 		return errors.New("agent failed")
 	}), 1)
 
 	for _, prompt := range []string{"first", "second"} {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, newAuthenticatedAskRequest(fmt.Sprintf(`{"prompt":%q}`, prompt)))
+		handler.ServeHTTP(response, newAuthenticatedTurnRequest(fmt.Sprintf(`{"prompt":%q}`, prompt)))
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s status = %d, want streaming 200", prompt, response.Code)
 		}
@@ -390,11 +384,11 @@ func TestAskReleasesConcurrencySlotAfterAgentError(t *testing.T) {
 	}
 }
 
-func TestAskReleasesConcurrencySlotAfterCancellation(t *testing.T) {
+func TestTurnReleasesConcurrencySlotAfterCancellation(t *testing.T) {
 	started := make(chan struct{})
 	done := make(chan struct{})
 	var calls atomic.Int64
-	handler := newTestHandlerWithLimit(t, askerFunc(func(ctx context.Context, _ string, emit agent.EmitFunc) error {
+	handler := newTestHandlerWithLimit(t, turnFunc(func(ctx context.Context, _ string, emit agent.EmitFunc) error {
 		if calls.Add(1) == 1 {
 			close(started)
 			<-ctx.Done()
@@ -404,7 +398,7 @@ func TestAskReleasesConcurrencySlotAfterCancellation(t *testing.T) {
 	}), 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	firstRequest := newAuthenticatedAskRequest(`{"prompt":"first"}`).WithContext(ctx)
+	firstRequest := newAuthenticatedTurnRequest(`{"prompt":"first"}`).WithContext(ctx)
 	go func() {
 		defer close(done)
 		handler.ServeHTTP(httptest.NewRecorder(), firstRequest)
@@ -414,27 +408,38 @@ func TestAskReleasesConcurrencySlotAfterCancellation(t *testing.T) {
 	<-done
 
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, newAuthenticatedAskRequest(`{"prompt":"second"}`))
+	handler.ServeHTTP(response, newAuthenticatedTurnRequest(`{"prompt":"second"}`))
 	if response.Code != http.StatusOK || calls.Load() != 2 {
 		t.Fatalf("second status=%d calls=%d, want released slot", response.Code, calls.Load())
 	}
 }
 
-func TestNewHandlerRejectsNilAgent(t *testing.T) {
+func TestNewHandlerRejectsInvalidBackends(t *testing.T) {
 	config := HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()}
-	if _, err := NewHandler(nil, noopConversationService{}, allowTestTokenVerifier(), config); err == nil {
-		t.Fatal("NewHandler(nil) succeeded")
+	valid := Backend{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: allowTestTokenVerifier()}
+	if _, err := NewHandler(nil, config); err == nil {
+		t.Fatal("NewHandler() accepted no backend")
 	}
-	if _, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }), nil, allowTestTokenVerifier(), config); err == nil {
+	for _, name := range []string{"", "OM3", "om/3", "om-3", strings.Repeat("a", 33)} {
+		backend := valid
+		backend.Name = name
+		if _, err := NewHandler([]Backend{backend}, config); err == nil {
+			t.Fatalf("NewHandler() accepted backend name %q", name)
+		}
+	}
+	if _, err := NewHandler([]Backend{valid, valid}, config); err == nil {
+		t.Fatal("NewHandler() accepted a duplicated backend")
+	}
+	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: nil, Verifier: allowTestTokenVerifier()}}, config); err == nil {
 		t.Fatal("NewHandler() accepted nil conversation service")
 	}
-	if _, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }), noopConversationService{}, nil, config); err == nil {
+	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: nil}}, config); err == nil {
 		t.Fatal("NewHandler() accepted nil verifier")
 	}
-	if _, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }), noopConversationService{}, allowTestTokenVerifier(), HandlerConfig{AuditLogger: discardAuditLogger()}); err == nil {
+	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: allowTestTokenVerifier()}}, HandlerConfig{AuditLogger: discardAuditLogger()}); err == nil {
 		t.Fatal("NewHandler() accepted zero concurrent asks")
 	}
-	if _, err := NewHandler(askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil }), noopConversationService{}, allowTestTokenVerifier(), HandlerConfig{MaxConcurrentAsks: 4}); err == nil {
+	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4}); err == nil {
 		t.Fatal("NewHandler() accepted nil audit logger")
 	}
 }
@@ -449,26 +454,26 @@ func (r *writeDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
 	return nil
 }
 
-func newTestHandler(t *testing.T, asker Asker) http.Handler {
+func newTestHandler(t *testing.T, asker turnFunc) http.Handler {
 	t.Helper()
 	if asker == nil {
-		asker = askerFunc(func(context.Context, string, agent.EmitFunc) error { return nil })
+		asker = turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })
 	}
 	return newTestHandlerWithVerifier(t, asker, allowTestTokenVerifier())
 }
 
-func newTestHandlerWithLimit(t *testing.T, asker Asker, maxConcurrentAsks int) http.Handler {
+func newTestHandlerWithLimit(t *testing.T, asker turnFunc, maxConcurrentAsks int) http.Handler {
 	t.Helper()
-	handler, err := NewHandler(asker, noopConversationService{}, allowTestTokenVerifier(), HandlerConfig{MaxConcurrentAsks: maxConcurrentAsks, AuditLogger: discardAuditLogger()})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: maxConcurrentAsks, AuditLogger: discardAuditLogger()})
 	if err != nil {
 		t.Fatalf("create API handler: %v", err)
 	}
 	return handler
 }
 
-func newTestHandlerWithVerifier(t *testing.T, asker Asker, verifier auth.TokenVerifier) http.Handler {
+func newTestHandlerWithVerifier(t *testing.T, asker turnFunc, verifier auth.TokenVerifier) http.Handler {
 	t.Helper()
-	handler, err := NewHandler(asker, noopConversationService{}, verifier, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()})
 	if err != nil {
 		t.Fatalf("create API handler: %v", err)
 	}
@@ -485,8 +490,8 @@ func allowTestTokenVerifier() auth.TokenVerifier {
 	})
 }
 
-func newAuthenticatedAskRequest(body string) *http.Request {
-	request := httptest.NewRequest(http.MethodPost, "/v1/ask", strings.NewReader(body))
+func newAuthenticatedTurnRequest(body string) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")

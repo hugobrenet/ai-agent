@@ -45,7 +45,7 @@ func TestStoreSuspendsAndResumesATurnOnce(t *testing.T) {
 	if _, err := store.ClaimConfirmation(t.Context(), testOwner, item.ID, "turn-1", "confirmation-other", testNow.Add(3*time.Second)); !errors.Is(err, conversation.ErrNotPending) {
 		t.Fatalf("a wrong confirmation ID was accepted: %v", err)
 	}
-	other := conversation.Owner{ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}
+	other := conversation.Owner{Backend: "om3", ClusterID: "cluster-id", Issuer: "node-a", Subject: "bob"}
 	if _, err := store.ClaimConfirmation(t.Context(), other, item.ID, "turn-1", "confirmation-1", testNow.Add(3*time.Second)); !errors.Is(err, conversation.ErrNotFound) {
 		t.Fatalf("another owner claimed the confirmation: %v", err)
 	}
