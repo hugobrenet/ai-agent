@@ -89,6 +89,9 @@ server-sent events. Only one turn runs at a time in a conversation.
   sets no title. A title set with `PATCH` is not replaced by later prompts.
 - **Failures.** Canceled, failed, timed-out and interrupted turns are not
   added to the model context and their partial output is not stored.
+- **Tool calls.** A turn runs at most 8 tool calls per model answer and 16 in
+  all. Beyond, it fails with the stream `error` event `tool_call_limit`: ask a
+  narrower question.
 - **Busy.** A second turn while one runs, or while an action waits for a
   decision, returns 409 `conversation_busy`.
 - **Expiry.** A conversation expires after its configured lifetime, counted

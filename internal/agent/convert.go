@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -10,8 +11,13 @@ import (
 	"github.com/opensvc/ai-agent/internal/llm"
 )
 
+// ErrToolCallLimit reports a turn that needs more tool calls than the agent
+// runs: more than maxToolCallsPerTurn in one model answer, or more than
+// maxToolCallsPerAsk in the whole turn.
+var ErrToolCallLimit = errors.New("tool call limit exceeded")
+
 const (
-	maxToolCallsPerTurn      = 4
+	maxToolCallsPerTurn      = 8
 	maxToolCallsPerAsk       = 16
 	maxToolArguments         = 256 << 10
 	maxToolResult            = 1 << 20

@@ -226,6 +226,9 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 		if errors.Is(err, context.DeadlineExceeded) {
 			code = "request_timeout"
 			message = "the agent request timed out"
+		} else if errors.Is(err, agent.ErrToolCallLimit) {
+			code = "tool_call_limit"
+			message = "the question needs more tool calls than the agent runs in one answer; ask a narrower question"
 		}
 		if deadlineErr := setAskWriteDeadline(response); deadlineErr != nil {
 			return true
@@ -258,6 +261,9 @@ func askFailureCode(err error, completed bool, writeFailed bool, contextErr erro
 	if err != nil {
 		if completed {
 			return "agent_cleanup_failed"
+		}
+		if errors.Is(err, agent.ErrToolCallLimit) {
+			return "tool_call_limit"
 		}
 		return "agent_failed"
 	}
