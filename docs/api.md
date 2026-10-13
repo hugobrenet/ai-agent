@@ -37,6 +37,11 @@ The routes of a backend, here `om3`; `oc3` has the same routes under
 
 `GET /health` is shared by all backends and needs no authentication.
 
+`GET /openapi.json` returns the OpenAPI 3.1 description of these routes, their
+bodies, errors and stream events, without authentication. The source is
+`internal/api/openapi.json`, embedded in the binary; a test keeps its routes
+equal to the routes the agent registers.
+
 ## Authentication
 
 Each backend declares the headers its routes read. Every `om3` route requires:

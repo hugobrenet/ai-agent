@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,12 @@ import (
 	"github.com/opensvc/ai-agent/internal/auth"
 	"github.com/opensvc/ai-agent/internal/conversation"
 )
+
+// openAPIDocument describes the routes of every backend. A test keeps it equal
+// to the routes the API registers.
+//
+//go:embed openapi.json
+var openAPIDocument []byte
 
 type HealthResponse struct {
 	Status string `json:"status"`
@@ -57,6 +64,7 @@ func NewHandler(backends []Backend, config HandlerConfig) (http.Handler, error) 
 	limiter := newAskLimiter(config.MaxConcurrentAsks)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", getHealth)
+	mux.HandleFunc("GET /openapi.json", getOpenAPI)
 	names := make(map[string]bool, len(backends))
 	var headers []string
 	for _, backend := range backends {
@@ -80,24 +88,43 @@ func NewHandler(backends []Backend, config HandlerConfig) (http.Handler, error) 
 	return withRequestID(handler), nil
 }
 
+// backendRoute is one route of a backend, relative to /v1/{backend}.
+type backendRoute struct {
+	method  string
+	path    string
+	handler http.Handler
+}
+
+func backendRoutes(conversations ConversationService, limiter *askLimiter, audit auditLogger) []backendRoute {
+	return []backendRoute{
+		{"POST", "/conversations", serveCreateConversation(conversations, audit)},
+		{"GET", "/conversations", serveListConversations(conversations, audit)},
+		{"GET", "/conversations/{id}", serveGetConversation(conversations, audit)},
+		{"GET", "/conversations/{id}/messages", serveConversationMessages(conversations, audit)},
+		{"PATCH", "/conversations/{id}", serveUpdateConversationTitle(conversations, audit)},
+		{"DELETE", "/conversations/{id}", serveDeleteConversation(conversations, audit)},
+		{"POST", "/conversations/{id}/turns", serveConversationTurn(conversations, limiter, audit)},
+		{"POST", "/conversations/{id}/turns/{turn_id}/confirmation", serveConversationConfirmation(conversations, limiter, audit)},
+	}
+}
+
 func registerBackend(mux *http.ServeMux, backend Backend, limiter *askLimiter, audit auditLogger) {
 	prefix := "/v1/" + backend.Name
-	conversations := backend.Conversations
-	handle := func(method string, path string, handler http.Handler) {
-		mux.Handle(method+" "+prefix+path, requireAccessToken(backend.Authenticator, audit, handler))
+	for _, route := range backendRoutes(backend.Conversations, limiter, audit) {
+		mux.Handle(route.method+" "+prefix+route.path, requireAccessToken(backend.Authenticator, audit, route.handler))
 	}
-	handle("POST", "/conversations", serveCreateConversation(conversations, audit))
-	handle("GET", "/conversations", serveListConversations(conversations, audit))
-	handle("GET", "/conversations/{id}", serveGetConversation(conversations, audit))
-	handle("GET", "/conversations/{id}/messages", serveConversationMessages(conversations, audit))
-	handle("PATCH", "/conversations/{id}", serveUpdateConversationTitle(conversations, audit))
-	handle("DELETE", "/conversations/{id}", serveDeleteConversation(conversations, audit))
-	handle("POST", "/conversations/{id}/turns", serveConversationTurn(conversations, limiter, audit))
-	handle("POST", "/conversations/{id}/turns/{turn_id}/confirmation", serveConversationConfirmation(conversations, limiter, audit))
 }
 
 func getHealth(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(response).Encode(HealthResponse{Status: "ok"})
+}
+
+// getOpenAPI serves the OpenAPI document of the API, without authentication.
+func getOpenAPI(response http.ResponseWriter, _ *http.Request) {
+	response.Header().Set("Content-Type", "application/json")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	response.WriteHeader(http.StatusOK)
+	_, _ = response.Write(openAPIDocument)
 }

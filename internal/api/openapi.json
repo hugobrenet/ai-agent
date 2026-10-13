@@ -1,0 +1,1250 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenSVC AI agent API",
+    "version": "0.1.0",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "description": "Conversations with the OpenSVC AI agent. Each backend is served under `/v1/{backend}`: `om3` for the OpenSVC daemons of a cluster, `oc3` for the OpenSVC collector, when the agent is configured with its MCP. A conversation belongs to the backend it was created on and to the identity of its creator. Every backend route authenticates the bearer token before any other work; the agent treats the token as opaque and verifies it through the MCP of the backend."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "conversations",
+      "description": "The conversations of the caller on one backend."
+    },
+    {
+      "name": "turns",
+      "description": "Prompts and action decisions, answered as server-sent events."
+    },
+    {
+      "name": "service",
+      "description": "Liveness and this document, without authentication."
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "service"
+        ],
+        "security": [],
+        "summary": "Report the agent liveness, without authentication or upstream call.",
+        "responses": {
+          "200": {
+            "description": "The agent is serving.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenAPI",
+        "tags": [
+          "service"
+        ],
+        "security": [],
+        "summary": "Return this OpenAPI document, without authentication.",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{backend}/conversations": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        }
+      ],
+      "post": {
+        "operationId": "createConversation",
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Create an empty conversation for the caller. The request has no body.",
+        "responses": {
+          "201": {
+            "description": "The conversation was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "400": {
+            "description": "The request carries a body. Codes: `invalid_request`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The caller reached the conversation limit. Codes: `conversation_limit`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The conversation operation failed. Codes: `conversation_failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listConversations",
+        "tags": [
+          "conversations"
+        ],
+        "summary": "List the conversations of the caller on this backend, the most recently updated first.",
+        "responses": {
+          "200": {
+            "description": "The conversations of the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "500": {
+            "description": "The conversation operation failed. Codes: `conversation_failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{backend}/conversations/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        },
+        {
+          "$ref": "#/components/parameters/ConversationID"
+        }
+      ],
+      "get": {
+        "operationId": "getConversation",
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Read a conversation, and the action it waits a decision on, if any.",
+        "responses": {
+          "200": {
+            "description": "The conversation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "400": {
+            "description": "The conversation ID is invalid. Codes: `invalid_request`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The conversation has expired. Codes: `conversation_expired`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The conversation operation failed. Codes: `conversation_failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "renameConversation",
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Rename a conversation. A title set here is not replaced by later prompts.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TitleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The renamed conversation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "400": {
+            "description": "The body or the title is invalid: empty, longer than 80 characters, or unknown fields. Codes: `invalid_request`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body exceeds 4 KiB. Codes: `request_too_large`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The body is not JSON. Codes: `unsupported_media_type`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The conversation has expired. Codes: `conversation_expired`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The conversation operation failed. Codes: `conversation_failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteConversation",
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Delete a conversation and its history.",
+        "responses": {
+          "204": {
+            "description": "The conversation was deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "400": {
+            "description": "The conversation ID is invalid. Codes: `invalid_request`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A turn is running in the conversation. Codes: `conversation_busy`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The conversation operation failed. Codes: `conversation_failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{backend}/conversations/{id}/messages": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        },
+        {
+          "$ref": "#/components/parameters/ConversationID"
+        }
+      ],
+      "get": {
+        "operationId": "listConversationMessages",
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Read the stored messages of a conversation, the most recent page first, for display. Tool calls, tool results and system prompts are never returned.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 50 by default.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` of a previous page.",
+            "schema": {
+              "type": "string",
+              "maxLength": 39,
+              "pattern": "^[1-9][0-9]*:[1-9][0-9]*$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of messages, at most 1 MiB.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "400": {
+            "description": "The query is invalid: unknown parameter, limit out of range or malformed cursor. Codes: `invalid_request`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A single stored message exceeds the page size. Codes: `history_message_too_large`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The conversation has expired. Codes: `conversation_expired`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The conversation operation failed. Codes: `conversation_failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{backend}/conversations/{id}/turns": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        },
+        {
+          "$ref": "#/components/parameters/ConversationID"
+        }
+      ],
+      "post": {
+        "operationId": "createTurn",
+        "tags": [
+          "turns"
+        ],
+        "summary": "Send a prompt and stream the turn of the agent. The agent keeps the conversation history: send the new prompt only. One turn runs at a time in a conversation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The turn is streamed.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events. Each event is written as `event: <type>` and `data: <StreamEvent JSON>`, followed by an empty line; the JSON is the StreamEvent schema of the components. The stream ends after `completed`, `confirmation_required` or `error`."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "400": {
+            "description": "The body is invalid or the prompt is empty. Codes: `invalid_request`, `invalid_prompt`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body exceeds 64 KiB or the prompt exceeds 32 KiB. Codes: `request_too_large`, `prompt_too_large`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The body is not JSON. Codes: `unsupported_media_type`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A turn is running, an action waits a decision, or a conversation limit is reached. Codes: `conversation_busy`, `conversation_limit`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The conversation has expired. Codes: `conversation_expired`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "description": "The turn could not start. Codes: `conversation_failed`, `streaming_unavailable`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/{backend}/conversations/{id}/turns/{turn_id}/confirmation": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        },
+        {
+          "$ref": "#/components/parameters/ConversationID"
+        },
+        {
+          "$ref": "#/components/parameters/TurnID"
+        }
+      ],
+      "post": {
+        "operationId": "confirmTurnAction",
+        "tags": [
+          "turns"
+        ],
+        "summary": "Approve or reject the action a turn waits on, and stream the rest of the turn. Only the om3 backend has actions; an approved action runs exactly as stored.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rest of the turn is streamed.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events. Each event is written as `event: <type>` and `data: <StreamEvent JSON>`, followed by an empty line; the JSON is the StreamEvent schema of the components. The stream ends after `completed`, `confirmation_required` or `error`."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "400": {
+            "description": "The body or the decision is invalid. Codes: `invalid_request`, `invalid_decision`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body exceeds 4 KiB. Codes: `request_too_large`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The body is not JSON. Codes: `unsupported_media_type`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The turn waits on no such confirmation, or the conversation is busy. Codes: `confirmation_not_pending`, `conversation_busy`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The confirmation or the conversation has expired; the action did not run. Codes: `confirmation_expired`, `conversation_expired`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "description": "The turn could not resume. Codes: `conversation_failed`, `streaming_unavailable`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The access token of the user, in `Authorization: Bearer <token>` only: never in the query string or a cookie. `om3`: a token issued by the daemon or an OpenID Connect token the daemon trusts, with the `X-OpenSVC-Cluster-ID` header of the cluster that verifies it. `oc3`: the OpenID Connect access token of the collector user, and no other header."
+      }
+    },
+    "parameters": {
+      "Backend": {
+        "name": "backend",
+        "in": "path",
+        "required": true,
+        "description": "The backend: `om3`, always served, or `oc3`, served when the agent is configured with the collector MCP.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "om3",
+            "oc3"
+          ]
+        }
+      },
+      "ClusterID": {
+        "name": "X-OpenSVC-Cluster-ID",
+        "in": "header",
+        "required": false,
+        "description": "Required on `om3` routes: the ID of the cluster whose daemon verifies the token. Not read on `oc3` routes.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "Node": {
+        "name": "X-OpenSVC-Node",
+        "in": "header",
+        "required": false,
+        "description": "Optional on `om3` routes: a routing hint naming a node, never an identity. Not read on `oc3` routes.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "ConversationID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The conversation ID.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "TurnID": {
+        "name": "turn_id",
+        "in": "path",
+        "required": true,
+        "description": "The ID of the turn waiting on a confirmation.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "The token is missing, malformed, expired or refused, or a required backend header is missing or invalid. Code: `unauthorized`.",
+        "headers": {
+          "WWW-Authenticate": {
+            "schema": {
+              "type": "string",
+              "const": "Bearer"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "AuthenticationUnavailable": {
+        "description": "The identity of the token cannot be verified now. Code: `authentication_unavailable`.",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Seconds to wait before retrying."
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Too many agent turns are already running. Code: `too_many_requests`.",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Seconds to wait before retrying."
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "A stable error code."
+              },
+              "message": {
+                "type": "string",
+                "description": "A human-readable message."
+              }
+            }
+          }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at",
+          "expires_at",
+          "stored_bytes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 80,
+            "description": "Empty until the first successful turn, which derives it from its prompt, or until a rename."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Pushed back by each completed turn."
+          },
+          "stored_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The size of the stored history."
+          }
+        }
+      },
+      "ConversationEnvelope": {
+        "type": "object",
+        "required": [
+          "conversation"
+        ],
+        "properties": {
+          "conversation": {
+            "$ref": "#/components/schemas/Conversation"
+          },
+          "pending_confirmation": {
+            "$ref": "#/components/schemas/Confirmation",
+            "description": "The action the conversation waits a decision on. Only the conversation read returns it."
+          }
+        }
+      },
+      "ConversationList": {
+        "type": "object",
+        "required": [
+          "conversations"
+        ],
+        "properties": {
+          "conversations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Conversation"
+            }
+          }
+        }
+      },
+      "TitleRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Control characters are replaced by spaces and whitespace is normalized."
+          }
+        }
+      },
+      "TurnRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The question of the user, at most 32 KiB, not blank."
+          }
+        }
+      },
+      "ConfirmationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "confirmation_id",
+          "decision"
+        ],
+        "properties": {
+          "confirmation_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The `id` of the confirmation."
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          }
+        }
+      },
+      "Confirmation": {
+        "type": "object",
+        "required": [
+          "id",
+          "turn_id",
+          "tool",
+          "arguments",
+          "expires_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "object",
+            "required": [
+              "name",
+              "title",
+              "destructive"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "destructive": {
+                "type": "boolean"
+              }
+            }
+          },
+          "arguments": {
+            "description": "The exact arguments of the call that runs if the user approves it."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DisplayMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "turn_id",
+          "role",
+          "text",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "MessagePage": {
+        "type": "object",
+        "required": [
+          "messages",
+          "next_cursor"
+        ],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DisplayMessage"
+            },
+            "description": "In chronological order."
+          },
+          "next_cursor": {
+            "type": "string",
+            "description": "Pass it as `before` to read the previous page; empty when there is none."
+          }
+        }
+      },
+      "StreamEvent": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "description": "One event of a streamed turn. The SSE event name equals `type`.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text_delta",
+              "tool_started",
+              "tool_finished",
+              "usage",
+              "completed",
+              "confirmation_required",
+              "error"
+            ]
+          },
+          "iteration": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The model iteration of the turn."
+          },
+          "text_delta": {
+            "type": "string",
+            "description": "`text_delta`: the next piece of the answer."
+          },
+          "tool_name": {
+            "type": "string",
+            "description": "`tool_started`, `tool_finished`: the MCP tool."
+          },
+          "tool_error": {
+            "type": "boolean",
+            "description": "`tool_finished`: whether the tool failed."
+          },
+          "usage": {
+            "type": "object",
+            "description": "`usage`: the tokens of one model call.",
+            "properties": {
+              "input_tokens": {
+                "type": "integer"
+              },
+              "output_tokens": {
+                "type": "integer"
+              },
+              "total_tokens": {
+                "type": "integer"
+              }
+            }
+          },
+          "finish_reason": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "tool_calls",
+              "length",
+              "content_filter",
+              "other"
+            ],
+            "description": "`completed`: why the model stopped."
+          },
+          "confirmation": {
+            "$ref": "#/components/schemas/Confirmation",
+            "description": "`confirmation_required`: the action waiting a decision; the turn ends until it is given."
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "agent_failed",
+              "request_timeout"
+            ],
+            "description": "`error`: why the turn failed."
+          },
+          "message": {
+            "type": "string",
+            "description": "`error`: a human-readable message."
+          }
+        }
+      }
+    }
+  }
+}
