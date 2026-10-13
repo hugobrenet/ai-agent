@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/opensvc/ai-agent/internal/agent"
-	"github.com/opensvc/ai-agent/internal/auth"
 )
 
 func TestHealth(t *testing.T) {
@@ -63,7 +62,7 @@ func TestRoutesRequireAConfiguredBackend(t *testing.T) {
 	for _, path := range []string{"/v1/ask", "/v1/conversations", "/v1/oc3/ask", "/v1/oc3/conversations"} {
 		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"prompt":"hello"}`))
 		request.Header.Set("Authorization", "Bearer token")
-		request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+		request.Header.Set(testBackendHeader, "cluster-id")
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
@@ -82,7 +81,7 @@ func TestRouteSelectsItsBackend(t *testing.T) {
 				called = append(called, name)
 				return emit(agent.Event{Type: agent.EventCompleted, Iteration: 1})
 			})},
-			Verifier: allowTestTokenVerifier(),
+			Authenticator: allowTestTokenVerifier(),
 		}
 	}
 	handler, err := NewHandler([]Backend{backend("om3"), backend("oc3")}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()})
@@ -92,7 +91,7 @@ func TestRouteSelectsItsBackend(t *testing.T) {
 	for _, name := range []string{"oc3", "om3"} {
 		request := httptest.NewRequest(http.MethodPost, "/v1/"+name+"/conversations/"+testConversationID+"/turns", strings.NewReader(`{"prompt":"hello"}`))
 		request.Header.Set("Authorization", "Bearer token")
-		request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+		request.Header.Set(testBackendHeader, "cluster-id")
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)

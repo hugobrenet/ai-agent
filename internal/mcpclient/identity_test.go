@@ -2,7 +2,6 @@ package mcpclient
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -14,31 +13,18 @@ import (
 	"github.com/opensvc/ai-agent/internal/auth"
 )
 
-func TestVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T) {
-	t.Run("native", func(t *testing.T) { testVerifyIdentityThroughTrustedHTTPSMCP(t, false) })
-	t.Run("openid", func(t *testing.T) { testVerifyIdentityThroughTrustedHTTPSMCP(t, true) })
-}
-
-func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
+func TestWhoAmIDecodesTheMCPAnswer(t *testing.T) {
 	// Deliberately not a JWT: only MCP may interpret this credential.
 	const token = "opaque-access-token"
-	identity := auth.Identity{ClusterID: "cluster-a", Subject: "alice", Issuer: "node-a", ExpiresAt: time.Now().Add(time.Hour).UTC()}
-	target := ""
-	node := ""
-	ctx := t.Context()
-	if openID {
-		target = "cluster-a"
-		node = "node-b"
-		ctx = auth.WithTargetCluster(ctx, target)
-		ctx = auth.WithTargetNode(ctx, node)
-		identity.Subject, identity.Issuer = "opaque-subject", "https://idp.example.test/"
+	type identity struct {
+		Subject string `json:"subject"`
 	}
 	var mode atomic.Int32
 	var calls atomic.Int32
 	endpoint := serveUnix(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.Header.Get(auth.ClusterIDHeader) != target || r.Header.Get(auth.NodeHeader) != node {
-			t.Error("whoami request lost its explicit target")
+		if r.Header.Get(testClusterHeader) != "cluster-a" || r.Header.Get(testNodeHeader) != "node-b" {
+			t.Error("whoami request lost its headers")
 		}
 		if r.URL.Path != "/mcp/auth/whoami" || r.Method != "GET" {
 			t.Error("identity request lost its route")
@@ -54,81 +40,30 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 		switch mode.Load() {
 		case 1:
 			w.WriteHeader(401)
-			return
 		case 2:
 			w.WriteHeader(503)
-			return
 		case 3:
 			_, _ = w.Write([]byte(strings.Repeat("x", maxIdentityResponseBytes+1)))
-			return
 		case 4:
 			_, _ = w.Write([]byte(token))
-			return
 		case 5:
-			other := identity
-			other.Subject = ""
-			_ = json.NewEncoder(w).Encode(other)
-			return
+			http.Redirect(w, r, "https://foreign.invalid/sink", http.StatusFound)
 		case 6:
-			other := identity
-			other.ClusterID = ""
-			_ = json.NewEncoder(w).Encode(other)
-			return
-		case 7:
-			other := identity
-			other.Issuer = ""
-			_ = json.NewEncoder(w).Encode(other)
-			return
-		case 8:
-			other := identity
-			other.ExpiresAt = time.Time{}
-			_ = json.NewEncoder(w).Encode(other)
-			return
-		case 9:
-			http.Redirect(w, r, "https://foreign.invalid/sink", 302)
-			return
-		case 10:
-			other := identity
-			other.ExpiresAt = time.Now().Add(-time.Second)
-			_ = json.NewEncoder(w).Encode(other)
-			return
-		case 11:
 			w.WriteHeader(403)
-			return
-		case 12:
+		case 7:
 			w.Header().Set("Content-Type", "text/plain")
-			_ = json.NewEncoder(w).Encode(identity)
-			return
-		case 13:
-			other := identity
-			other.Subject = "alice\nroot"
-			_ = json.NewEncoder(w).Encode(other)
-			return
-		case 14:
-			other := identity
-			other.Issuer = strings.Repeat("x", 257)
-			_ = json.NewEncoder(w).Encode(other)
-			return
-		case 15:
-			other := identity
-			other.ClusterID = " padded "
-			_ = json.NewEncoder(w).Encode(other)
-			return
-		case 16:
-			other := identity
-			other.Subject = "invisible\u200bsubject"
-			_ = json.NewEncoder(w).Encode(other)
-			return
+			_, _ = w.Write([]byte(`{"subject":"alice"}`))
 		default:
-			_ = json.NewEncoder(w).Encode(identity)
+			_, _ = w.Write([]byte(`{"subject":"alice"}`))
 		}
 	}))
-	client, err := New(endpoint)
+	client, err := New(endpoint, testClusterHeader, testNodeHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.Verify(ctx, token)
-	if err != nil || got.ClusterID != identity.ClusterID || got.Subject != identity.Subject || got.Issuer != identity.Issuer || !got.ExpiresAt.Equal(identity.ExpiresAt) {
+	ctx := auth.WithMCPHeaders(t.Context(), targetHeaders("cluster-a", "node-b"))
+	var got identity
+	if err := client.WhoAmI(ctx, token, &got); err != nil || got.Subject != "alice" {
 		t.Fatalf("identity=%+v, err=%v", got, err)
 	}
 	for _, tc := range []struct {
@@ -140,29 +75,20 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 		{"unavailable", 2, auth.ErrVerificationUnavailable},
 		{"oversized response", 3, auth.ErrVerificationUnavailable},
 		{"malformed JSON", 4, auth.ErrVerificationUnavailable},
-		{"missing subject", 5, auth.ErrVerificationUnavailable},
-		{"missing cluster", 6, auth.ErrVerificationUnavailable},
-		{"missing issuer", 7, auth.ErrVerificationUnavailable},
-		{"missing expiry", 8, auth.ErrVerificationUnavailable},
-		{"redirect", 9, auth.ErrVerificationUnavailable},
-		{"expired identity", 10, auth.ErrInvalidToken},
-		{"forbidden", 11, auth.ErrInvalidToken},
-		{"wrong content type", 12, auth.ErrVerificationUnavailable},
-		{"control character", 13, auth.ErrVerificationUnavailable},
-		{"oversized identity field", 14, auth.ErrVerificationUnavailable},
-		{"padded identity field", 15, auth.ErrVerificationUnavailable},
-		{"format character", 16, auth.ErrVerificationUnavailable},
+		{"redirect", 5, auth.ErrVerificationUnavailable},
+		{"forbidden", 6, auth.ErrInvalidToken},
+		{"wrong content type", 7, auth.ErrVerificationUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mode.Store(tc.mode)
-			_, err := client.Verify(ctx, token)
+			err := client.WhoAmI(ctx, token, &identity{})
 			if !errors.Is(err, tc.want) || strings.Contains(err.Error(), token) {
 				t.Fatalf("err=%v, want=%v", err, tc.want)
 			}
 		})
 	}
 	before := calls.Load()
-	if _, err := client.Verify(ctx, "malformed"); !errors.Is(err, auth.ErrInvalidToken) || calls.Load() != before+1 {
+	if err := client.WhoAmI(ctx, "malformed", &identity{}); !errors.Is(err, auth.ErrInvalidToken) || calls.Load() != before+1 {
 		t.Fatal("malformed credential was not delegated to MCP for refusal")
 	}
 	before = calls.Load()
@@ -170,17 +96,17 @@ func testVerifyIdentityThroughTrustedHTTPSMCP(t *testing.T, openID bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := missing.Verify(ctx, token); !errors.Is(err, auth.ErrVerificationUnavailable) || calls.Load() != before {
+	if err := missing.WhoAmI(ctx, token, &identity{}); !errors.Is(err, auth.ErrVerificationUnavailable) || calls.Load() != before {
 		t.Fatal("unavailable MCP socket was not reported as unavailable")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := client.Verify(ctx, token); !errors.Is(err, auth.ErrVerificationUnavailable) || calls.Load() != before {
+	if err := client.WhoAmI(ctx, token, &identity{}); !errors.Is(err, auth.ErrVerificationUnavailable) || calls.Load() != before {
 		t.Fatal("cancelled identity check contacted MCP")
 	}
 }
 
-func TestVerifyPreservesCallerDeadline(t *testing.T) {
+func TestWhoAmIPreservesCallerDeadline(t *testing.T) {
 	entered := make(chan struct{})
 	endpoint := serveUnix(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
@@ -192,7 +118,7 @@ func TestVerifyPreservesCallerDeadline(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	_, err = client.Verify(ctx, "opaque-access-token")
+	err = client.WhoAmI(ctx, "opaque-access-token", &struct{}{})
 	if !errors.Is(err, auth.ErrVerificationUnavailable) || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		t.Fatalf("err=%v, context error=%v", err, ctx.Err())
 	}

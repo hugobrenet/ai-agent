@@ -35,7 +35,7 @@ func TestRequireAccessTokenRemovesAuthorizationHeaderAndPreservesContext(t *test
 	handler := requireAccessToken(verifier, auditLogger{logger: discardAuditLogger()}, next)
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -63,9 +63,59 @@ func TestRequireAccessTokenUsesVerifiedIdentityExpiry(t *testing.T) {
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", nil)
 	request.Header.Set("Authorization", "Bearer opaque-access-token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	requireAccessToken(verifier, auditLogger{logger: discardAuditLogger()}, next).ServeHTTP(httptest.NewRecorder(), request)
 	if !called {
 		t.Fatal("protected operation did not receive the verified identity")
+	}
+}
+
+type backendContextKey struct{}
+
+// headerAuthenticator reads its backend header, as a backend does, and
+// carries it in the returned context.
+type headerAuthenticator struct {
+	calls int
+}
+
+func (a *headerAuthenticator) Headers() []string { return []string{testBackendHeader} }
+
+func (a *headerAuthenticator) Authenticate(ctx context.Context, header http.Header, token string) (context.Context, auth.Identity, error) {
+	a.calls++
+	if token != "bearer" || header.Get(testBackendHeader) != "target" {
+		return nil, auth.Identity{}, auth.ErrInvalidToken
+	}
+	return context.WithValue(ctx, backendContextKey{}, "target"), auth.Identity{Issuer: "issuer", Subject: "subject"}, nil
+}
+
+func TestMiddlewareHandsTheBackendHeadersToItsAuthenticator(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		target     string
+		wantStatus int
+	}{
+		{"accepted", "target", 204},
+		{"refused", "other", 401},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			authenticator := &headerAuthenticator{}
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get(testBackendHeader) != "" || r.Header.Get("Authorization") != "" || r.Context().Value(backendContextKey{}) != "target" {
+					t.Fatal("backend headers were not moved to the authenticator context")
+				}
+				if identity, ok := auth.IdentityFromContext(r.Context()); !ok || identity.Subject != "subject" {
+					t.Fatal("identity was not carried to the handler")
+				}
+				w.WriteHeader(204)
+			})
+			request := httptest.NewRequest("GET", "/v1/test/conversations", nil)
+			request.Header.Set("Authorization", "Bearer bearer")
+			request.Header.Set(testBackendHeader, tc.target)
+			response := httptest.NewRecorder()
+			requireAccessToken(authenticator, auditLogger{logger: discardAuditLogger()}, next).ServeHTTP(response, request)
+			if response.Code != tc.wantStatus || authenticator.calls != 1 {
+				t.Fatalf("status=%d calls=%d", response.Code, authenticator.calls)
+			}
+		})
 	}
 }

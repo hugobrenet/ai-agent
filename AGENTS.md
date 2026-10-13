@@ -37,15 +37,22 @@ attribution notices.
   not inside request handlers.
 - `internal/config`: environment parsing and startup validation for the
   process, LLM, MCP, agent limits and conversation storage.
-- `internal/api`: versioned HTTP routes, authentication middleware, SSE,
-  concurrency admission, stable public errors and structured audit events.
-  Keep handlers thin.
-- `internal/auth`: verified identity, HTTP target bounds and private
-  request-scoped credentials; remove authentication data from LLM contexts.
-- `internal/mcpclient`: local Unix socket transport, remote whoami verification,
-  request-scoped MCP sessions and bounded tool discovery/results.
-- `internal/agent`: provider-neutral turn loop, history validation, system
-  prompt and sequential execution of model-requested MCP tools. A tool call
+- `internal/api`: versioned HTTP routes, the backend-neutral authentication
+  middleware, SSE, concurrency admission, stable public errors and structured
+  audit events. It knows no backend header: each backend's `Authenticator`
+  declares and reads its own. Keep handlers thin.
+- `internal/auth`: verified identity and private request-scoped credentials,
+  including the headers a backend forwards to its MCP; remove authentication
+  data from LLM contexts.
+- `internal/mcpclient`: backend-neutral local Unix socket transport, whoami
+  transport, request-scoped MCP sessions and bounded tool discovery/results.
+  It forwards only the headers its backend declares.
+- `internal/backend/om3`: the om3 backend: its request headers, whoami
+  contract, MCP client and system prompt. Keep backend rules in its package,
+  never as backend switches in shared code.
+- `internal/agent`: provider-neutral turn loop, history validation and
+  sequential execution of model-requested MCP tools, with the system prompt
+  its backend gives it. A tool call
   that MCP annotates destructive (`destructiveHint: true`, or not read-only
   without the hint) never runs on the model's request alone: the turn is
   suspended until the user confirms or rejects it through the API, and the
@@ -60,9 +67,9 @@ attribution notices.
   transactions and provider-neutral message encoding.
 
 A backend is one product the agent serves, today only `om3`. The composition
-root builds, per backend, its MCP client, an agent with its system prompt and
-a conversation service bound to its name; the API registers its routes under
-`/v1/{backend}`. The route alone selects the backend: never choose it from a
+root builds, per backend, its MCP client, its authenticator, an agent with its
+system prompt and a conversation service bound to its name; the API registers
+its routes under `/v1/{backend}`. The route alone selects the backend: never choose it from a
 request header, body or token. LLM client, storage, limits and audit are
 shared; conversations stay bound to their backend.
 
@@ -76,17 +83,18 @@ Conversations must not retain MCP sessions or provider-specific state.
   Do not decode JWTs or duplicate OpenSVC token rules: MCP owns profile
   selection, claims, algorithms, dates, target coherence and catalogue routing;
   the daemon verifies signatures and permissions.
-- Require one bounded `X-OpenSVC-Cluster-ID` header and read an optional
-  `X-OpenSVC-Node` header, without interpreting them against token claims.
-  Forward them unchanged; the cluster ID selects where MCP verifies the token.
+- The om3 backend requires one bounded `X-OpenSVC-Cluster-ID` header and reads
+  an optional `X-OpenSVC-Node` header, without interpreting them against token
+  claims. It forwards them unchanged; the cluster ID selects where MCP
+  verifies the token.
 - Reach MCP only through its local Unix socket (`OPENSVC_AI_OM3_MCP_SOCKET`). MCP
   accepts delegated OpenSVC tokens there, never on its OAuth HTTPS listener.
   Do not add a network fallback.
 - Authenticate through MCP's `GET /mcp/auth/whoami` bridge on that socket,
   which delegates signature verification to daemon `GET /api/auth/whoami`.
   Require a bounded JSON response with complete identity fields and a future
-  expiry. This returned identity is authoritative; the requested cluster must
-  match the response. Apply the returned expiry to the operation deadline.
+  expiry. This returned identity is authoritative; for om3, the requested
+  cluster must match the response. Apply the returned expiry to the operation deadline.
 - Complete authentication before reading prompts, accessing conversations or
   starting an SSE response. Invalid tokens return 401; unavailable verification
   returns 503. No offline fallback, identity cache or local verification keys.
@@ -120,7 +128,7 @@ Conversations must not retain MCP sessions or provider-specific state.
   supports it. Keep provider-specific parsing and completion semantics out of
   the orchestration loop.
 - Bind all conversation operations to their backend and to verified
-  `cluster_id`, `issuer` and `subject`. Foreign and missing conversation IDs share the same public error.
+  `issuer` and `subject`, and `cluster_id` for a backend bound to clusters. Foreign and missing conversation IDs share the same public error.
 - Serialize turns per conversation without holding a database transaction
   during LLM or MCP work. Commit complete messages before terminal completion;
   failed, canceled and interrupted turns must not replay partial output.

@@ -16,11 +16,11 @@ import (
 
 	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/api"
+	"github.com/opensvc/ai-agent/internal/backend/om3"
 	"github.com/opensvc/ai-agent/internal/config"
 	"github.com/opensvc/ai-agent/internal/conversation"
 	conversationsqlite "github.com/opensvc/ai-agent/internal/conversation/sqlite"
 	"github.com/opensvc/ai-agent/internal/llmfactory"
-	"github.com/opensvc/ai-agent/internal/mcpclient"
 )
 
 const maxHTTPHeaderBytes = 64 << 10
@@ -51,13 +51,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("create LLM client: %v", err)
 	}
-	om3MCPClient, err := mcpclient.New(mcpConfig.OM3SocketPath)
+	om3MCPClient, err := om3.NewMCPClient(mcpConfig.OM3SocketPath)
 	if err != nil {
 		log.Fatalf("create om3 MCP client: %v", err)
 	}
 	om3Agent, err := agent.New(model, func(ctx context.Context) (agent.MCPSession, error) {
 		return om3MCPClient.Connect(ctx)
-	}, agent.Config{SystemPrompt: agent.OM3SystemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
+	}, agent.Config{SystemPrompt: om3.SystemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
 	if err != nil {
 		log.Fatalf("create om3 agent: %v", err)
 	}
@@ -94,7 +94,7 @@ func main() {
 	}()
 	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	handler, err := api.NewHandler([]api.Backend{
-		{Name: "om3", Conversations: om3Conversations, Verifier: om3MCPClient},
+		{Name: "om3", Conversations: om3Conversations, Authenticator: om3.NewAuthenticator(om3MCPClient)},
 	}, api.HandlerConfig{
 		MaxConcurrentAsks:  processConfig.MaxConcurrentAsks,
 		AuditLogger:        auditLogger,

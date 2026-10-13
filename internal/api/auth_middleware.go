@@ -12,13 +12,10 @@ import (
 
 const maxBearerTokenBytes = 16 << 10
 
-func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next http.Handler) http.Handler {
+func requireAccessToken(authenticator Authenticator, audit auditLogger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		rawToken, ok := bearerToken(request.Header.Get("Authorization"))
-		targetCluster, targetErr := auth.TargetClusterFromHeader(request.Header)
-		targetNode, nodeErr := auth.TargetNodeFromHeader(request.Header)
-		// The cluster ID selects which daemon verifies the token: it is required.
-		if !ok || targetErr != nil || nodeErr != nil || targetCluster == "" || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
+		if !ok || len(rawToken) > maxBearerTokenBytes || len(request.Header.Values("Authorization")) != 1 || request.URL.Query().Has("access_token") {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -26,16 +23,14 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 			writeUnauthorized(response)
 			return
 		}
-		ctx := auth.WithTargetCluster(request.Context(), targetCluster)
-		ctx = auth.WithTargetNode(ctx, targetNode)
-		identity, err := verifier.Verify(ctx, rawToken)
+		ctx, identity, err := authenticator.Authenticate(request.Context(), request.Header, rawToken)
 		if errors.Is(err, auth.ErrVerificationUnavailable) {
 			audit.event(request.Context(), "auth_unavailable", slog.Int("status", http.StatusServiceUnavailable), slog.String("code", "authentication_unavailable"))
 			response.Header().Set("Retry-After", "1")
 			writeJSONError(response, http.StatusServiceUnavailable, "authentication_unavailable", "OpenSVC identity verification is unavailable")
 			return
 		}
-		if err != nil || identity.Subject == "" || identity.Issuer == "" || identity.ClusterID != targetCluster {
+		if err != nil || ctx == nil || identity.Subject == "" || identity.Issuer == "" {
 			audit.event(request.Context(), "auth_rejected",
 				slog.Int("status", http.StatusUnauthorized),
 				slog.String("code", "unauthorized"),
@@ -51,8 +46,9 @@ func requireAccessToken(verifier auth.TokenVerifier, audit auditLogger, next htt
 		ctx = auth.WithBearerToken(ctx, rawToken)
 		ctx = auth.WithIdentity(ctx, identity)
 		request.Header.Del("Authorization")
-		request.Header.Del(auth.ClusterIDHeader)
-		request.Header.Del(auth.NodeHeader)
+		for _, name := range authenticator.Headers() {
+			request.Header.Del(name)
+		}
 		next.ServeHTTP(response, request.WithContext(ctx))
 	})
 }
@@ -67,5 +63,5 @@ func bearerToken(authorization string) (string, bool) {
 
 func writeUnauthorized(response http.ResponseWriter) {
 	response.Header().Set("WWW-Authenticate", "Bearer")
-	writeJSONError(response, http.StatusUnauthorized, "unauthorized", "a valid OpenSVC access token and its cluster ID are required")
+	writeJSONError(response, http.StatusUnauthorized, "unauthorized", "a valid OpenSVC access token is required")
 }

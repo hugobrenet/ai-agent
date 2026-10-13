@@ -315,7 +315,7 @@ func (e *testTurnExecution) Cancel(string) error {
 
 func newConversationTestHandler(t *testing.T, service ConversationService) http.Handler {
 	t.Helper()
-	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Authenticator: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()})
 	if err != nil {
 		t.Fatalf("create conversation test handler: %v", err)
 	}
@@ -325,6 +325,6 @@ func newConversationTestHandler(t *testing.T, service ConversationService) http.
 func authenticatedRequest(method string, path string, body string) *http.Request {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	return request
 }

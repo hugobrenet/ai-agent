@@ -28,7 +28,7 @@ func TestConversationMessagesRouteUsesVerifiedIdentityAndDoesNotLogText(t *testi
 		}
 		return page, nil
 	}}
-	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Authenticator: tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
 		return identity, nil
 	})}}, HandlerConfig{MaxConcurrentAsks: 1, AuditLogger: slog.New(slog.NewTextHandler(&logs, nil)), CORSAllowedOrigins: []string{"https://webapp.example"}})
 	if err != nil {

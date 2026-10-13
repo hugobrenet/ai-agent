@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -14,14 +15,18 @@ import (
 	"github.com/opensvc/ai-agent/internal/llm"
 )
 
+// testSystemPrompt stands for the prompt of a backend: the agent passes it
+// unchanged as the first message.
+const testSystemPrompt = "You are a test assistant."
+
 func TestAskReturnsDirectAnswerAndExposesAllTools(t *testing.T) {
 	session := &fakeSession{tools: []*mcp.Tool{
 		{Name: "get_cluster_health", Description: "Get health", InputSchema: objectSchema()},
 		{Name: "refresh_instance_status", Description: "Refresh status", InputSchema: objectSchema()},
 	}}
 	model := &scriptedLLM{t: t, inspectContext: func(ctx context.Context) {
-		if auth.TargetClusterFromContext(ctx) != "" {
-			t.Fatal("LLM context contains explicit target cluster")
+		if auth.MCPHeadersFromContext(ctx) != nil {
+			t.Fatal("LLM context contains MCP headers")
 		}
 		if _, ok := auth.BearerTokenFromContext(ctx); ok {
 			t.Fatal("LLM context contains delegated JWT")
@@ -30,7 +35,7 @@ func TestAskReturnsDirectAnswerAndExposesAllTools(t *testing.T) {
 			t.Fatal("LLM context contains verified OpenSVC identity")
 		}
 	}, steps: []llmStep{func(request llm.Request, emit llm.EmitFunc) error {
-		if len(request.Messages) != 2 || request.Messages[0].Role != llm.RoleSystem || request.Messages[0].Text != OM3SystemPrompt {
+		if len(request.Messages) != 2 || request.Messages[0].Role != llm.RoleSystem || request.Messages[0].Text != testSystemPrompt {
 			t.Fatalf("unexpected initial messages: %#v", request.Messages)
 		}
 		if len(request.Tools) != 2 || request.Tools[1].Name != "refresh_instance_status" {
@@ -47,7 +52,7 @@ func TestAskReturnsDirectAnswerAndExposesAllTools(t *testing.T) {
 	}}}
 	agent := newTestAgent(t, model, session, 4)
 	ctx := auth.WithBearerToken(t.Context(), "jwt-marker")
-	ctx = auth.WithTargetCluster(ctx, "cluster-id")
+	ctx = auth.WithMCPHeaders(ctx, http.Header{"X-OpenSVC-Cluster-ID": {"cluster-id"}})
 	ctx = auth.WithIdentity(ctx, auth.Identity{ClusterID: "cluster-id", Subject: "alice", Issuer: "node-a", Grants: []string{"guest"}})
 	var events []Event
 	if _, err := agent.RunTurn(ctx, nil, "health of my cluster", func(event Event) error {
@@ -273,7 +278,7 @@ func TestAskTimesOutAndClosesMCPSession(t *testing.T) {
 	model := &deadlineLLM{}
 	agent, err := New(model, func(context.Context) (MCPSession, error) {
 		return session, nil
-	}, Config{SystemPrompt: OM3SystemPrompt, MaxIterations: 2, Timeout: 20 * time.Millisecond})
+	}, Config{SystemPrompt: testSystemPrompt, MaxIterations: 2, Timeout: 20 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
@@ -368,7 +373,7 @@ func newTestAgent(t *testing.T, model llm.Client, session *fakeSession, maxItera
 			session.connectedWithJWT = true
 		}
 		return session, nil
-	}, Config{SystemPrompt: OM3SystemPrompt, MaxIterations: maxIterations, Timeout: time.Minute})
+	}, Config{SystemPrompt: testSystemPrompt, MaxIterations: maxIterations, Timeout: time.Minute})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}

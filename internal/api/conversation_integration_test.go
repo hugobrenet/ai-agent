@@ -16,12 +16,11 @@ import (
 
 	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/api"
-	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/backend/om3"
 	"github.com/opensvc/ai-agent/internal/config"
 	"github.com/opensvc/ai-agent/internal/conversation"
 	conversationsqlite "github.com/opensvc/ai-agent/internal/conversation/sqlite"
 	"github.com/opensvc/ai-agent/internal/llmfactory"
-	"github.com/opensvc/ai-agent/internal/mcpclient"
 )
 
 func TestLiveConversationTurnStreamsClusterHealth(t *testing.T) {
@@ -43,13 +42,13 @@ func TestLiveConversationTurnStreamsClusterHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create live LLM client: %v", err)
 	}
-	mcpClient, err := mcpclient.New(mcpSocket)
+	mcpClient, err := om3.NewMCPClient(mcpSocket)
 	if err != nil {
 		t.Fatalf("create live MCP client: %v", err)
 	}
 	orchestrator, err := agent.New(model, func(ctx context.Context) (agent.MCPSession, error) {
 		return mcpClient.Connect(ctx)
-	}, agent.Config{SystemPrompt: agent.OM3SystemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
+	}, agent.Config{SystemPrompt: om3.SystemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
 	if err != nil {
 		t.Fatalf("create live agent: %v", err)
 	}
@@ -62,7 +61,7 @@ func TestLiveConversationTurnStreamsClusterHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create conversation service: %v", err)
 	}
-	handler, err := api.NewHandler([]api.Backend{{Name: "om3", Conversations: service, Verifier: mcpClient}}, api.HandlerConfig{
+	handler, err := api.NewHandler([]api.Backend{{Name: "om3", Conversations: service, Authenticator: om3.NewAuthenticator(mcpClient)}}, api.HandlerConfig{
 		MaxConcurrentAsks: 4,
 		AuditLogger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -79,7 +78,7 @@ func TestLiveConversationTurnStreamsClusterHealth(t *testing.T) {
 			t.Fatalf("create live request: %v", err)
 		}
 		request.Header.Set("Authorization", "Bearer "+mcpJWT)
-		request.Header.Set(auth.ClusterIDHeader, clusterID)
+		request.Header.Set(om3.ClusterIDHeader, clusterID)
 		if body != "" {
 			request.Header.Set("Content-Type", "application/json")
 		}

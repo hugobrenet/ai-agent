@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -32,7 +33,9 @@ const (
 
 // New creates an MCP client over the trusted local Unix socket. MCP accepts
 // delegated OpenSVC tokens only there; filesystem permissions protect it.
-func New(socketPath string) (*Client, error) {
+// forwardedHeaders names the headers of the backend this MCP serves: the
+// client sends them only as the request context carries them.
+func New(socketPath string, forwardedHeaders ...string) (*Client, error) {
 	path, err := config.ParseMCPSocket(socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse MCP socket: %w", err)
@@ -46,18 +49,18 @@ func New(socketPath string) (*Client, error) {
 
 	return &Client{
 		endpoint:   socketEndpoint,
-		httpClient: securedHTTPClient(&http.Client{Transport: transport}, socketOrigin),
+		httpClient: securedHTTPClient(&http.Client{Transport: transport}, socketOrigin, forwardedHeaders),
 	}, nil
 }
 
-func securedHTTPClient(base *http.Client, origin string) *http.Client {
+func securedHTTPClient(base *http.Client, origin string, forwardedHeaders []string) *http.Client {
 	clientCopy := *base
 	baseTransport := clientCopy.Transport
 	if baseTransport == nil {
 		baseTransport = http.DefaultTransport
 	}
 	clientCopy.Transport = responseLimitTransport{
-		base:     bearerTransport{base: baseTransport, origin: origin},
+		base:     bearerTransport{base: baseTransport, origin: origin, forwardedHeaders: forwardedHeaders},
 		maxBytes: maxMCPResponseBodyBytes,
 	}
 	clientCopy.CheckRedirect = func(*http.Request, []*http.Request) error {
@@ -128,8 +131,9 @@ func (s *Session) Close() error {
 }
 
 type bearerTransport struct {
-	base   http.RoundTripper
-	origin string
+	base             http.RoundTripper
+	origin           string
+	forwardedHeaders []string
 }
 
 func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -144,13 +148,17 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	requestCopy := request.Clone(request.Context())
 	requestCopy.Header = request.Header.Clone()
 	requestCopy.Header.Set("Authorization", "Bearer "+token)
-	requestCopy.Header.Del(auth.ClusterIDHeader)
-	if clusterID := auth.TargetClusterFromContext(request.Context()); clusterID != "" {
-		requestCopy.Header.Set(auth.ClusterIDHeader, clusterID)
+	headers := auth.MCPHeadersFromContext(request.Context())
+	for _, name := range t.forwardedHeaders {
+		requestCopy.Header.Del(name)
 	}
-	requestCopy.Header.Del(auth.NodeHeader)
-	if node := auth.TargetNodeFromContext(request.Context()); node != "" {
-		requestCopy.Header.Set(auth.NodeHeader, node)
+	for name, values := range headers {
+		if !slices.ContainsFunc(t.forwardedHeaders, func(forwarded string) bool {
+			return http.CanonicalHeaderKey(forwarded) == http.CanonicalHeaderKey(name)
+		}) || len(values) != 1 || values[0] == "" {
+			continue
+		}
+		requestCopy.Header.Set(name, values[0])
 	}
 	return t.base.RoundTrip(requestCopy)
 }

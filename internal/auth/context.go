@@ -1,11 +1,13 @@
 package auth
 
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 type bearerTokenContextKey struct{}
 type identityContextKey struct{}
-type targetClusterContextKey struct{}
-type targetNodeContextKey struct{}
+type mcpHeadersContextKey struct{}
 
 type contextWithoutAuthentication struct {
 	context.Context
@@ -23,25 +25,17 @@ func BearerTokenFromContext(ctx context.Context) (string, bool) {
 	return token, ok && token != ""
 }
 
-// WithTargetCluster carries the explicit routing hint for one request. It does
-// not establish identity or grant access to that cluster.
-func WithTargetCluster(ctx context.Context, clusterID string) context.Context {
-	return context.WithValue(ctx, targetClusterContextKey{}, clusterID)
+// WithMCPHeaders carries the request headers a backend forwards to its MCP
+// for one request, such as the routing hints of the om3 backend. They never
+// establish identity.
+func WithMCPHeaders(ctx context.Context, headers http.Header) context.Context {
+	return context.WithValue(ctx, mcpHeadersContextKey{}, headers.Clone())
 }
 
-func TargetClusterFromContext(ctx context.Context) string {
-	clusterID, _ := ctx.Value(targetClusterContextKey{}).(string)
-	return clusterID
-}
-
-// WithTargetNode carries a request-scoped routing hint, never an identity.
-func WithTargetNode(ctx context.Context, node string) context.Context {
-	return context.WithValue(ctx, targetNodeContextKey{}, node)
-}
-
-func TargetNodeFromContext(ctx context.Context) string {
-	node, _ := ctx.Value(targetNodeContextKey{}).(string)
-	return node
+// MCPHeadersFromContext returns a copy of the headers to forward to the MCP.
+func MCPHeadersFromContext(ctx context.Context) http.Header {
+	headers, _ := ctx.Value(mcpHeadersContextKey{}).(http.Header)
+	return headers.Clone()
 }
 
 // WithIdentity returns a context carrying the verified OpenSVC caller identity.
@@ -73,10 +67,7 @@ func (c contextWithoutAuthentication) Value(key any) any {
 	if _, ok := key.(identityContextKey); ok {
 		return nil
 	}
-	if _, ok := key.(targetClusterContextKey); ok {
-		return nil
-	}
-	if _, ok := key.(targetNodeContextKey); ok {
+	if _, ok := key.(mcpHeadersContextKey); ok {
 		return nil
 	}
 	return c.Context.Value(key)

@@ -34,7 +34,7 @@ func testClientListsAndCallsToolsWithDelegatedJWT(t *testing.T, clusterID, node 
 	streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	endpoint := serveUnix(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requestCount.Add(1)
-		if request.Header.Get(auth.ClusterIDHeader) != clusterID || request.Header.Get(auth.NodeHeader) != node {
+		if request.Header.Get(testClusterHeader) != clusterID || request.Header.Get(testNodeHeader) != node {
 			t.Error("MCP request lost its explicit target")
 			response.WriteHeader(401)
 			return
@@ -46,13 +46,11 @@ func testClientListsAndCallsToolsWithDelegatedJWT(t *testing.T, clusterID, node 
 		streamHandler.ServeHTTP(response, request)
 	}))
 
-	client, err := New(endpoint)
+	client, err := New(endpoint, testClusterHeader, testNodeHeader)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
-	ctx := auth.WithBearerToken(t.Context(), token)
-	ctx = auth.WithTargetCluster(ctx, clusterID)
-	ctx = auth.WithTargetNode(ctx, node)
+	ctx := auth.WithMCPHeaders(auth.WithBearerToken(t.Context(), token), targetHeaders(clusterID, node))
 	session, err := client.Connect(ctx)
 	if err != nil {
 		t.Fatalf("connect MCP client: %v", err)
@@ -89,7 +87,7 @@ func TestClientRejectsMissingDelegatedJWT(t *testing.T) {
 		requestCount.Add(1)
 	}))
 
-	client, err := New(endpoint)
+	client, err := New(endpoint, testClusterHeader, testNodeHeader)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -105,31 +103,30 @@ func TestClientTargetHeadersAreRequestScoped(t *testing.T) {
 	wantCluster := ""
 	wantNode := ""
 	endpoint := serveUnix(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(auth.ClusterIDHeader) != wantCluster || r.Header.Get(auth.NodeHeader) != wantNode || r.Header.Get("Authorization") != "Bearer token" {
+		if r.Header.Get(testClusterHeader) != wantCluster || r.Header.Get(testNodeHeader) != wantNode || r.Header.Get("Authorization") != "Bearer token" {
 			t.Error("request used stale or caller-overridden headers")
 		}
 		w.WriteHeader(204)
 	}))
-	client, err := New(endpoint)
+	client, err := New(endpoint, testClusterHeader, testNodeHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, target := range [][2]string{{"cluster-a", "node-a"}, {"cluster-a", "node-b"}, {"cluster-b", "node-a"}, {"", ""}} {
 		wantCluster, wantNode = target[0], target[1]
-		ctx := auth.WithTargetCluster(auth.WithBearerToken(t.Context(), "token"), wantCluster)
-		ctx = auth.WithTargetNode(ctx, wantNode)
+		ctx := auth.WithMCPHeaders(auth.WithBearerToken(t.Context(), "token"), targetHeaders(wantCluster, wantNode))
 		r, err := http.NewRequestWithContext(ctx, "GET", client.endpoint, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.Header.Set(auth.ClusterIDHeader, "wrong-cluster")
-		r.Header.Set(auth.NodeHeader, "wrong-node")
+		r.Header.Set(testClusterHeader, "wrong-cluster")
+		r.Header.Set(testNodeHeader, "wrong-node")
 		response, err := client.httpClient.Do(r)
 		if err != nil {
 			t.Fatal(err)
 		}
 		response.Body.Close()
-		if r.Header.Get(auth.ClusterIDHeader) != "wrong-cluster" || r.Header.Get(auth.NodeHeader) != "wrong-node" {
+		if r.Header.Get(testClusterHeader) != "wrong-cluster" || r.Header.Get(testNodeHeader) != "wrong-node" {
 			t.Fatal("original request was mutated")
 		}
 	}
@@ -141,7 +138,7 @@ func TestClientDoesNotExposeJWTInErrors(t *testing.T) {
 		http.Error(response, "unauthorized", http.StatusUnauthorized)
 	}))
 
-	client, err := New(endpoint)
+	client, err := New(endpoint, testClusterHeader, testNodeHeader)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -166,7 +163,7 @@ func TestSessionRequiresJWTOnEveryOperation(t *testing.T) {
 		streamHandler.ServeHTTP(response, request)
 	}))
 
-	client, err := New(endpoint)
+	client, err := New(endpoint, testClusterHeader, testNodeHeader)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -201,7 +198,7 @@ func TestClientRejectsTooManyTools(t *testing.T) {
 		streamHandler.ServeHTTP(response, request)
 	}))
 
-	client, err := New(endpoint)
+	client, err := New(endpoint, testClusterHeader, testNodeHeader)
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
@@ -257,4 +254,44 @@ func serveUnix(t *testing.T, handler http.Handler) string {
 	server.Start()
 	t.Cleanup(server.Close)
 	return path
+}
+
+// The client forwards these headers as a backend declares them.
+const (
+	testClusterHeader = "X-OpenSVC-Cluster-ID"
+	testNodeHeader    = "X-OpenSVC-Node"
+)
+
+func targetHeaders(cluster, node string) http.Header {
+	headers := http.Header{}
+	if cluster != "" {
+		headers.Set(testClusterHeader, cluster)
+	}
+	if node != "" {
+		headers.Set(testNodeHeader, node)
+	}
+	return headers
+}
+
+func TestClientForwardsOnlyTheDeclaredHeaders(t *testing.T) {
+	endpoint := serveUnix(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(testClusterHeader) != "cluster-a" || r.Header.Get("X-Other") != "" {
+			t.Error("the client forwarded an undeclared header or lost a declared one")
+		}
+		w.WriteHeader(204)
+	}))
+	client, err := New(endpoint, testClusterHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := auth.WithMCPHeaders(auth.WithBearerToken(t.Context(), "token"), http.Header{testClusterHeader: {"cluster-a"}, "X-Other": {"value"}})
+	r, err := http.NewRequestWithContext(ctx, "GET", client.endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.httpClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
 }

@@ -23,7 +23,7 @@ func TestCORSPreflightRunsBeforeAuthentication(t *testing.T) {
 		handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error {
 			t.Fatal("preflight reached model")
 			return nil
-		})}, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
+		})}, Authenticator: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,7 +32,7 @@ func TestCORSPreflightRunsBeforeAuthentication(t *testing.T) {
 				r := httptest.NewRequest("OPTIONS", "/v1/om3/conversations", nil)
 				r.Header.Set("Origin", origin)
 				r.Header.Set("Access-Control-Request-Method", method)
-				r.Header.Set("Access-Control-Request-Headers", "authorization, Content-Type, x-opensvc-cluster-id, X-OpenSVC-Node")
+				r.Header.Set("Access-Control-Request-Headers", "authorization, Content-Type, x-test-backend")
 				w := httptest.NewRecorder()
 				handler.ServeHTTP(w, r)
 				wantOrigin, wantStatus := origin, 204
@@ -47,7 +47,7 @@ func TestCORSPreflightRunsBeforeAuthentication(t *testing.T) {
 				if w.Header().Get("Access-Control-Allow-Credentials") != "" {
 					t.Fatal("CORS enabled automatic browser credentials")
 				}
-				if wantStatus == 204 && (w.Header().Get("Access-Control-Allow-Methods") != corsMethods || !strings.Contains(w.Header().Get("Access-Control-Allow-Headers"), auth.NodeHeader) || w.Header().Get("Access-Control-Max-Age") != "600") {
+				if wantStatus == 204 && (w.Header().Get("Access-Control-Allow-Methods") != corsMethods || !strings.Contains(w.Header().Get("Access-Control-Allow-Headers"), testBackendHeader) || w.Header().Get("Access-Control-Max-Age") != "600") {
 					t.Fatal("preflight lost allowed methods/headers/cache lifetime")
 				}
 			}
@@ -57,7 +57,7 @@ func TestCORSPreflightRunsBeforeAuthentication(t *testing.T) {
 
 func TestCORSRejectsInvalidPreflight(t *testing.T) {
 	called := false
-	handler, err := withCORS(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), []string{"https://a.example"})
+	handler, err := withCORS(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), []string{"https://a.example"}, []string{testBackendHeader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,14 +88,14 @@ func TestCORSActualRequestsKeepAuthenticationAndNonBrowserClients(t *testing.T) 
 			checks++
 			return auth.Identity{}, auth.ErrInvalidToken
 		})
-		handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
+		handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Authenticator: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, origin := range []string{"", "https://a.example", "https://unknown.example"} {
 			r := httptest.NewRequest("GET", "/v1/om3/conversations", nil)
 			r.Header.Set("Authorization", "Bearer invalid")
-			r.Header.Set(auth.ClusterIDHeader, "cluster-id")
+			r.Header.Set(testBackendHeader, "cluster-id")
 			if origin != "" {
 				r.Header.Set("Origin", origin)
 			}
@@ -144,7 +144,7 @@ func TestCORSPreservesStreamingConversationTurns(t *testing.T) {
 		service := conversationServiceFuncs{prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
 			return execution, nil
 		}}
-		handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
+		handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Authenticator: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger(), CORSAllowedOrigins: origins})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +164,7 @@ func TestCORSPreservesStreamingConversationTurns(t *testing.T) {
 
 func TestCORSPolicySnapshotAndAmbiguousOrigins(t *testing.T) {
 	origins := []string{"https://a.example"}
-	handler, err := withCORS(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), origins)
+	handler, err := withCORS(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), origins, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestCORSPolicySnapshotAndAmbiguousOrigins(t *testing.T) {
 		}
 	}
 	for _, values := range [][]string{{""}, {"*", "https://a.example"}} {
-		if _, err := withCORS(http.NotFoundHandler(), values); err == nil {
+		if _, err := withCORS(http.NotFoundHandler(), values, nil); err == nil {
 			t.Fatal("ambiguous CORS configuration accepted")
 		}
 	}
