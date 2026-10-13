@@ -13,14 +13,16 @@ select another one.
 
 | Backend | Routes | MCP | Configuration |
 |---|---|---|---|
-| `om3` | `/v1/om3/...` | OpenSVC daemon MCP, on its local Unix socket | `OPENSVC_AI_OM3_MCP_SOCKET` |
+| `om3` | `/v1/om3/...` | OpenSVC daemon MCP, on its local Unix socket | `OPENSVC_AI_OM3_MCP_SOCKET`, required |
+| `oc3` | `/v1/oc3/...` | OpenSVC collector MCP, on its local Unix socket | `OPENSVC_AI_OC3_MCP_SOCKET`, optional: the backend is served only when set |
 
 A conversation belongs to the backend it was created on. It is not listed,
 read or continued through the routes of another backend.
 
 ## Routes
 
-The routes of a backend, here `om3`:
+The routes of a backend, here `om3`; `oc3` has the same routes under
+`/v1/oc3`:
 
 | Method and path | Purpose |
 |---|---|
@@ -55,6 +57,20 @@ The agent treats the token as opaque. It uses the returned identity and
 expiry for conversation ownership and request deadlines, and delegates the
 same token and cluster ID to MCP for the tools. The daemon enforces grants.
 The token is never stored, logged or given to the model.
+
+Every `oc3` route requires the OpenID Connect access token of the user, and
+no other header:
+
+```http
+Authorization: Bearer <OpenID Connect access token>
+```
+
+Before each operation, the agent verifies the token through the oc3 MCP
+`GET /mcp/auth/whoami`, served only on its local socket: MCP relays the token
+to the collector's `GET /api/auth/whoami`, and answers the issuer, subject
+and expiry the collector confirmed. The agent forwards no other header to the
+oc3 MCP, and delegates the same token to it for the tools. The collector
+verifies the token and enforces the visibility of the user's account.
 
 ## Conversations
 

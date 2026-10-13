@@ -16,11 +16,14 @@ import (
 
 	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/api"
+	"github.com/opensvc/ai-agent/internal/backend/oc3"
 	"github.com/opensvc/ai-agent/internal/backend/om3"
 	"github.com/opensvc/ai-agent/internal/config"
 	"github.com/opensvc/ai-agent/internal/conversation"
 	conversationsqlite "github.com/opensvc/ai-agent/internal/conversation/sqlite"
+	"github.com/opensvc/ai-agent/internal/llm"
 	"github.com/opensvc/ai-agent/internal/llmfactory"
+	"github.com/opensvc/ai-agent/internal/mcpclient"
 )
 
 const maxHTTPHeaderBytes = 64 << 10
@@ -51,15 +54,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("create LLM client: %v", err)
 	}
-	om3MCPClient, err := om3.NewMCPClient(mcpConfig.OM3SocketPath)
-	if err != nil {
-		log.Fatalf("create om3 MCP client: %v", err)
-	}
-	om3Agent, err := agent.New(model, func(ctx context.Context) (agent.MCPSession, error) {
-		return om3MCPClient.Connect(ctx)
-	}, agent.Config{SystemPrompt: om3.SystemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout})
-	if err != nil {
-		log.Fatalf("create om3 agent: %v", err)
+	// om3 is always served; oc3 only when its MCP socket is configured.
+	specs := []backendSpec{{
+		name: "om3", socketPath: mcpConfig.OM3SocketPath, systemPrompt: om3.SystemPrompt, newMCPClient: om3.NewMCPClient,
+		newAuthenticator: func(client *mcpclient.Client) api.Authenticator { return om3.NewAuthenticator(client) },
+	}}
+	if mcpConfig.OC3SocketPath != "" {
+		specs = append(specs, backendSpec{
+			name: "oc3", socketPath: mcpConfig.OC3SocketPath, systemPrompt: oc3.SystemPrompt, newMCPClient: oc3.NewMCPClient,
+			newAuthenticator: func(client *mcpclient.Client) api.Authenticator { return oc3.NewAuthenticator(client) },
+		})
 	}
 	startupContext, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
 	conversationStore, err := conversationsqlite.Open(startupContext, conversationsqlite.Config{Path: conversationConfig.DatabasePath})
@@ -67,21 +71,28 @@ func main() {
 		cancelStartup()
 		log.Fatalf("open conversation store: %v", err)
 	}
-	om3Conversations, err := conversation.NewService(conversationStore, om3Agent, conversation.ServiceConfig{Backend: "om3", Lifetime: conversationConfig.Lifetime})
-	if err != nil {
-		cancelStartup()
-		_ = conversationStore.Close()
-		log.Fatalf("create conversation service: %v", err)
+	var backends []api.Backend
+	var conversations []*conversation.Service
+	for _, spec := range specs {
+		backend, service, err := newBackend(spec, model, conversationStore, agent.Config{SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout}, conversationConfig.Lifetime)
+		if err != nil {
+			cancelStartup()
+			_ = conversationStore.Close()
+			log.Fatalf("create %s backend: %v", spec.name, err)
+		}
+		backends = append(backends, backend)
+		conversations = append(conversations, service)
+		log.Printf("serving the %s backend under /v1/%s", spec.name, spec.name)
 	}
 	// Recovery and expiry apply to the whole store, every backend included.
-	if recovered, recoverErr := om3Conversations.Recover(startupContext); recoverErr != nil {
+	if recovered, recoverErr := conversations[0].Recover(startupContext); recoverErr != nil {
 		cancelStartup()
 		_ = conversationStore.Close()
 		log.Fatalf("recover interrupted conversation turns: %v", recoverErr)
 	} else if recovered != 0 {
 		log.Printf("recovered %d interrupted conversation turns", recovered)
 	}
-	if _, err := om3Conversations.DeleteExpired(startupContext); err != nil {
+	if _, err := conversations[0].DeleteExpired(startupContext); err != nil {
 		cancelStartup()
 		_ = conversationStore.Close()
 		log.Fatalf("delete expired conversations: %v", err)
@@ -93,9 +104,7 @@ func main() {
 		}
 	}()
 	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	handler, err := api.NewHandler([]api.Backend{
-		{Name: "om3", Conversations: om3Conversations, Authenticator: om3.NewAuthenticator(om3MCPClient)},
-	}, api.HandlerConfig{
+	handler, err := api.NewHandler(backends, api.HandlerConfig{
 		MaxConcurrentAsks:  processConfig.MaxConcurrentAsks,
 		AuditLogger:        auditLogger,
 		CORSAllowedOrigins: processConfig.CORSAllowedOrigins,
@@ -137,6 +146,36 @@ func main() {
 			log.Printf("serve HTTP API during shutdown: %v", err)
 		}
 	}
+}
+
+// backendSpec describes one backend: its MCP socket and the rules of its
+// package.
+type backendSpec struct {
+	name             string
+	socketPath       string
+	systemPrompt     string
+	newMCPClient     func(string) (*mcpclient.Client, error)
+	newAuthenticator func(*mcpclient.Client) api.Authenticator
+}
+
+// newBackend builds the MCP client, the agent and the conversation service of
+// one backend on the shared model and store.
+func newBackend(spec backendSpec, model llm.Client, store conversation.Store, agentConfig agent.Config, lifetime time.Duration) (api.Backend, *conversation.Service, error) {
+	client, err := spec.newMCPClient(spec.socketPath)
+	if err != nil {
+		return api.Backend{}, nil, fmt.Errorf("create MCP client: %w", err)
+	}
+	orchestrator, err := agent.New(model, func(ctx context.Context) (agent.MCPSession, error) {
+		return client.Connect(ctx)
+	}, agentConfig)
+	if err != nil {
+		return api.Backend{}, nil, fmt.Errorf("create agent: %w", err)
+	}
+	service, err := conversation.NewService(store, orchestrator, conversation.ServiceConfig{Backend: spec.name, Lifetime: lifetime})
+	if err != nil {
+		return api.Backend{}, nil, fmt.Errorf("create conversation service: %w", err)
+	}
+	return api.Backend{Name: spec.name, Conversations: service, Authenticator: spec.newAuthenticator(client)}, service, nil
 }
 
 // listenHTTPS loads the TLS identity before opening the TCP listener.
