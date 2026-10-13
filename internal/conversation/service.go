@@ -443,7 +443,9 @@ func turnFailure(err error, contextErr error) (TurnStatus, string) {
 
 func (s *Service) ownerFromIdentity(identity auth.Identity) (Owner, error) {
 	owner := Owner{Backend: s.config.Backend, ClusterID: strings.TrimSpace(identity.ClusterID), Issuer: strings.TrimSpace(identity.Issuer), Subject: strings.TrimSpace(identity.Subject)}
-	if owner.ClusterID == "" || owner.Issuer == "" || owner.Subject == "" {
+	// The backend authenticator guarantees a cluster when its identities are
+	// bound to one; the issuer and the subject are always required.
+	if owner.Issuer == "" || owner.Subject == "" {
 		return Owner{}, fmt.Errorf("%w: authenticated conversation owner is invalid", ErrInvalid)
 	}
 	return owner, nil

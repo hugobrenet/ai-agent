@@ -47,7 +47,7 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"`+promptMarker+`"}`))
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(requestIDHeader, callerID)
 	response := httptest.NewRecorder()
@@ -105,7 +105,7 @@ func TestAuditRecordsAuthenticationRejectionWithoutTokenOrVerifierError(t *testi
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -152,7 +152,7 @@ func TestAuditRecordsValidatedRequestRejection(t *testing.T) {
 	}), allowTestTokenVerifier())
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -175,7 +175,7 @@ func TestAuditDoesNotRecordConversationTitle(t *testing.T) {
 		}
 		return conversation.Conversation{ID: id, Title: titleMarker}, nil
 	}}
-	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: logger})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Authenticator: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: logger})
 	if err != nil {
 		t.Fatalf("create audited API handler: %v", err)
 	}
@@ -230,10 +230,10 @@ func TestBoundedAuditIdentityNormalizesAndTruncates(t *testing.T) {
 	}
 }
 
-func newAuditTestHandler(t *testing.T, output *bytes.Buffer, asker turnFunc, verifier auth.TokenVerifier) http.Handler {
+func newAuditTestHandler(t *testing.T, output *bytes.Buffer, asker turnFunc, verifier Authenticator) http.Handler {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(output, nil))
-	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: logger})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Authenticator: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: logger})
 	if err != nil {
 		t.Fatalf("create audited API handler: %v", err)
 	}

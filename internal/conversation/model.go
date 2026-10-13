@@ -7,7 +7,8 @@ import (
 
 // Owner binds a conversation to the backend it was created on and to the
 // verified identity of its user. A conversation is never visible from
-// another backend.
+// another backend. ClusterID is empty for a backend whose identities are not
+// bound to a cluster.
 type Owner struct {
 	Backend   string
 	ClusterID string

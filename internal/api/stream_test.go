@@ -34,8 +34,17 @@ func (b *readTrackingBody) Read(data []byte) (int, error) {
 
 func (*readTrackingBody) Close() error { return nil }
 
-func (f tokenVerifierFunc) Verify(ctx context.Context, token string) (auth.Identity, error) {
-	return f(ctx, token)
+// testBackendHeader is the header of the test backend: the API allows and
+// removes it as a backend declares it.
+const testBackendHeader = "X-Test-Backend"
+
+func (f tokenVerifierFunc) Headers() []string {
+	return []string{testBackendHeader}
+}
+
+func (f tokenVerifierFunc) Authenticate(ctx context.Context, _ http.Header, token string) (context.Context, auth.Identity, error) {
+	identity, err := f(ctx, token)
+	return ctx, identity, err
 }
 
 func TestTurnStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
@@ -68,7 +77,7 @@ func TestTurnStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health of my cluster"}`))
 	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -123,7 +132,7 @@ func TestTurnRejectsTokenRejectedByVerifier(t *testing.T) {
 	body := &readTrackingBody{reader: strings.NewReader(`{"prompt":"health"}`)}
 	request.Body = body
 	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -173,7 +182,7 @@ func TestTurnRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(test.body))
 			if test.authorization != "" {
 				request.Header.Set("Authorization", test.authorization)
-				request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+				request.Header.Set(testBackendHeader, "cluster-id")
 			}
 			if test.contentType != "" {
 				request.Header.Set("Content-Type", test.contentType)
@@ -205,7 +214,7 @@ func TestTurnStreamsGenericRuntimeError(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -228,7 +237,7 @@ func TestTurnStreamsTimeoutError(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -246,7 +255,7 @@ func TestTurnSetsAndClearsWriteDeadline(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(response, request)
 
@@ -270,7 +279,7 @@ func TestTurnDoesNotEmitAfterCompleted(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
 	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -289,7 +298,7 @@ func TestTurnDoesNotStreamErrorAfterCancellation(t *testing.T) {
 	cancel()
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`)).WithContext(ctx)
 	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -416,7 +425,7 @@ func TestTurnReleasesConcurrencySlotAfterCancellation(t *testing.T) {
 
 func TestNewHandlerRejectsInvalidBackends(t *testing.T) {
 	config := HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()}
-	valid := Backend{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: allowTestTokenVerifier()}
+	valid := Backend{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Authenticator: allowTestTokenVerifier()}
 	if _, err := NewHandler(nil, config); err == nil {
 		t.Fatal("NewHandler() accepted no backend")
 	}
@@ -430,16 +439,16 @@ func TestNewHandlerRejectsInvalidBackends(t *testing.T) {
 	if _, err := NewHandler([]Backend{valid, valid}, config); err == nil {
 		t.Fatal("NewHandler() accepted a duplicated backend")
 	}
-	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: nil, Verifier: allowTestTokenVerifier()}}, config); err == nil {
+	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: nil, Authenticator: allowTestTokenVerifier()}}, config); err == nil {
 		t.Fatal("NewHandler() accepted nil conversation service")
 	}
-	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: nil}}, config); err == nil {
+	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Authenticator: nil}}, config); err == nil {
 		t.Fatal("NewHandler() accepted nil verifier")
 	}
-	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: allowTestTokenVerifier()}}, HandlerConfig{AuditLogger: discardAuditLogger()}); err == nil {
+	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Authenticator: allowTestTokenVerifier()}}, HandlerConfig{AuditLogger: discardAuditLogger()}); err == nil {
 		t.Fatal("NewHandler() accepted zero concurrent asks")
 	}
-	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4}); err == nil {
+	if _, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: turnFunc(func(context.Context, string, agent.EmitFunc) error { return nil })}, Authenticator: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: 4}); err == nil {
 		t.Fatal("NewHandler() accepted nil audit logger")
 	}
 }
@@ -464,16 +473,16 @@ func newTestHandler(t *testing.T, asker turnFunc) http.Handler {
 
 func newTestHandlerWithLimit(t *testing.T, asker turnFunc, maxConcurrentAsks int) http.Handler {
 	t.Helper()
-	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Verifier: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: maxConcurrentAsks, AuditLogger: discardAuditLogger()})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Authenticator: allowTestTokenVerifier()}}, HandlerConfig{MaxConcurrentAsks: maxConcurrentAsks, AuditLogger: discardAuditLogger()})
 	if err != nil {
 		t.Fatalf("create API handler: %v", err)
 	}
 	return handler
 }
 
-func newTestHandlerWithVerifier(t *testing.T, asker turnFunc, verifier auth.TokenVerifier) http.Handler {
+func newTestHandlerWithVerifier(t *testing.T, asker turnFunc, verifier Authenticator) http.Handler {
 	t.Helper()
-	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: turnService{run: asker}, Authenticator: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: discardAuditLogger()})
 	if err != nil {
 		t.Fatalf("create API handler: %v", err)
 	}
@@ -484,7 +493,7 @@ func discardAuditLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func allowTestTokenVerifier() auth.TokenVerifier {
+func allowTestTokenVerifier() Authenticator {
 	return tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
 		return auth.Identity{ClusterID: "cluster-id", Subject: "test-user", Issuer: "test-node"}, nil
 	})
@@ -493,7 +502,7 @@ func allowTestTokenVerifier() auth.TokenVerifier {
 func newAuthenticatedTurnRequest(body string) *http.Request {
 	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	return request
 }

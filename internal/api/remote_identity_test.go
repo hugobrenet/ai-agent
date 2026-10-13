@@ -20,10 +20,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/backend/om3"
 	"github.com/opensvc/ai-agent/internal/conversation"
 	conversationsqlite "github.com/opensvc/ai-agent/internal/conversation/sqlite"
 	"github.com/opensvc/ai-agent/internal/llm"
-	"github.com/opensvc/ai-agent/internal/mcpclient"
 )
 
 func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {
@@ -84,10 +84,10 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		}
 		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		claims := jwt.MapClaims{}
-		target := r.Header.Get(auth.ClusterIDHeader)
+		target := r.Header.Get(om3.ClusterIDHeader)
 		options := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"}), jwt.WithExpirationRequired()}
 		if openID {
-			if (target != "cluster-a" && target != "cluster-b") || r.Header.Get(auth.NodeHeader) != "node-b" {
+			if (target != "cluster-a" && target != "cluster-b") || r.Header.Get(om3.NodeHeader) != "node-b" {
 				w.WriteHeader(401)
 				return
 			}
@@ -107,7 +107,7 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(auth.Identity{ClusterID: target, Issuer: claims["iss"].(string), Subject: claims["sub"].(string), ExpiresAt: time.Unix(int64(claims["exp"].(float64)), 0)})
 	}))
-	verifier, err := mcpclient.New(socket)
+	mcpClient, err := om3.NewMCPClient(socket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,15 +129,15 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Authenticator: om3.NewAuthenticator(mcpClient)}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	call := func(method, path, token, body string) *httptest.ResponseRecorder {
 		request := requestWithToken(method, path, token, body)
-		request.Header.Set(auth.ClusterIDHeader, targets[token])
+		request.Header.Set(om3.ClusterIDHeader, targets[token])
 		if openID {
-			request.Header.Set(auth.NodeHeader, "node-b")
+			request.Header.Set(om3.NodeHeader, "node-b")
 		}
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()

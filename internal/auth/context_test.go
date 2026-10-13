@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -28,15 +29,11 @@ func TestWithoutAuthenticationPreservesUnrelatedContext(t *testing.T) {
 	type unrelatedKey struct{}
 	base, cancel := context.WithCancel(context.WithValue(t.Context(), unrelatedKey{}, "value"))
 	ctx := WithBearerToken(base, "jwt-marker")
-	ctx = WithTargetCluster(ctx, "cluster-a")
-	ctx = WithTargetNode(ctx, "node-b")
+	ctx = WithMCPHeaders(ctx, http.Header{"X-Target": {"cluster-a"}})
 	ctx = WithIdentity(ctx, Identity{Subject: "alice", Issuer: "node-a", Grants: []string{"guest"}, ExpiresAt: time.Now().Add(time.Hour)})
 	sanitized := WithoutAuthentication(ctx)
-	if TargetClusterFromContext(ctx) != "cluster-a" || TargetClusterFromContext(sanitized) != "" {
-		t.Fatal("target cluster was lost or leaked into LLM context")
-	}
-	if TargetNodeFromContext(ctx) != "node-b" || TargetNodeFromContext(sanitized) != "" {
-		t.Fatal("target node was lost or leaked into LLM context")
+	if MCPHeadersFromContext(ctx).Get("X-Target") != "cluster-a" || MCPHeadersFromContext(sanitized) != nil {
+		t.Fatal("MCP headers were lost or leaked into LLM context")
 	}
 
 	if _, ok := BearerTokenFromContext(sanitized); ok {
@@ -66,5 +63,34 @@ func TestIdentityContextCopiesGrants(t *testing.T) {
 	again, _ := IdentityFromContext(ctx)
 	if again.Grants[0] != "guest" {
 		t.Fatal("identity grants were mutated through returned value")
+	}
+}
+
+func TestMCPHeadersAreCopied(t *testing.T) {
+	headers := http.Header{"X-Target": {"cluster-a"}}
+	ctx := WithMCPHeaders(t.Context(), headers)
+	headers.Set("X-Target", "cluster-b")
+	got := MCPHeadersFromContext(ctx)
+	got.Set("X-Target", "cluster-c")
+	if MCPHeadersFromContext(ctx).Get("X-Target") != "cluster-a" {
+		t.Fatal("MCP headers were mutated through the given or returned value")
+	}
+}
+
+func TestValidIdentityValue(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"alice", true},
+		{"", false},
+		{" alice", false},
+		{"alice\nroot", false},
+		{"invisible\u200bsubject", false},
+		{string(make([]byte, 257)), false},
+	} {
+		if got := ValidIdentityValue(tc.value); got != tc.want {
+			t.Fatalf("ValidIdentityValue(%q) = %v, want %v", tc.value, got, tc.want)
+		}
 	}
 }

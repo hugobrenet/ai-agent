@@ -3,16 +3,16 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
-
-	"github.com/opensvc/ai-agent/internal/auth"
 )
 
 const corsMethods = "GET, POST, PATCH, DELETE"
 
 // withCORS runs before authentication and does not wrap the ResponseWriter,
 // preserving Flusher and write-deadline support for streamed turns.
-func withCORS(next http.Handler, origins []string) (http.Handler, error) {
+// backendHeaders are the request headers the backends read.
+func withCORS(next http.Handler, origins []string, backendHeaders []string) (http.Handler, error) {
 	if len(origins) == 0 {
 		return next, nil
 	}
@@ -24,7 +24,13 @@ func withCORS(next http.Handler, origins []string) (http.Handler, error) {
 		allowed[origin] = true
 	}
 	allowAll := allowed["*"]
-	allowedHeaders := "Authorization, Content-Type, " + auth.ClusterIDHeader + ", " + auth.NodeHeader
+	names := []string{"Authorization", "Content-Type"}
+	for _, header := range backendHeaders {
+		if !slices.ContainsFunc(names, func(name string) bool { return strings.EqualFold(name, header) }) {
+			names = append(names, header)
+		}
+	}
+	allowedHeaders := strings.Join(names, ", ")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Origin")
 		values := r.Header.Values("Origin")
@@ -48,7 +54,7 @@ func withCORS(next http.Handler, origins []string) (http.Handler, error) {
 		w.Header().Add("Vary", "Access-Control-Request-Method")
 		w.Header().Add("Vary", "Access-Control-Request-Headers")
 		methods := r.Header.Values("Access-Control-Request-Method")
-		if len(methods) != 1 || !corsMethodAllowed(methods[0]) || !corsHeadersAllowed(r.Header.Values("Access-Control-Request-Headers")) {
+		if len(methods) != 1 || !corsMethodAllowed(methods[0]) || !corsHeadersAllowed(r.Header.Values("Access-Control-Request-Headers"), names) {
 			writeCORSForbidden(w)
 			return
 		}
@@ -70,12 +76,11 @@ func corsMethodAllowed(method string) bool {
 	}
 }
 
-func corsHeadersAllowed(values []string) bool {
+func corsHeadersAllowed(values []string, allowed []string) bool {
 	for _, value := range values {
 		for _, header := range strings.Split(value, ",") {
-			switch strings.ToLower(strings.TrimSpace(header)) {
-			case "authorization", "content-type", strings.ToLower(auth.ClusterIDHeader), strings.ToLower(auth.NodeHeader):
-			default:
+			header = strings.TrimSpace(header)
+			if !slices.ContainsFunc(allowed, func(name string) bool { return strings.EqualFold(name, header) }) {
 				return false
 			}
 		}

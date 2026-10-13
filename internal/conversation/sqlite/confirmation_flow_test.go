@@ -64,7 +64,7 @@ func TestConfirmationFlowSuspendsStoresAndResumesATurn(t *testing.T) {
 			store, _ := openTestStore(t, Config{})
 			session := &flowSession{}
 			model := &flowModel{}
-			orchestrator, err := agent.New(model, func(context.Context) (agent.MCPSession, error) { return session, nil }, agent.Config{SystemPrompt: agent.OM3SystemPrompt, MaxIterations: 4, Timeout: time.Minute})
+			orchestrator, err := agent.New(model, func(context.Context) (agent.MCPSession, error) { return session, nil }, agent.Config{SystemPrompt: "You are a test assistant.", MaxIterations: 4, Timeout: time.Minute})
 			if err != nil {
 				t.Fatal(err)
 			}

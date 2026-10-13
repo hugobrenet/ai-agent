@@ -37,7 +37,7 @@ The routes of a backend, here `om3`:
 
 ## Authentication
 
-Every backend route requires:
+Each backend declares the headers its routes read. Every `om3` route requires:
 
 ```http
 Authorization: Bearer <daemon-issued access token>

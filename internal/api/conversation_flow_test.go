@@ -57,7 +57,7 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 	verifier := tokenVerifierFunc(func(_ context.Context, token string) (auth.Identity, error) {
 		return auth.Identity{ClusterID: "cluster-id", Issuer: "cluster", Subject: token}, nil
 	})
-	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Verifier: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Authenticator: verifier}}, HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
 	}
@@ -155,6 +155,6 @@ func (f apiTurnRunnerFunc) ResumeTurn(context.Context, []llm.Message, agent.Susp
 func requestWithToken(method string, path string, token string, body string) *http.Request {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set(auth.ClusterIDHeader, "cluster-id")
+	request.Header.Set(testBackendHeader, "cluster-id")
 	return request
 }

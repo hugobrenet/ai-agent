@@ -628,7 +628,7 @@ func validateOwnerAndID(owner conversation.Owner, id string) error {
 }
 
 func validateOwner(owner conversation.Owner) error {
-	if !conversation.ValidBackendName(owner.Backend) || !validIdentity(owner.ClusterID) || !validIdentity(owner.Issuer) || !validIdentity(owner.Subject) {
+	if !conversation.ValidBackendName(owner.Backend) || owner.ClusterID != "" && !validIdentity(owner.ClusterID) || !validIdentity(owner.Issuer) || !validIdentity(owner.Subject) {
 		return fmt.Errorf("%w: conversation owner is invalid", conversation.ErrInvalid)
 	}
 	return nil
