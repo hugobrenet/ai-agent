@@ -47,9 +47,10 @@ attribution notices.
 - `internal/mcpclient`: backend-neutral local Unix socket transport, whoami
   transport, request-scoped MCP sessions and bounded tool discovery/results.
   It forwards only the headers its backend declares.
-- `internal/backend/om3`: the om3 backend: its request headers, whoami
-  contract, MCP client and system prompt. Keep backend rules in its package,
-  never as backend switches in shared code.
+- `internal/backend/om3` and `internal/backend/oc3`: one package per
+  backend, with its request headers, whoami contract, MCP client and system
+  prompt. Keep backend rules in its package, never as backend switches in
+  shared code.
 - `internal/agent`: provider-neutral turn loop, history validation and
   sequential execution of model-requested MCP tools, with the system prompt
   its backend gives it. A tool call
@@ -66,7 +67,8 @@ attribution notices.
   interface. `internal/conversation/sqlite` owns the current embedded schema,
   transactions and provider-neutral message encoding.
 
-A backend is one product the agent serves, today only `om3`. The composition
+A backend is one product the agent serves: `om3`, always, and `oc3` when its
+MCP socket is configured. The composition
 root builds, per backend, its MCP client, its authenticator, an agent with its
 system prompt and a conversation service bound to its name; the API registers
 its routes under `/v1/{backend}`. The route alone selects the backend: never choose it from a
@@ -87,11 +89,15 @@ Conversations must not retain MCP sessions or provider-specific state.
   an optional `X-OpenSVC-Node` header, without interpreting them against token
   claims. It forwards them unchanged; the cluster ID selects where MCP
   verifies the token.
-- Reach MCP only through its local Unix socket (`OPENSVC_AI_OM3_MCP_SOCKET`). MCP
-  accepts delegated OpenSVC tokens there, never on its OAuth HTTPS listener.
-  Do not add a network fallback.
-- Authenticate through MCP's `GET /mcp/auth/whoami` bridge on that socket,
-  which delegates signature verification to daemon `GET /api/auth/whoami`.
+- The oc3 backend requires the user's OpenID Connect access token and no
+  other header, and forwards none to the oc3 MCP.
+- Reach each MCP only through its local Unix socket
+  (`OPENSVC_AI_OM3_MCP_SOCKET`, `OPENSVC_AI_OC3_MCP_SOCKET`). MCP accepts
+  delegated tokens there, never on an HTTPS listener. Do not add a network
+  fallback.
+- Authenticate through the MCP's `GET /mcp/auth/whoami` bridge on that socket,
+  which delegates signature verification to the daemon or the collector
+  `GET /api/auth/whoami`.
   Require a bounded JSON response with complete identity fields and a future
   expiry. This returned identity is authoritative; for om3, the requested
   cluster must match the response. Apply the returned expiry to the operation deadline.

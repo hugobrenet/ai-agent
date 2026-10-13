@@ -65,10 +65,12 @@ or provider-hosted tools. Keep the API key only in the protected environment
 file, never in Git or conversation history.
 
 The agent serves the `om3` backend under `/v1/om3` and reaches its MCP only
-through the local Unix socket `OPENSVC_AI_OM3_MCP_SOCKET`: run both on the same
-host, typically as two resources of one OpenSVC service, and give the
-`opensvc-ai` user access to the socket through its group. The socket need not
-exist when the agent starts. Restrict network access to the agent port.
+through the local Unix socket `OPENSVC_AI_OM3_MCP_SOCKET`. It also serves the
+`oc3` backend under `/v1/oc3` when `OPENSVC_AI_OC3_MCP_SOCKET` names the local
+Unix socket of the collector MCP. Run each MCP on the agent host, typically as
+resources of one OpenSVC service, and give the `opensvc-ai` user access to
+its socket through its group. A socket need not exist when the agent starts.
+Restrict network access to the agent port.
 
 For browser clients, set `OPENSVC_AI_CORS_ALLOWED_ORIGINS` to comma-separated
 webapp origins, or `*` to allow all origins. Empty by default. See the
