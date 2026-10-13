@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -212,6 +213,7 @@ func TestAskFailureCode(t *testing.T) {
 		{name: "canceled context", contextErr: context.Canceled, want: "request_canceled"},
 		{name: "cleanup", err: errors.New("close"), completed: true, want: "agent_cleanup_failed"},
 		{name: "agent", err: errors.New("failed"), want: "agent_failed"},
+		{name: "tool call limit", err: fmt.Errorf("run LLM iteration 2: %w", agent.ErrToolCallLimit), want: "tool_call_limit"},
 		{name: "incomplete", want: "agent_incomplete"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -231,6 +231,25 @@ func TestTurnStreamsGenericRuntimeError(t *testing.T) {
 	}
 }
 
+func TestTurnStreamsToolCallLimitError(t *testing.T) {
+	handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
+		return fmt.Errorf("run LLM iteration 2: read stream: %w: requested more than 8 tools at once", agent.ErrToolCallLimit)
+	}))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
+	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	events := decodeSSEEvents(t, response.Body.String())
+	if len(events) != 1 || events[0].Type != "error" || events[0].Code != "tool_call_limit" || !strings.Contains(events[0].Message, "narrower question") {
+		t.Fatalf("unexpected tool call limit events %#v", events)
+	}
+	if strings.Contains(response.Body.String(), "iteration") {
+		t.Fatal("stream exposes internal agent error")
+	}
+}
+
 func TestTurnStreamsTimeoutError(t *testing.T) {
 	handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		return context.DeadlineExceeded

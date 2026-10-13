@@ -1235,9 +1235,10 @@
             "type": "string",
             "enum": [
               "agent_failed",
-              "request_timeout"
+              "request_timeout",
+              "tool_call_limit"
             ],
-            "description": "`error`: why the turn failed."
+            "description": "`error`: why the turn failed. `tool_call_limit`: the model asked for more than 8 tools in one answer, or more than 16 in the turn."
           },
           "message": {
             "type": "string",

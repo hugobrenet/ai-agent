@@ -216,7 +216,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				return emitAgentEvent(emit, Event{Type: EventTextDelta, TextDelta: event.TextDelta, Iteration: iteration})
 			case llm.EventToolCall:
 				if len(calls) >= maxToolCallsPerTurn {
-					return fmt.Errorf("LLM iteration %d requested %d tools, maximum is %d", iteration, len(calls)+1, maxToolCallsPerTurn)
+					return fmt.Errorf("%w: LLM iteration %d requested more than %d tools at once", ErrToolCallLimit, iteration, maxToolCallsPerTurn)
 				}
 				call := *event.ToolCall
 				call.Arguments = append(json.RawMessage(nil), event.ToolCall.Arguments...)
@@ -258,7 +258,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			return result, fmt.Errorf("LLM iteration %d requested %d tools, maximum is %d", iteration, len(calls), maxToolCallsPerTurn)
 		}
 		if state.TotalToolCalls+len(calls) > maxToolCallsPerAsk {
-			return result, fmt.Errorf("agent tool call count would exceed maximum of %d", maxToolCallsPerAsk)
+			return result, fmt.Errorf("%w: agent tool call count would exceed maximum of %d", ErrToolCallLimit, maxToolCallsPerAsk)
 		}
 		if iteration == a.config.MaxIterations {
 			return result, fmt.Errorf("agent reached maximum of %d iterations before a final answer", a.config.MaxIterations)

@@ -174,7 +174,11 @@ func TestAskRejectsUnsafeToolRequests(t *testing.T) {
 			{ID: "3", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
 			{ID: "4", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
 			{ID: "5", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-		}, want: "maximum is 4"},
+			{ID: "6", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
+			{ID: "7", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
+			{ID: "8", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
+			{ID: "9", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
+		}, want: "more than 8 tools at once"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			session := &fakeSession{tools: []*mcp.Tool{{Name: "get_cluster_health", InputSchema: objectSchema()}}}
@@ -224,7 +228,7 @@ func TestAskEnforcesTotalToolCallLimit(t *testing.T) {
 	model := &scriptedLLM{t: t, steps: steps}
 	agent := newTestAgent(t, model, session, len(steps)+1)
 	_, err := agent.RunTurn(t.Context(), nil, "health", func(Event) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "maximum of 16") {
+	if !errors.Is(err, ErrToolCallLimit) || !strings.Contains(err.Error(), "maximum of 16") {
 		t.Fatalf("Ask() error = %v, want total tool call limit", err)
 	}
 	if len(session.calls) != maxToolCallsPerAsk {
