@@ -37,7 +37,9 @@ attribution notices.
   not inside request handlers.
 - `internal/config`: environment parsing and startup validation for the
   process, LLM, MCP, agent limits and conversation storage.
-- `internal/api`: versioned HTTP routes, the backend-neutral authentication
+- `internal/api`: versioned HTTP routes and their OpenAPI document
+  (`openapi.json`, served at `GET /openapi.json`; update it with any route,
+  body, error code or stream event change), the backend-neutral authentication
   middleware, SSE, concurrency admission, stable public errors and structured
   audit events. It knows no backend header: each backend's `Authenticator`
   declares and reads its own. Keep handlers thin.
