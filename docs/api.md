@@ -37,6 +37,11 @@ The routes of a backend, here `om3`; `oc3` has the same routes under
 
 `GET /health` is shared by all backends and needs no authentication.
 
+Every response carries `X-Request-ID`, the ID the agent gives the request.
+Every audit line of the agent carries it as `request_id`, and the agent
+forwards it to the MCP of the backend, whose audit lines carry it too: one ID
+follows a request from the agent to its tool calls.
+
 `GET /openapi.json` returns the OpenAPI 3.1 description of these routes, their
 bodies, errors and stream events, without authentication. The source is
 `internal/api/openapi.json`, embedded in the binary; a test keeps its routes

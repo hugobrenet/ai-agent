@@ -2,24 +2,21 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"strings"
 	"unicode"
 
 	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/requestid"
 )
 
 const (
-	requestIDHeader       = "X-Request-ID"
-	requestIDBytes        = 16
+	requestIDHeader       = requestid.Header
+	requestIDBytes        = requestid.Bytes
 	maxAuditIdentityRunes = 256
 	maxAuditIDRunes       = 128
 )
-
-type requestIDContextKey struct{}
 
 type auditLogger struct {
 	logger *slog.Logger
@@ -27,34 +24,21 @@ type auditLogger struct {
 
 func withRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		requestID, err := newRequestID()
+		requestID, err := requestid.New()
 		if err != nil {
 			writeJSONError(response, http.StatusInternalServerError, "request_id_failed", "the request could not be processed")
 			return
 		}
 		response.Header().Set(requestIDHeader, requestID)
-		ctx := context.WithValue(request.Context(), requestIDContextKey{}, requestID)
+		ctx := requestid.With(request.Context(), requestID)
 		next.ServeHTTP(response, request.WithContext(ctx))
 	})
-}
-
-func newRequestID() (string, error) {
-	data := make([]byte, requestIDBytes)
-	if _, err := rand.Read(data); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(data), nil
-}
-
-func requestIDFromContext(ctx context.Context) string {
-	requestID, _ := ctx.Value(requestIDContextKey{}).(string)
-	return requestID
 }
 
 func (a auditLogger) event(ctx context.Context, event string, attributes ...slog.Attr) {
 	base := []slog.Attr{
 		slog.String("event", event),
-		slog.String("request_id", requestIDFromContext(ctx)),
+		slog.String("request_id", requestid.FromContext(ctx)),
 	}
 	if identity, ok := auth.IdentityFromContext(ctx); ok {
 		base = append(base,
