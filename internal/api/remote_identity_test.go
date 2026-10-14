@@ -27,25 +27,13 @@ import (
 )
 
 func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {
-	t.Run("native", func(t *testing.T) { testRemoteIdentityProtectsLocalConversationsAndModelCalls(t, false) })
-	t.Run("openid", func(t *testing.T) { testRemoteIdentityProtectsLocalConversationsAndModelCalls(t, true) })
-}
-
-func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, openID bool) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	targets := make(map[string]string)
 	signWithExpiry := func(cluster, user string, key *rsa.PrivateKey, expiresAt time.Time) string {
-		claims := jwt.MapClaims{"iss": "node-a", "sub": user, "exp": expiresAt.Unix(), "token_use": "access"}
-		if openID {
-			delete(claims, "token_use")
-			claims["iss"] = "https://idp.example.test/"
-			claims["sub"] = "opaque-" + user
-			claims["preferred_username"] = user
-			claims["aud"] = "client-" + cluster
-		}
+		claims := jwt.MapClaims{"iss": "https://idp.example.test/", "sub": "opaque-" + user, "preferred_username": user, "aud": "client-" + cluster, "exp": expiresAt.Unix()}
 		unsigned := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		unsigned.Header["kid"] = "key"
 		raw, err := unsigned.SignedString(key)
@@ -60,14 +48,9 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	}
 	alice := sign("cluster-a", "alice", key)
 	bob := sign("cluster-a", "bob", key)
-	// Each cluster's daemon signs native tokens with its own key; one OpenID
-	// provider signs for every cluster and distinguishes them by audience.
+	// One OpenID provider signs for every cluster and distinguishes them by
+	// audience.
 	clusterKeys := map[string]*rsa.PrivateKey{"cluster-a": key, "cluster-b": key}
-	if !openID {
-		if clusterKeys["cluster-b"], err = rsa.GenerateKey(rand.Reader, 2048); err != nil {
-			t.Fatal(err)
-		}
-	}
 	otherCluster := sign("cluster-b", "alice", clusterKeys["cluster-b"])
 	var unavailable atomic.Bool
 	var checks atomic.Int32
@@ -86,13 +69,11 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 		claims := jwt.MapClaims{}
 		target := r.Header.Get(om3.ClusterIDHeader)
 		options := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"}), jwt.WithExpirationRequired()}
-		if openID {
-			if (target != "cluster-a" && target != "cluster-b") || r.Header.Get(om3.NodeHeader) != "node-b" {
-				w.WriteHeader(401)
-				return
-			}
-			options = append(options, jwt.WithIssuer("https://idp.example.test/"), jwt.WithAudience("client-"+target))
+		if (target != "cluster-a" && target != "cluster-b") || r.Header.Get(om3.NodeHeader) != "node-b" {
+			w.WriteHeader(401)
+			return
 		}
+		options = append(options, jwt.WithIssuer("https://idp.example.test/"), jwt.WithAudience("client-"+target))
 		// The header selects the daemon that verifies the token: a token of
 		// another cluster fails there, so the requested cluster ID is returned.
 		verifyKey, ok := clusterKeys[target]
@@ -136,9 +117,7 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	call := func(method, path, token, body string) *httptest.ResponseRecorder {
 		request := requestWithToken(method, path, token, body)
 		request.Header.Set(om3.ClusterIDHeader, targets[token])
-		if openID {
-			request.Header.Set(om3.NodeHeader, "node-b")
-		}
+		request.Header.Set(om3.NodeHeader, "node-b")
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)

@@ -52,16 +52,18 @@ equal to the routes the agent registers.
 Each backend declares the headers its routes read. Every `om3` route requires:
 
 ```http
-Authorization: Bearer <daemon-issued access token>
-X-OpenSVC-Cluster-ID: <ID of the cluster that issued it>
+Authorization: Bearer <OpenID Connect access token>
+X-OpenSVC-Cluster-ID: <ID of the cluster it is intended for>
 ```
 
-The client obtains the token and the cluster ID from the same daemon. Before
+The client obtains the token by signing in with the OpenID provider the
+daemons of the cluster trust; the om3 MCP accepts no other token. Before
 each operation, the agent verifies the token through the om3 MCP
 `GET /mcp/auth/whoami`, served only on its local socket: MCP selects the
 cluster from the header and relays the token to that daemon's
 `GET /api/auth/whoami`. The cluster header only selects where the token is
-verified: a token issued by another cluster is refused by the selected daemon.
+verified: a token intended for another cluster is refused by the selected
+daemon.
 
 The agent treats the token as opaque. It uses the returned identity and
 expiry for conversation ownership and request deadlines, and delegates the
