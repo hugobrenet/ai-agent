@@ -21,22 +21,20 @@ surrounding whitespace, control characters or commas. Duplicate headers are
 rejected. Both are required for OpenID: the MCP resolves the exact cluster/node
 pair in its administrator-owned catalogue, never a client-supplied URL or DNS
 lookup. Missing or unknown targets are refused without fallback.
-The cluster header is required for every token, including a daemon-issued
-native token, which carries no cluster claim.
+Only OpenID Connect access tokens are accepted: a token issued by the daemon
+itself, after a local sign-in, is refused.
 
 ## Verification and forwarding
 
 The MCP checks structure, required `iss/sub/aud/exp`, optional `nbf`, a
 nonempty `kid`, and asymmetric algorithms RS256/384/512, PS256/384/512 or
-ES256/384/512. OpenID tokens in this profile do not carry the native
-`cluster_id` or `token_use` markers: tokens carrying either are subject to
-native checks and never fall back to OpenID after a refusal.
+ES256/384/512.
 
 These checks do not establish authenticity. The agent treats the token as
 opaque and forwards the exact
 Bearer and both target headers to its configured MCP's `GET /mcp/auth/whoami`.
-The MCP must validate through the target daemon, including the expected
-authentication strategy, signature, issuer and audience, and return:
+The MCP must validate through the target daemon, which must authenticate it as
+an OpenID Connect token, with its signature, issuer and audience, and return:
 
 ```json
 {

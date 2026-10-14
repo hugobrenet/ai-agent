@@ -18,7 +18,7 @@ import (
 )
 
 func TestClientListsAndCallsToolsWithDelegatedJWT(t *testing.T) {
-	t.Run("native", func(t *testing.T) { testClientListsAndCallsToolsWithDelegatedJWT(t, "", "") })
+	t.Run("no target", func(t *testing.T) { testClientListsAndCallsToolsWithDelegatedJWT(t, "", "") })
 	t.Run("explicit target", func(t *testing.T) { testClientListsAndCallsToolsWithDelegatedJWT(t, "cluster-a", "node-b") })
 }
 
