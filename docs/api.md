@@ -68,6 +68,14 @@ expiry for conversation ownership and request deadlines, and delegates the
 same token and cluster ID to MCP for the tools. The daemon enforces grants.
 The token is never stored, logged or given to the model.
 
+The answer of the MCP is reused, in the memory of the agent only, by the next
+operations of the same token (and, for om3, the same cluster and node) for at
+most one minute and never past its expiry. A refused token is refused again
+for five seconds without asking the MCP; an unavailable verification is never
+reused. The cache holds identities, never tokens: its keys are hashes. A
+change of the account or of the grants on the target therefore applies within
+a minute.
+
 Every `oc3` route requires the OpenID Connect access token of the user, and
 no other header:
 
@@ -80,7 +88,8 @@ Before each operation, the agent verifies the token through the oc3 MCP
 to the collector's `GET /api/auth/whoami`, and answers the issuer, subject
 and expiry the collector confirmed. The agent forwards no other header to the
 oc3 MCP, and delegates the same token to it for the tools. The collector
-verifies the token and enforces the visibility of the user's account.
+verifies the token and enforces the visibility of the user's account. The
+answer is reused as for om3.
 
 ## Conversations
 

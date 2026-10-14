@@ -81,7 +81,12 @@ func TestWhoAmIDecodesTheMCPAnswer(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mode.Store(tc.mode)
-			err := client.WhoAmI(ctx, token, &identity{})
+			// A new client: a remembered refusal must not hide the next case.
+			client, err := New(endpoint, testClusterHeader, testNodeHeader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = client.WhoAmI(ctx, token, &identity{})
 			if !errors.Is(err, tc.want) || strings.Contains(err.Error(), token) {
 				t.Fatalf("err=%v, want=%v", err, tc.want)
 			}

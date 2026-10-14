@@ -107,7 +107,11 @@ Conversations must not retain MCP sessions or provider-specific state.
   cluster must match the response. Apply the returned expiry to the operation deadline.
 - Complete authentication before reading prompts, accessing conversations or
   starting an SSE response. Invalid tokens return 401; unavailable verification
-  returns 503. No offline fallback, identity cache or local verification keys.
+  returns 503. No offline fallback or local verification keys. The only cache
+  is the in-memory whoami cache of `internal/mcpclient` (`identity_cache.go`):
+  an MCP answer is reused at most a minute and never past its expiry, a
+  refusal five seconds, an unavailable verification never; keys are hashes of
+  the token and its MCP headers, and the cache holds identities, never tokens.
 - Delegate the unchanged JWT and explicit cluster/node headers to MCP in private
   request context; hide all from LLM contexts. Never retain
   it in a shared client or global state. Daemon grants remain authoritative.

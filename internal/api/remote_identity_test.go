@@ -179,27 +179,35 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	expired := signWithExpiry("cluster-a", "alice", key, time.Now().Add(-time.Second))
 	targets["malformed"] = "cluster-a"
 	for _, token := range []string{forged, expired, "malformed"} {
+		// The first request delegates the validation to the MCP; the refusal
+		// is then remembered for five seconds, without asking the MCP again.
+		before := checks.Load()
 		for _, tc := range []struct{ method, path, body string }{
 			{"GET", "/v1/om3/conversations", ""}, {"GET", path, ""}, {"GET", path + "/messages", ""}, {"DELETE", path, ""},
 			{"PATCH", path, `{"title":"refused"}`}, {"POST", path + "/turns", `{"prompt":"refused"}`},
 			{"POST", "/v1/om3/conversations/conversation-1/turns", `{"prompt":"refused"}`}, {"POST", "/v1/om3/conversations", ""},
 		} {
-			before := checks.Load()
 			response := call(tc.method, tc.path, token, tc.body)
 			if response.Code != 401 || strings.Contains(response.Body.String(), token) {
 				t.Fatalf("refused credential admitted: status=%d", response.Code)
 			}
-			if checks.Load() != before+1 {
-				t.Fatal("agent did not delegate credential validation to MCP")
-			}
+		}
+		if checks.Load() != before+1 {
+			t.Fatalf("refused credential checked %d times by the MCP, want once", checks.Load()-before)
 		}
 	}
 	if modelCalls.Load() != 0 {
 		t.Fatal("model invoked before authentication/ownership check")
 	}
+	// A token verified within the minute is not checked again; a token the
+	// agent has not verified yet is refused while the MCP is unavailable.
+	unverified := signWithExpiry("cluster-a", "alice", key, time.Now().Add(2*time.Hour))
 	unavailable.Store(true)
-	if response := call("DELETE", path, alice, ""); response.Code != 503 {
+	if response := call("DELETE", path, unverified, ""); response.Code != 503 {
 		t.Fatalf("unavailable verifier bypassed: %d", response.Code)
+	}
+	if response := call("DELETE", path, unverified, ""); response.Code != 503 {
+		t.Fatalf("unavailable verifier cached: %d", response.Code)
 	}
 	unavailable.Store(false)
 	if response := call("GET", path, alice, ""); response.Code != 200 {
@@ -208,8 +216,11 @@ func testRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T, ope
 	if response := call("POST", path+"/turns", alice, `{"prompt":"hello"}`); response.Code != 200 || modelCalls.Load() != 1 {
 		t.Fatalf("authorized turn rejected: %d", response.Code)
 	}
-	if checks.Load() < 16 {
-		t.Fatal("identity was not checked independently for each API operation")
+	// Each token was checked by the MCP once: alice, bob, the other cluster,
+	// the three refused tokens, and the unverified token twice while the MCP
+	// was unavailable. The cache reuses identities, it never establishes one.
+	if checks.Load() != 8 {
+		t.Fatalf("identities checked %d times by the MCP, want 8", checks.Load())
 	}
 }
 

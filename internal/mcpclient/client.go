@@ -23,6 +23,7 @@ const (
 type Client struct {
 	endpoint   string
 	httpClient *http.Client
+	identities *identityCache
 }
 
 // MCP is reached through a local Unix socket: the path selects the server and
@@ -51,6 +52,7 @@ func New(socketPath string, forwardedHeaders ...string) (*Client, error) {
 	return &Client{
 		endpoint:   socketEndpoint,
 		httpClient: securedHTTPClient(&http.Client{Transport: transport}, socketOrigin, forwardedHeaders),
+		identities: newIdentityCache(),
 	}, nil
 }
 
