@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/requestid"
 )
 
 func TestClientListsAndCallsToolsWithDelegatedJWT(t *testing.T) {
@@ -294,4 +295,35 @@ func TestClientForwardsOnlyTheDeclaredHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
+}
+
+func TestClientForwardsTheRequestIDOfTheAgent(t *testing.T) {
+	var got []string
+	endpoint := serveUnix(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get(requestid.Header))
+		w.WriteHeader(204)
+	}))
+	client, err := New(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ctx := range []context.Context{
+		requestid.With(auth.WithBearerToken(t.Context(), "token"), "0123456789abcdef0123456789abcdef"),
+		auth.WithBearerToken(t.Context(), "token"),
+	} {
+		r, err := http.NewRequestWithContext(ctx, "GET", client.endpoint, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A request ID set by anything but the context is never forwarded.
+		r.Header.Set(requestid.Header, "caller-chosen")
+		response, err := client.httpClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+	}
+	if len(got) != 2 || got[0] != "0123456789abcdef0123456789abcdef" || got[1] != "" {
+		t.Fatalf("forwarded request IDs = %q", got)
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opensvc/ai-agent/internal/auth"
 	"github.com/opensvc/ai-agent/internal/config"
+	"github.com/opensvc/ai-agent/internal/requestid"
 )
 
 const (
@@ -148,6 +149,11 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	requestCopy := request.Clone(request.Context())
 	requestCopy.Header = request.Header.Clone()
 	requestCopy.Header.Set("Authorization", "Bearer "+token)
+	// The request ID joins the MCP audit lines with those of the agent.
+	requestCopy.Header.Del(requestid.Header)
+	if id := requestid.FromContext(request.Context()); id != "" {
+		requestCopy.Header.Set(requestid.Header, id)
+	}
 	headers := auth.MCPHeadersFromContext(request.Context())
 	for _, name := range t.forwardedHeaders {
 		requestCopy.Header.Del(name)

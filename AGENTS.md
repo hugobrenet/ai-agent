@@ -48,7 +48,9 @@ attribution notices.
   data from LLM contexts.
 - `internal/mcpclient`: backend-neutral local Unix socket transport, whoami
   transport, request-scoped MCP sessions and bounded tool discovery/results.
-  It forwards only the headers its backend declares.
+  It forwards only the headers its backend declares, and the request ID of
+  `internal/requestid` as `X-Request-ID`, to join the MCP audit lines with
+  those of the agent.
 - `internal/backend/om3` and `internal/backend/oc3`: one package per
   backend, with its request headers, whoami contract, MCP client and system
   prompt. Keep backend rules in its package, never as backend switches in
