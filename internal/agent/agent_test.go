@@ -55,11 +55,17 @@ func TestAskReturnsDirectAnswerAndExposesAllTools(t *testing.T) {
 	ctx = auth.WithMCPHeaders(ctx, http.Header{"X-OpenSVC-Cluster-ID": {"cluster-id"}})
 	ctx = auth.WithIdentity(ctx, auth.Identity{ClusterID: "cluster-id", Subject: "alice", Issuer: "node-a", Grants: []string{"guest"}})
 	var events []Event
-	if _, err := agent.RunTurn(ctx, nil, "health of my cluster", func(event Event) error {
+	result, err := agent.RunTurn(ctx, nil, "health of my cluster", func(event Event) error {
 		events = append(events, event)
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Ask() error: %v", err)
+	}
+	listed, _ := session.ListTools(t.Context())
+	wantHash, _ := toolCatalogHash(listed)
+	if result.MCP.Name != "test-mcp" || result.MCP.Version != "v9.9.9" || len(result.MCP.ToolsSHA256) != 64 || result.MCP.ToolsSHA256 != wantHash {
+		t.Fatalf("turn MCP = %+v", result.MCP)
 	}
 	if !session.connectedWithJWT || !session.closed {
 		t.Fatalf("session JWT=%v closed=%v", session.connectedWithJWT, session.closed)
@@ -341,6 +347,8 @@ type fakeSession struct {
 
 // ListTools announces a tool declared without annotations as read-only, as a
 // diagnostic tool is; the confirmation tests declare their annotations.
+func (s *fakeSession) ServerInfo() (string, string) { return "test-mcp", "v9.9.9" }
+
 func (s *fakeSession) ListTools(context.Context) ([]*mcp.Tool, error) {
 	tools := make([]*mcp.Tool, 0, len(s.tools))
 	for _, tool := range s.tools {

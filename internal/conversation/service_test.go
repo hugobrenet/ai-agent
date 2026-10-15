@@ -239,7 +239,7 @@ func (s *serviceTestStore) BeginTurn(context.Context, Owner, string, string, tim
 	}
 	return Turn{ID: "turn-id", ConversationID: s.item.ID, Sequence: 1, Status: TurnRunning, StartedAt: serviceTestNow}, nil
 }
-func (s *serviceTestStore) CompleteTurn(_ context.Context, _ Owner, _ string, _ string, completedAt time.Time, expiresAt time.Time, messages []llm.Message) error {
+func (s *serviceTestStore) CompleteTurn(_ context.Context, _ Owner, _ string, _ string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, _ TurnAgent) error {
 	s.completed = true
 	s.completedMessages = append([]llm.Message(nil), messages...)
 	s.item.UpdatedAt = completedAt
@@ -269,6 +269,18 @@ func (s *serviceTestStore) DeleteExpired(context.Context, time.Time, int) (int64
 	return 0, nil
 }
 func (s *serviceTestStore) Close() error { return nil }
+func (s *serviceTestStore) TurnMessages(context.Context, Owner, string, string) (Turn, []llm.Message, error) {
+	return Turn{}, nil, ErrNotFound
+}
+func (s *serviceTestStore) PutFeedback(context.Context, Owner, string, FeedbackRecord) (FeedbackRecord, error) {
+	return FeedbackRecord{}, ErrNotFound
+}
+func (s *serviceTestStore) DeleteFeedback(context.Context, Owner, string, string) error {
+	return ErrNotFound
+}
+func (s *serviceTestStore) DeleteExpiredFeedback(context.Context, time.Time, int) (int64, error) {
+	return 0, nil
+}
 
 func (s *serviceTestStore) SuspendTurn(_ context.Context, _ Owner, pending PendingConfirmation) error {
 	s.suspended = &pending

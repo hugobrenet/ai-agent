@@ -14,6 +14,8 @@ import (
 )
 
 type MCPSession interface {
+	// ServerInfo is the name and version the MCP server announced.
+	ServerInfo() (string, string)
 	ListTools(context.Context) ([]*mcp.Tool, error)
 	CallTool(context.Context, string, map[string]any) (*mcp.CallToolResult, error)
 	Close() error
@@ -42,6 +44,17 @@ type TurnResult struct {
 	Messages     []llm.Message
 	FinishReason llm.FinishReason
 	Suspended    *SuspendedTurn
+	// MCP describes the MCP server the turn used.
+	MCP MCPServer
+}
+
+// MCPServer is the MCP server of a turn: the name and version it announced,
+// and a hash of the tools it listed, which changes with any tool name,
+// description, schema or annotation.
+type MCPServer struct {
+	Name        string
+	Version     string
+	ToolsSHA256 string
 }
 
 func New(llmClient llm.Client, connectMCP MCPConnectFunc, config Config) (*Agent, error) {
@@ -122,6 +135,10 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	if err != nil {
 		return result, fmt.Errorf("list agent MCP tools: %w", err)
 	}
+	result.MCP.Name, result.MCP.Version = session.ServerInfo()
+	if result.MCP.ToolsSHA256, err = toolCatalogHash(mcpTools); err != nil {
+		return result, err
+	}
 	tools, _, err := convertTools(mcpTools)
 	if err != nil {
 		return result, err
@@ -186,7 +203,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			}
 			if suspended {
 				snapshot := *state
-				return TurnResult{Suspended: &snapshot}, nil
+				return TurnResult{Suspended: &snapshot, MCP: result.MCP}, nil
 			}
 			assistantMessage := llm.Message{Role: llm.RoleAssistant, Text: state.Text, ToolCalls: state.Calls}
 			toolMessage := llm.Message{Role: llm.RoleTool, ToolResults: state.Results}
@@ -249,7 +266,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				return result, err
 			}
 			state.Messages = append(state.Messages, llm.Message{Role: llm.RoleAssistant, Text: turnText.String()})
-			return TurnResult{Messages: state.Messages, FinishReason: finish}, nil
+			return TurnResult{Messages: state.Messages, FinishReason: finish, MCP: result.MCP}, nil
 		}
 		if finish != llm.FinishReasonToolCalls {
 			return result, fmt.Errorf("LLM iteration %d emitted tool calls with finish reason %q", iteration, finish)

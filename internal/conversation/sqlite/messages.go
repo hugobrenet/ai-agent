@@ -31,9 +31,10 @@ func (s *Store) ListMessages(ctx context.Context, owner conversation.Owner, id s
 	rows, err := tx.QueryContext(ctx, `
 SELECT t.sequence, t.id, m.sequence, m.role,
        CASE WHEN length(CAST(m.text AS BLOB)) <= ? THEN m.text ELSE NULL END,
-       t.started_at, t.completed_at
+       t.started_at, t.completed_at, f.rating, f.reasons_json, f.expected
 FROM messages AS m
 JOIN turns AS t ON t.id = m.turn_id
+LEFT JOIN feedback AS f ON f.turn_id = t.id AND m.role = 'assistant'
 WHERE t.conversation_id = ? AND t.status = 'completed'
   AND (m.role = 'user' OR (m.role = 'assistant' AND m.text <> ''))
   AND (t.sequence < ? OR (t.sequence = ? AND m.sequence < ?))
@@ -55,10 +56,21 @@ LIMIT ?`, conversation.MaxMessagePageBytes, id, beforeTurn, beforeTurn, beforeMe
 		}
 		var turnSequence, messageSequence, startedAt int64
 		var completedAt sql.NullInt64
-		var text sql.NullString
+		var text, rating, expected sql.NullString
+		var reasons []byte
 		var item conversation.DisplayMessage
-		if err := rows.Scan(&turnSequence, &item.TurnID, &messageSequence, &item.Role, &text, &startedAt, &completedAt); err != nil {
+		if err := rows.Scan(&turnSequence, &item.TurnID, &messageSequence, &item.Role, &text, &startedAt, &completedAt, &rating, &reasons, &expected); err != nil {
 			return conversation.MessagePage{}, fmt.Errorf("scan display message: %w", err)
+		}
+		if rating.Valid {
+			feedback := conversation.Feedback{Rating: rating.String, Expected: expected.String}
+			if err := decodeStrictJSON(reasons, &feedback.Reasons); err != nil {
+				return conversation.MessagePage{}, fmt.Errorf("decode feedback reasons: %w", err)
+			}
+			if feedback.Reasons == nil {
+				feedback.Reasons = []string{}
+			}
+			item.Feedback = &feedback
 		}
 		if turnSequence < 1 || messageSequence < 1 || !completedAt.Valid {
 			return conversation.MessagePage{}, fmt.Errorf("invalid stored display message")

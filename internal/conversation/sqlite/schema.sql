@@ -23,6 +23,9 @@ CREATE TABLE turns (
     error_code TEXT NOT NULL DEFAULT '',
     started_at INTEGER NOT NULL,
     completed_at INTEGER,
+    mcp_server TEXT NOT NULL DEFAULT '' CHECK (length(mcp_server) <= 256),
+    mcp_version TEXT NOT NULL DEFAULT '' CHECK (length(mcp_version) <= 256),
+    tools_sha256 TEXT NOT NULL DEFAULT '' CHECK (length(tools_sha256) <= 64),
     UNIQUE (conversation_id, sequence)
 );
 
@@ -54,3 +57,23 @@ CREATE TABLE confirmations (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
 );
+
+-- feedback holds no identity. turn_id links a feedback to its turn while the
+-- conversation exists, and is cleared when the turn is deleted: the feedback
+-- is then kept, anonymous, until it expires.
+CREATE TABLE feedback (
+    id TEXT PRIMARY KEY,
+    turn_id TEXT UNIQUE REFERENCES turns(id) ON DELETE SET NULL,
+    rating TEXT NOT NULL CHECK (rating IN ('up', 'down')),
+    reasons_json BLOB NOT NULL,
+    expected TEXT NOT NULL DEFAULT '',
+    snapshot_json BLOB NOT NULL,
+    context_json BLOB NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+CREATE INDEX feedback_expiry
+    ON feedback (expires_at, id);
+CREATE INDEX feedback_created
+    ON feedback (created_at, id);

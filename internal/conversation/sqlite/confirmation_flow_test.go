@@ -18,6 +18,8 @@ import (
 // flowSession is an MCP session offering one destructive tool.
 type flowSession struct{ calls []string }
 
+func (s *flowSession) ServerInfo() (string, string) { return "test-mcp", "v9.9.9" }
+
 func (s *flowSession) ListTools(context.Context) ([]*mcp.Tool, error) {
 	destructive := true
 	return []*mcp.Tool{{

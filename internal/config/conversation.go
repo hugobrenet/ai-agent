@@ -12,8 +12,9 @@ import (
 const DefaultConversationDatabasePath = "/var/lib/opensvc-ai-agent/conversations.db"
 
 type ConversationConfig struct {
-	DatabasePath string
-	Lifetime     time.Duration
+	DatabasePath      string
+	Lifetime          time.Duration
+	FeedbackRetention time.Duration
 }
 
 func LoadConversation() (ConversationConfig, error) {
@@ -33,5 +34,13 @@ func loadConversation(getenv func(string) string) (ConversationConfig, error) {
 		}
 		lifetime = parsed
 	}
-	return ConversationConfig{DatabasePath: databasePath, Lifetime: lifetime}, nil
+	retention := conversation.DefaultFeedbackRetention
+	if value := strings.TrimSpace(getenv("OPENSVC_AI_FEEDBACK_RETENTION")); value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil || parsed < 24*time.Hour || parsed > 3*365*24*time.Hour {
+			return ConversationConfig{}, fmt.Errorf("parse OPENSVC_AI_FEEDBACK_RETENTION %q: expected a duration between 24h and 26280h", value)
+		}
+		retention = parsed
+	}
+	return ConversationConfig{DatabasePath: databasePath, Lifetime: lifetime, FeedbackRetention: retention}, nil
 }

@@ -18,7 +18,7 @@ func completeDisplayTurn(t *testing.T, store *Store, id, turnID string, at time.
 	if _, err := store.BeginTurn(t.Context(), testOwner, id, turnID, at); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CompleteTurn(t.Context(), testOwner, id, turnID, at.Add(time.Second), at.Add(time.Hour), messages); err != nil {
+	if err := store.CompleteTurn(t.Context(), testOwner, id, turnID, at.Add(time.Second), at.Add(time.Hour), messages, conversation.TurnAgent{}); err != nil {
 		t.Fatal(err)
 	}
 }

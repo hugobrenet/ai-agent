@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const corsMethods = "GET, POST, PATCH, DELETE"
+const corsMethods = "GET, POST, PUT, PATCH, DELETE"
 
 // withCORS runs before authentication and does not wrap the ResponseWriter,
 // preserving Flusher and write-deadline support for streamed turns.
@@ -69,7 +69,7 @@ func withCORS(next http.Handler, origins []string, backendHeaders []string) (htt
 
 func corsMethodAllowed(method string) bool {
 	switch method {
-	case http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete:
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 		return true
 	default:
 		return false

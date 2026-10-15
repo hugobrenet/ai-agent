@@ -83,6 +83,7 @@ webapp origins, or `*` to allow all origins. Empty by default. See the
 | `OPENSVC_AI_LISTEN_ADDR` | `127.0.0.1:8090` | explicit IP address and port 1-65535 |
 | `OPENSVC_AI_CONVERSATION_DB_PATH` | `/var/lib/opensvc-ai-agent/conversations.db` | |
 | `OPENSVC_AI_CONVERSATION_LIFETIME` | `168h` | `1h` to `8760h` |
+| `OPENSVC_AI_FEEDBACK_RETENTION` | `4320h` (180 days) | `24h` to `26280h` |
 | `OPENSVC_AI_OC3_MCP_SOCKET` | unset: `oc3` not served | absolute path |
 | `OPENSVC_AI_CORS_ALLOWED_ORIGINS` | empty: no CORS | exact origins or `*` |
 | `OPENSVC_AI_MAX_CONCURRENT_ASKS` | `4` | 1 to 128 |

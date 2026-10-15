@@ -47,6 +47,10 @@ type ServiceConfig struct {
 	// ConfirmationLifetime bounds the wait for the decision of the user on
 	// a tool call requiring confirmation.
 	ConfirmationLifetime time.Duration
+	// FeedbackRetention is how long a feedback is kept.
+	FeedbackRetention time.Duration
+	// FeedbackContext describes the agent of the backend in its feedback.
+	FeedbackContext FeedbackContext
 }
 
 type Service struct {
@@ -69,7 +73,8 @@ func NewService(store Store, runner TurnRunner, config ServiceConfig) (*Service,
 	}
 	config = withServiceDefaults(config)
 	if config.Lifetime <= 0 || config.ListLimit <= 0 || config.FinalizeTimeout <= 0 ||
-		config.MaxHistoryMessages <= 0 || config.MaxHistoryBytes <= 0 || config.ExpiryDeleteBatch <= 0 || config.ConfirmationLifetime <= 0 {
+		config.MaxHistoryMessages <= 0 || config.MaxHistoryBytes <= 0 || config.ExpiryDeleteBatch <= 0 || config.ConfirmationLifetime <= 0 ||
+		config.FeedbackRetention <= 0 {
 		return nil, fmt.Errorf("conversation service limits must be positive")
 	}
 	return &Service{store: store, runner: runner, config: config, now: time.Now, newID: randomID}, nil
@@ -96,6 +101,12 @@ func withServiceDefaults(config ServiceConfig) ServiceConfig {
 	}
 	if config.ConfirmationLifetime == 0 {
 		config.ConfirmationLifetime = DefaultConfirmationLifetime
+	}
+	if config.FeedbackRetention == 0 {
+		config.FeedbackRetention = DefaultFeedbackRetention
+	}
+	if config.FeedbackContext.Backend == "" {
+		config.FeedbackContext.Backend = config.Backend
 	}
 	return config
 }
@@ -272,6 +283,8 @@ func (s *Service) DeleteExpired(ctx context.Context) (int64, error) {
 	return s.purgeExpired(ctx, s.now().UTC())
 }
 
+// purgeExpired deletes the expired conversations, then the expired
+// feedback, and returns the number of conversations deleted.
 func (s *Service) purgeExpired(ctx context.Context, at time.Time) (int64, error) {
 	var total int64
 	for {
@@ -280,6 +293,15 @@ func (s *Service) purgeExpired(ctx context.Context, at time.Time) (int64, error)
 			return total, err
 		}
 		total += deleted
+		if deleted < int64(s.config.ExpiryDeleteBatch) {
+			break
+		}
+	}
+	for {
+		deleted, err := s.store.DeleteExpiredFeedback(ctx, at, s.config.ExpiryDeleteBatch)
+		if err != nil {
+			return total, fmt.Errorf("delete expired feedback: %w", err)
+		}
 		if deleted < int64(s.config.ExpiryDeleteBatch) {
 			return total, nil
 		}
@@ -353,6 +375,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 	completeErr := t.service.store.CompleteTurn(
 		finalizeCtx, t.owner, t.conversationID, t.turnID, completedAt,
 		completedAt.Add(t.service.config.Lifetime), result.Messages,
+		TurnAgent{MCPServer: result.MCP.Name, MCPVersion: result.MCP.Version, ToolsSHA256: result.MCP.ToolsSHA256},
 	)
 	cancel()
 	if completeErr != nil {

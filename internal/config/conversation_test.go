@@ -36,3 +36,29 @@ func TestLoadConversationRejectsInvalidLifetime(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConversationFeedbackRetention(t *testing.T) {
+	config, err := loadConversation(func(string) string { return "" })
+	if err != nil || config.FeedbackRetention != 180*24*time.Hour {
+		t.Fatalf("default retention = %v, %v", config.FeedbackRetention, err)
+	}
+	config, err = loadConversation(func(key string) string {
+		if key == "OPENSVC_AI_FEEDBACK_RETENTION" {
+			return "720h"
+		}
+		return ""
+	})
+	if err != nil || config.FeedbackRetention != 720*time.Hour {
+		t.Fatalf("retention = %v, %v", config.FeedbackRetention, err)
+	}
+	for _, value := range []string{"invalid", "23h", "26281h"} {
+		if _, err := loadConversation(func(key string) string {
+			if key == "OPENSVC_AI_FEEDBACK_RETENTION" {
+				return value
+			}
+			return ""
+		}); err == nil {
+			t.Fatalf("retention %q succeeded", value)
+		}
+	}
+}
