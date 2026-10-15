@@ -76,7 +76,7 @@ func securedHTTPClient(base *http.Client, origin string, forwardedHeaders []stri
 // token in ctx, opaque to the agent.
 func (c *Client) Connect(ctx context.Context) (*Session, error) {
 	if _, ok := auth.BearerTokenFromContext(ctx); !ok {
-		return nil, fmt.Errorf("connect MCP: delegated OpenSVC access JWT is missing from request context")
+		return nil, fmt.Errorf("connect MCP: access token of the user is missing from request context")
 	}
 
 	client := mcp.NewClient(
@@ -146,7 +146,7 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	}
 	token, ok := auth.BearerTokenFromContext(request.Context())
 	if !ok {
-		return nil, fmt.Errorf("send MCP request: delegated OpenSVC access JWT is missing from request context")
+		return nil, fmt.Errorf("send MCP request: access token of the user is missing from request context")
 	}
 
 	requestCopy := request.Clone(request.Context())
