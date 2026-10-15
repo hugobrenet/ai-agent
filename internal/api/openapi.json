@@ -791,6 +791,188 @@
           }
         }
       }
+    },
+    "/v1/{backend}/conversations/{id}/turns/{turn_id}/feedback": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        },
+        {
+          "$ref": "#/components/parameters/ConversationID"
+        },
+        {
+          "$ref": "#/components/parameters/TurnID"
+        }
+      ],
+      "put": {
+        "operationId": "setTurnFeedback",
+        "tags": [
+          "turns"
+        ],
+        "summary": "Give or replace the feedback of the user on a completed turn. The first feedback of a turn copies the turn for review: question, answer and tool calls, bounded. The feedback holds no identity: it stays linked to the turn while the conversation exists, then is kept anonymous until its retention ends.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The feedback is stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "404": {
+            "description": "The conversation or the turn does not exist, belongs to another identity or backend, or the turn has no feedback to delete. Codes: `feedback_target_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The conversation has expired. Codes: `conversation_expired`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The feedback operation failed. Codes: `conversation_failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body or the feedback is invalid, or the turn is not completed. Codes: `invalid_request`, `invalid_feedback`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The feedback limit of the agent has been reached. Codes: `feedback_limit`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body exceeds 8 KiB. Codes: `request_too_large`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The body is not JSON. Codes: `unsupported_media_type`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteTurnFeedback",
+        "tags": [
+          "turns"
+        ],
+        "summary": "Withdraw the feedback of the user on a turn.",
+        "responses": {
+          "204": {
+            "description": "The feedback was deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "404": {
+            "description": "The conversation or the turn does not exist, belongs to another identity or backend, or the turn has no feedback to delete. Codes: `feedback_target_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The conversation has expired. Codes: `conversation_expired`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The feedback operation failed. Codes: `conversation_failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The conversation or turn ID is invalid. Codes: `invalid_feedback`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1142,6 +1324,10 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "feedback": {
+            "$ref": "#/components/schemas/Feedback",
+            "description": "On an assistant message, the feedback of the user on its turn, if any."
           }
         }
       },
@@ -1243,6 +1429,96 @@
           "message": {
             "type": "string",
             "description": "`error`: a human-readable message."
+          }
+        }
+      },
+      "FeedbackRequest": {
+        "type": "object",
+        "required": [
+          "rating"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "rating": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "uniqueItems": true,
+            "description": "Only with down: does not answer the question, missing information, incorrect or outdated information, hard to understand, expected action not done.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "not_answered",
+                "missing_information",
+                "incorrect_or_outdated",
+                "hard_to_understand",
+                "action_not_done"
+              ]
+            }
+          },
+          "expected": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "What the user would have expected, free text."
+          }
+        }
+      },
+      "Feedback": {
+        "type": "object",
+        "required": [
+          "rating",
+          "reasons",
+          "expected"
+        ],
+        "properties": {
+          "rating": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "not_answered",
+                "missing_information",
+                "incorrect_or_outdated",
+                "hard_to_understand",
+                "action_not_done"
+              ]
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        }
+      },
+      "FeedbackEnvelope": {
+        "type": "object",
+        "required": [
+          "feedback",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "feedback": {
+            "$ref": "#/components/schemas/Feedback"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

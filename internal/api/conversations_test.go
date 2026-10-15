@@ -221,6 +221,8 @@ func TestConversationRoutesRequireAuthentication(t *testing.T) {
 		{http.MethodPatch, "/v1/om3/conversations/id"},
 		{http.MethodDelete, "/v1/om3/conversations/id"},
 		{http.MethodPost, "/v1/om3/conversations/id/turns"},
+		{http.MethodPut, "/v1/om3/conversations/id/turns/t/feedback"},
+		{http.MethodDelete, "/v1/om3/conversations/id/turns/t/feedback"},
 	} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(route.method, route.path, nil))
@@ -240,6 +242,22 @@ type conversationServiceFuncs struct {
 	messages func(context.Context, auth.Identity, string, conversation.MessageQuery) (conversation.MessagePage, error)
 	confirm  func(context.Context, auth.Identity, string, string, string, agent.Decision) (conversation.TurnExecution, error)
 	pending  func(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error)
+	feedback func(context.Context, auth.Identity, string, string, conversation.Feedback) (conversation.FeedbackRecord, error)
+	unrate   func(context.Context, auth.Identity, string, string) error
+}
+
+func (s conversationServiceFuncs) SetFeedback(ctx context.Context, identity auth.Identity, id string, turnID string, feedback conversation.Feedback) (conversation.FeedbackRecord, error) {
+	if s.feedback == nil {
+		return conversation.FeedbackRecord{}, errors.New("unexpected feedback")
+	}
+	return s.feedback(ctx, identity, id, turnID, feedback)
+}
+
+func (s conversationServiceFuncs) DeleteFeedback(ctx context.Context, identity auth.Identity, id string, turnID string) error {
+	if s.unrate == nil {
+		return errors.New("unexpected feedback deletion")
+	}
+	return s.unrate(ctx, identity, id, turnID)
 }
 
 func (s conversationServiceFuncs) Create(ctx context.Context, identity auth.Identity) (conversation.Conversation, error) {

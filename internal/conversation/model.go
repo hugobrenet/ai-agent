@@ -63,6 +63,16 @@ type Turn struct {
 	ErrorCode      string
 	StartedAt      time.Time
 	CompletedAt    *time.Time
+	// Agent describes what answered the turn, once completed.
+	Agent TurnAgent
+}
+
+// TurnAgent is the MCP server a completed turn used: its name and version,
+// and the hash of its tool catalog.
+type TurnAgent struct {
+	MCPServer   string
+	MCPVersion  string
+	ToolsSHA256 string
 }
 
 // PendingConfirmation is the tool call a suspended turn waits on, with the

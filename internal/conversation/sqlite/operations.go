@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/opensvc/ai-agent/internal/conversation"
 	"github.com/opensvc/ai-agent/internal/llm"
@@ -235,7 +236,7 @@ VALUES (?, ?, ?, 'running', '', ?, NULL)`, turn.ID, turn.ConversationID, turn.Se
 	return turn, nil
 }
 
-func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conversationID string, turnID string, completedAt time.Time, expiresAt time.Time, messages []llm.Message) error {
+func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conversationID string, turnID string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, agent conversation.TurnAgent) error {
 	if err := validateOwnerAndID(owner, conversationID); err != nil {
 		return err
 	}
@@ -247,6 +248,10 @@ func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conv
 	}
 	if !expiresAt.After(completedAt) {
 		return fmt.Errorf("%w: conversation expiry must follow turn completion", conversation.ErrInvalid)
+	}
+	agent.MCPServer, agent.MCPVersion = boundedText(agent.MCPServer, 256), boundedText(agent.MCPVersion, 256)
+	if len(agent.ToolsSHA256) > 64 {
+		return fmt.Errorf("%w: tool catalog hash is too long", conversation.ErrInvalid)
 	}
 	encoded, addedBytes, err := encodeMessages(messages)
 	if err != nil {
@@ -304,8 +309,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE turns
-SET status = 'completed', error_code = '', completed_at = ?
-WHERE id = ? AND conversation_id = ? AND status = 'running'`, toUnixNano(completedAt), turnID, conversationID); err != nil {
+SET status = 'completed', error_code = '', completed_at = ?, mcp_server = ?, mcp_version = ?, tools_sha256 = ?
+WHERE id = ? AND conversation_id = ? AND status = 'running'`, toUnixNano(completedAt), agent.MCPServer, agent.MCPVersion, agent.ToolsSHA256, turnID, conversationID); err != nil {
 		return fmt.Errorf("complete conversation turn: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -562,7 +567,7 @@ func getTurn(ctx context.Context, tx *sql.Tx, conversationID string, turnID stri
 	var startedAt int64
 	var completedAt sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
-SELECT id, conversation_id, sequence, status, error_code, started_at, completed_at
+SELECT id, conversation_id, sequence, status, error_code, started_at, completed_at, mcp_server, mcp_version, tools_sha256
 FROM turns
 WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 		&item.ID,
@@ -572,6 +577,9 @@ WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 		&item.ErrorCode,
 		&startedAt,
 		&completedAt,
+		&item.Agent.MCPServer,
+		&item.Agent.MCPVersion,
+		&item.Agent.ToolsSHA256,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.Turn{}, conversation.ErrNotFound
@@ -647,6 +655,18 @@ func validateIdentifier(kind string, value string) error {
 		return fmt.Errorf("%w: %s ID is invalid", conversation.ErrInvalid, kind)
 	}
 	return nil
+}
+
+// boundedText cuts text announced by a server to at most limit bytes, on a
+// character boundary.
+func boundedText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
+	}
+	return text[:limit]
 }
 
 func toUnixNano(value time.Time) int64 {

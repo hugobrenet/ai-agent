@@ -34,6 +34,8 @@ The routes of a backend, here `om3`; `oc3` has the same routes under
 | `DELETE /v1/om3/conversations/{id}` | Delete it |
 | `POST /v1/om3/conversations/{id}/turns` | Send a prompt, streamed |
 | `POST /v1/om3/conversations/{id}/turns/{turn_id}/confirmation` | Approve or reject a pending action, streamed |
+| `PUT /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Give or replace the feedback on a turn |
+| `DELETE /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Withdraw it |
 
 `GET /health` is shared by all backends and needs no authentication.
 
@@ -118,6 +120,45 @@ server-sent events. Only one turn runs at a time in a conversation.
 - **Expiry.** A conversation expires after its configured lifetime, counted
   from its creation and then from its last completed turn; an expired
   conversation returns 410.
+
+## Feedback
+
+The user rates a completed turn, to help review and improve the tools and the
+prompts. `PUT …/turns/{turn_id}/feedback` takes:
+
+```json
+{"rating": "down", "reasons": ["missing_information"], "expected": "The number of nodes per OS"}
+```
+
+- `rating` is `up` or `down`.
+- `reasons`, only with `down`, optional, any of `not_answered`,
+  `missing_information`, `incorrect_or_outdated`, `hard_to_understand` and
+  `action_not_done`.
+- `expected`, optional, is what the user would have expected: at most 1000
+  characters, kept as untrusted text.
+
+A turn has one feedback: a new `PUT` replaces its rating, reasons and expected
+text, and `DELETE` withdraws it. Only the owner of the conversation can rate
+its turns; a turn still running or failed is refused with 400
+`invalid_feedback`. The assistant messages of `GET …/messages` carry the
+feedback of their turn, for the client to show it again.
+
+The first feedback of a turn copies it for review: the question, the answer,
+and the tool calls with their arguments, error flag and the start of their
+results, each truncated. It also records the backend, the agent version, the
+model and a hash of the system prompt, as configured when the feedback is
+given, and the MCP server that answered the turn: the name and version it
+announced, and a hash of the tools it listed, which changes with any tool
+name, description, schema or annotation. The feedback holds no identity: it stays linked to its turn while the
+conversation exists, for the user to change it, and is then kept anonymous
+until `OPENSVC_AI_FEEDBACK_RETENTION` (180 days by default) ends. The agent
+keeps at most 4096 feedback; beyond, a new one returns 409 `feedback_limit`.
+
+`opensvc-ai-agentd feedback export [-since 720h] [-with-tool-results]`, run on
+the agent host with its environment, writes the feedback created within the
+duration as JSON lines, without conversation or turn IDs. The tool results,
+which may hold inventory data, are left out unless `-with-tool-results` is
+given. Sending the export to OpenSVC is the choice of the operator.
 
 ## Identity and isolation
 

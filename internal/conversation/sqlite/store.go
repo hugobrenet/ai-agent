@@ -27,6 +27,7 @@ type Config struct {
 	MaxMessages          int
 	MaxConversationBytes int64
 	MaxDatabaseBytes     int64
+	MaxFeedback          int
 }
 
 type Store struct {
@@ -114,7 +115,10 @@ func validateConfig(config Config) (Config, error) {
 	if config.MaxDatabaseBytes == 0 {
 		config.MaxDatabaseBytes = DefaultMaxDatabaseBytes
 	}
-	if config.MaxConversations < 1 || config.MaxTurns < 1 || config.MaxMessages < 1 || config.MaxConversationBytes < 1 || config.MaxDatabaseBytes < 1 {
+	if config.MaxFeedback == 0 {
+		config.MaxFeedback = DefaultMaxFeedback
+	}
+	if config.MaxConversations < 1 || config.MaxTurns < 1 || config.MaxMessages < 1 || config.MaxConversationBytes < 1 || config.MaxDatabaseBytes < 1 || config.MaxFeedback < 1 {
 		return Config{}, fmt.Errorf("conversation SQLite limits must be positive")
 	}
 	if config.MaxConversationBytes > config.MaxDatabaseBytes {

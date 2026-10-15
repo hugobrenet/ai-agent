@@ -32,13 +32,22 @@ type Store interface {
 	DeleteConversation(context.Context, Owner, string) error
 
 	BeginTurn(context.Context, Owner, string, string, time.Time) (Turn, error)
-	CompleteTurn(context.Context, Owner, string, string, time.Time, time.Time, []llm.Message) error
+	CompleteTurn(context.Context, Owner, string, string, time.Time, time.Time, []llm.Message, TurnAgent) error
 	FailTurn(context.Context, Owner, string, string, TurnStatus, string, time.Time) error
 	SuspendTurn(context.Context, Owner, PendingConfirmation) error
 	ClaimConfirmation(context.Context, Owner, string, string, string, time.Time) (PendingConfirmation, error)
 	GetPendingConfirmation(context.Context, Owner, string, time.Time) (*PendingConfirmation, error)
 	LoadHistory(context.Context, Owner, string) ([]llm.Message, error)
 	ListMessages(context.Context, Owner, string, MessageQuery) (MessagePage, error)
+
+	// TurnMessages reads one turn of an owned conversation and its messages.
+	TurnMessages(context.Context, Owner, string, string) (Turn, []llm.Message, error)
+	// PutFeedback stores the feedback on a completed turn of an owned
+	// conversation, or replaces its rating, reasons and expected text,
+	// keeping the snapshot and the creation time of the first one.
+	PutFeedback(context.Context, Owner, string, FeedbackRecord) (FeedbackRecord, error)
+	DeleteFeedback(context.Context, Owner, string, string) error
+	DeleteExpiredFeedback(context.Context, time.Time, int) (int64, error)
 
 	RecoverInterrupted(context.Context, time.Time) (int64, error)
 	DeleteExpired(context.Context, time.Time, int) (int64, error)

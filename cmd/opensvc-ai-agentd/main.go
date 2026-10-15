@@ -29,6 +29,13 @@ import (
 const maxHTTPHeaderBytes = 64 << 10
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "feedback" {
+		if err := runFeedback(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "opensvc-ai-agentd feedback: %v\n", err)
+			os.Exit(2)
+		}
+		return
+	}
 	processConfig, err := config.Load()
 	if err != nil {
 		log.Fatalf("load configuration: %v", err)
@@ -74,7 +81,11 @@ func main() {
 	var backends []api.Backend
 	var conversations []*conversation.Service
 	for _, spec := range specs {
-		backend, service, err := newBackend(spec, model, conversationStore, agent.Config{SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout}, conversationConfig.Lifetime)
+		serviceConfig := conversation.ServiceConfig{
+			Backend: spec.name, Lifetime: conversationConfig.Lifetime, FeedbackRetention: conversationConfig.FeedbackRetention,
+			FeedbackContext: conversation.NewFeedbackContext(spec.name, agentVersion(), llmConfig.Model, spec.systemPrompt),
+		}
+		backend, service, err := newBackend(spec, model, conversationStore, agent.Config{SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout}, serviceConfig)
 		if err != nil {
 			cancelStartup()
 			_ = conversationStore.Close()
@@ -160,7 +171,7 @@ type backendSpec struct {
 
 // newBackend builds the MCP client, the agent and the conversation service of
 // one backend on the shared model and store.
-func newBackend(spec backendSpec, model llm.Client, store conversation.Store, agentConfig agent.Config, lifetime time.Duration) (api.Backend, *conversation.Service, error) {
+func newBackend(spec backendSpec, model llm.Client, store conversation.Store, agentConfig agent.Config, serviceConfig conversation.ServiceConfig) (api.Backend, *conversation.Service, error) {
 	client, err := spec.newMCPClient(spec.socketPath)
 	if err != nil {
 		return api.Backend{}, nil, fmt.Errorf("create MCP client: %w", err)
@@ -171,7 +182,7 @@ func newBackend(spec backendSpec, model llm.Client, store conversation.Store, ag
 	if err != nil {
 		return api.Backend{}, nil, fmt.Errorf("create agent: %w", err)
 	}
-	service, err := conversation.NewService(store, orchestrator, conversation.ServiceConfig{Backend: spec.name, Lifetime: lifetime})
+	service, err := conversation.NewService(store, orchestrator, serviceConfig)
 	if err != nil {
 		return api.Backend{}, nil, fmt.Errorf("create conversation service: %w", err)
 	}

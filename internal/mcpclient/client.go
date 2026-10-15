@@ -100,6 +100,15 @@ type Session struct {
 	session *mcp.ClientSession
 }
 
+// ServerInfo is the name and version the MCP server announced when the
+// session was initialized.
+func (s *Session) ServerInfo() (string, string) {
+	if result := s.session.InitializeResult(); result != nil && result.ServerInfo != nil {
+		return result.ServerInfo.Name, result.ServerInfo.Version
+	}
+	return "", ""
+}
+
 // ListTools returns every tool exposed by the MCP server, following pagination.
 func (s *Session) ListTools(ctx context.Context) ([]*mcp.Tool, error) {
 	catalog := toolCatalog{tools: make([]*mcp.Tool, 0, maxMCPToolCount)}

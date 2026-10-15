@@ -25,6 +25,9 @@ type DisplayMessage struct {
 	Role      string    `json:"role"`
 	Text      string    `json:"text"`
 	CreatedAt time.Time `json:"created_at"`
+	// Feedback is the feedback of the user on the turn of an assistant
+	// message, if any.
+	Feedback *Feedback `json:"feedback,omitempty"`
 }
 
 type MessagePage struct {

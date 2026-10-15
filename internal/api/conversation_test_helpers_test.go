@@ -66,3 +66,11 @@ func (s turnService) PrepareTurn(_ context.Context, _ auth.Identity, id string, 
 		return s.run(ctx, prompt, emit)
 	}}, nil
 }
+
+func (noopConversationService) SetFeedback(context.Context, auth.Identity, string, string, conversation.Feedback) (conversation.FeedbackRecord, error) {
+	return conversation.FeedbackRecord{}, nil
+}
+
+func (noopConversationService) DeleteFeedback(context.Context, auth.Identity, string, string) error {
+	return nil
+}

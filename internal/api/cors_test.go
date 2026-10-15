@@ -28,7 +28,7 @@ func TestCORSPreflightRunsBeforeAuthentication(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, origin := range []string{"https://a.example", "https://b.example", "https://unknown.example"} {
-			for _, method := range []string{"GET", "POST", "PATCH", "DELETE"} {
+			for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 				r := httptest.NewRequest("OPTIONS", "/v1/om3/conversations", nil)
 				r.Header.Set("Origin", origin)
 				r.Header.Set("Access-Control-Request-Method", method)
@@ -62,7 +62,7 @@ func TestCORSRejectsInvalidPreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ methods, headers []string }{
-		{[]string{"PUT"}, nil}, {[]string{"POST", "POST"}, nil}, {[]string{""}, nil}, {[]string{"post"}, nil},
+		{[]string{"TRACE"}, nil}, {[]string{"POST", "POST"}, nil}, {[]string{""}, nil}, {[]string{"post"}, nil},
 		{[]string{"POST"}, []string{"X-Unexpected"}}, {[]string{"POST"}, []string{"Authorization,"}}, {[]string{"POST"}, []string{""}},
 	} {
 		r := httptest.NewRequest("OPTIONS", "/v1/om3/conversations", nil)

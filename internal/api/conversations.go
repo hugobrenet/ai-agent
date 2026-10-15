@@ -27,6 +27,8 @@ type ConversationService interface {
 	PrepareTurn(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error)
 	PrepareConfirmation(context.Context, auth.Identity, string, string, string, agent.Decision) (conversation.TurnExecution, error)
 	PendingConfirmation(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error)
+	SetFeedback(context.Context, auth.Identity, string, string, conversation.Feedback) (conversation.FeedbackRecord, error)
+	DeleteFeedback(context.Context, auth.Identity, string, string) error
 }
 
 type ConversationResponse struct {

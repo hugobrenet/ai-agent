@@ -113,6 +113,26 @@ model context. All retained display messages can be paged, independently of
 the smaller context window selected for model turns. Existing stored turns are
 readable without a schema change. Metadata routes and SSE remain unchanged.
 
+## Feedback
+
+Under each assistant answer, offer 👍 and 👎. After a 👎, offer the optional
+reasons and a free text field "What did you expect?", then send them with
+`PUT /v1/om3/conversations/{id}/turns/{turn_id}/feedback`, using the
+`turn_id` of the message:
+
+| Reason | Code |
+|---|---|
+| Does not answer my question | `not_answered` |
+| Missing information | `missing_information` |
+| Incorrect or outdated information | `incorrect_or_outdated` |
+| Hard to understand | `hard_to_understand` |
+| Expected action not done | `action_not_done` |
+
+`feedback` on the assistant messages of a page restores the choice after a
+reload; `DELETE` on the same path withdraws it. Tell the user that their
+feedback and the exchange it rates are kept to improve the assistant, without
+their identity. See [the API](api.md#feedback) for the limits.
+
 ## Action confirmation
 
 A tool that changes the cluster and that MCP annotates `destructiveHint: true`
