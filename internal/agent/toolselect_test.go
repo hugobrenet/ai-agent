@@ -110,7 +110,9 @@ func TestSearchShowsTheCoreThenTheToolsFound(t *testing.T) {
 	}
 }
 
-func TestSearchFallsBackToTheConfiguredCoreAndKeepsRecentTools(t *testing.T) {
+// Without a core tool marked by the MCP, the model sees search_tools and the
+// tools of the recent history only.
+func TestSearchKeepsRecentToolsWithoutCoreTools(t *testing.T) {
 	catalog := searchCatalog()
 	catalog[0].Meta = nil
 	session := &fakeSession{tools: catalog}
@@ -125,10 +127,10 @@ func TestSearchFallsBackToTheConfiguredCoreAndKeepsRecentTools(t *testing.T) {
 		tools = toolNames(request.Tools)
 		return textStep("ok")(request, emit)
 	}}}
-	if _, err := searchAgent(t, model, session, Config{CoreTools: []string{"get_node_san_topology", "unknown_tool"}}).RunTurn(t.Context(), history, "and now?", func(Event) error { return nil }); err != nil {
+	if _, err := searchAgent(t, model, session, Config{}).RunTurn(t.Context(), history, "and now?", func(Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(tools, []string{SearchToolName, "get_node_san_topology", "list_node_packages"}) {
+	if !slices.Equal(tools, []string{SearchToolName, "list_node_packages"}) {
 		t.Fatalf("tools = %v", tools)
 	}
 }
@@ -530,8 +532,10 @@ func filterCatalog() []*mcp.Tool {
 	tool := func(name, description string) *mcp.Tool {
 		return &mcp.Tool{Name: name, Description: description, InputSchema: objectSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}
 	}
+	core := tool("get_cluster_status", "The status of the cluster.")
+	core.Meta = mcp.Meta{CoreToolMeta: true}
 	return []*mcp.Tool{
-		tool("get_cluster_status", "The status of the cluster."),
+		core,
 		tool("list_node_hardware", "The hardware inventory of a node: node hardware, PCI devices and memory banks of the node hardware inventory."),
 		tool("list_node_disks", "The disks a node sees, with their size."),
 		tool("list_node_packages", "The packages installed."),
@@ -545,7 +549,7 @@ func newTestSelection(t *testing.T, tools []*mcp.Tool, ratio float64) (*toolSele
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent := &Agent{config: Config{SearchThreshold: 1, SearchScoreRatio: ratio, CoreTools: []string{"get_cluster_status"}}, indexes: &indexCache{}}
+	agent := &Agent{config: Config{SearchThreshold: 1, SearchScoreRatio: ratio}, indexes: &indexCache{}}
 	hash, _ := toolCatalogHash(tools)
 	selection, err := agent.selectTools(tools, converted, hash, nil, &SuspendedTurn{})
 	if err != nil {

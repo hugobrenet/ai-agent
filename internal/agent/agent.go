@@ -36,9 +36,6 @@ type Config struct {
 	// search_tools. 0 means DefaultSearchThreshold, a negative value never
 	// searches.
 	SearchThreshold int
-	// CoreTools are the tools always shown when the MCP marks none with
-	// CoreToolMeta.
-	CoreTools []string
 	// SearchScoreRatio is the share of the best score of a search under
 	// which a result is not shown. 0 means DefaultSearchScoreRatio, a
 	// negative value shows every result.

@@ -159,13 +159,6 @@ func (a *Agent) selectTools(mcpTools []*mcp.Tool, converted []llm.Tool, catalogH
 			selection.core[tool.Name] = true
 		}
 	}
-	if len(selection.active) == 0 {
-		for _, name := range a.config.CoreTools {
-			if selection.add(name) {
-				selection.core[name] = true
-			}
-		}
-	}
 	// The tools of the last turns, the most recent first, for the questions
 	// that follow them.
 	recent := 0
