@@ -24,6 +24,9 @@ const (
 	DefaultSearchThreshold = 20
 	// CoreToolMeta marks, in the _meta of an MCP tool, a tool always shown.
 	CoreToolMeta = "opensvc/core"
+	// DefaultSearchScoreRatio is the share of the best score of a search
+	// under which a result is listed but not shown, an experimental value.
+	DefaultSearchScoreRatio = 0.30
 
 	maxSearchesPerTurn    = 3
 	defaultSearchResults  = 5
@@ -41,7 +44,8 @@ const searchKeywordsGuidance = "Use 3–8 English keywords describing the requir
 // searchInstruction is added to the system prompt when the model sees a
 // part of the catalog only.
 const searchInstruction = "Only some tools are listed. When none fits, call " + SearchToolName +
-	"; the tools it finds can be called from the next step on. " + searchKeywordsGuidance + " " + searchBatchGuidance
+	"; the tools it finds can be called from the next step on. " + searchKeywordsGuidance + " " + searchBatchGuidance +
+	" To get the definition of a tool found but not shown, search its exact name."
 
 // searchBatchGuidance asks the model to request the tools a search found
 // together, as the backend prompts do for independent calls.
@@ -63,7 +67,8 @@ var searchToolSchema = json.RawMessage(fmt.Sprintf(`{"type":"object","properties
 var searchTool = llm.Tool{
 	Name: SearchToolName,
 	Description: "Search the tools of the backend when none of the listed tools fits the question. " + searchKeywordsGuidance +
-		" Returns the best matching tools with a summary; they can be called from the next step on.",
+		" Returns the best matching tools with a summary; those shown can be called from the next step on." +
+		" To show a tool found but not shown, search its exact name.",
 	InputSchema: searchToolSchema,
 }
 
@@ -84,6 +89,9 @@ type toolSelection struct {
 	shown []string
 	// core are the tools never removed to make room for the tools found.
 	core map[string]bool
+	// scoreRatio is the share of the best score under which a result is
+	// not shown; 0 shows them all.
+	scoreRatio float64
 }
 
 // indexCache keeps the index of the last catalog, by its hash.
@@ -133,6 +141,13 @@ func (a *Agent) selectTools(mcpTools []*mcp.Tool, converted []llm.Tool, catalogH
 		return nil, err
 	}
 	selection.search, selection.index, selection.searches = true, index, state.Searches
+	selection.scoreRatio = a.config.SearchScoreRatio
+	if selection.scoreRatio == 0 {
+		selection.scoreRatio = DefaultSearchScoreRatio
+	}
+	if selection.scoreRatio < 0 {
+		selection.scoreRatio = 0
+	}
 	selection.core = map[string]bool{}
 	selection.bytes = toolBytes(searchTool)
 	state.ToolSearch = true
@@ -230,14 +245,26 @@ type searchArguments struct {
 }
 
 type searchMatch struct {
-	Name    string  `json:"name"`
-	Title   string  `json:"title,omitempty"`
-	Summary string  `json:"summary"`
-	Score   float64 `json:"score"`
-	// Shown is false for a tool found but not shown: its definition does
-	// not fit in a model request beside the core tools.
-	Shown bool `json:"shown"`
+	Name    string `json:"name"`
+	Title   string `json:"title,omitempty"`
+	Summary string `json:"summary"`
+	// Score is the BM25 score of a search, absent for a tool asked by its
+	// exact name.
+	Score *float64 `json:"score,omitempty"`
+	// Exact is set for a tool asked by its exact name, without a score.
+	Exact bool `json:"exact,omitempty"`
+	// Shown is false for a tool found but not shown, for Reason.
+	Shown  bool   `json:"shown"`
+	Reason string `json:"reason,omitempty"`
 }
+
+// The reasons a tool found is not shown.
+const (
+	// notShownLowScore: it scored under the ratio of the best result.
+	notShownLowScore = "low_score"
+	// notShownBudget: its definition does not fit in a model request.
+	notShownBudget = "budget"
+)
 
 // run executes a search_tools call: the tools found become active. A
 // refused search is a tool error for the model, never a failed turn.
@@ -260,28 +287,81 @@ func (s *toolSelection) run(call llm.ToolCall, titles map[string]string) llm.Too
 	if arguments.Limit < 1 || arguments.Limit > maxSearchResults {
 		return fail(fmt.Sprintf("The limit of search_tools must be between 1 and %d.", maxSearchResults))
 	}
+	// A query naming a tool of the catalog exactly asks for that tool alone,
+	// whatever its rank: the way to show a tool a former search found but
+	// did not show. It is subject to the budget, never to the score ratio.
+	if exact := strings.TrimSpace(arguments.Query); len(arguments.Query) <= toolsearch.MaxQueryBytes {
+		if tool, ok := s.catalog[exact]; ok {
+			s.searches++
+			s.show(exact)
+			match := searchMatch{Name: exact, Title: titles[exact], Summary: summary(tool.Description), Exact: true, Shown: slices.Contains(s.active, exact)}
+			var hint string
+			if !match.Shown {
+				match.Reason = notShownBudget
+				hint = "The tool cannot be shown: its definition exceeds the size of a model request beside the core tools. Answer with the tools shown."
+			}
+			text, _ := json.Marshal(struct {
+				Tools []searchMatch `json:"tools"`
+				Hint  string        `json:"hint,omitempty"`
+			}{[]searchMatch{match}, hint})
+			return llm.ToolResult{CallID: call.ID, Content: textToolResult(string(text))}
+		}
+	}
 	results, err := s.index.Search(arguments.Query, arguments.Limit)
 	if err != nil {
 		return fail("The query of search_tools has no searchable keyword, or exceeds " + strconv.Itoa(toolsearch.MaxQueryBytes) + " bytes. " + searchKeywordsGuidance)
 	}
 	// Only a valid search counts, whether it finds tools or not.
 	s.searches++
-	matches := make([]searchMatch, 0, len(results))
-	hidden := false
+	// A result scoring under scoreRatio of the best one is not shown: BM25
+	// scores compare within one search only. The raw scores are compared,
+	// and a tool already shown stays shown.
+	best := 0.0
 	for _, result := range results {
-		shown := s.show(result.Name)
-		hidden = hidden || !shown
-		matches = append(matches, searchMatch{
+		best = max(best, result.Score)
+	}
+	lowScore := map[string]bool{}
+	for _, result := range results {
+		switch {
+		case slices.Contains(s.active, result.Name):
+		case s.scoreRatio > 0 && result.Score < s.scoreRatio*best:
+			lowScore[result.Name] = true
+		default:
+			s.show(result.Name)
+		}
+	}
+	// shown is read from the final active set: making room for a tool may
+	// have removed another one.
+	matches := make([]searchMatch, 0, len(results))
+	reasons := map[string]bool{}
+	for _, result := range results {
+		score := math.Round(result.Score*100) / 100
+		match := searchMatch{
 			Name: result.Name, Title: titles[result.Name], Summary: summary(s.catalog[result.Name].Description),
-			Score: math.Round(result.Score*100) / 100, Shown: shown,
-		})
+			Score: &score, Shown: slices.Contains(s.active, result.Name),
+		}
+		if !match.Shown {
+			match.Reason = notShownBudget
+			if lowScore[result.Name] {
+				match.Reason = notShownLowScore
+			}
+			reasons[match.Reason] = true
+		}
+		matches = append(matches, match)
 	}
 	response := map[string]any{"tools": matches}
-	switch {
-	case len(matches) == 0:
-		response["hint"] = "No tool matches these keywords. Try other English words, or answer with the tools available."
-	case hidden:
-		response["hint"] = "The tools with shown false were found but cannot be shown: their definitions exceed the size of a model request. Answer with the tools shown."
+	var hints []string
+	if len(matches) == 0 {
+		hints = append(hints, "No tool matches these keywords. Try other English words, or answer with the tools available.")
+	}
+	if reasons[notShownLowScore] {
+		hints = append(hints, "The tools with reason "+notShownLowScore+" matched these keywords weakly and are not shown: to use one, call "+SearchToolName+" with its exact name.")
+	}
+	if reasons[notShownBudget] {
+		hints = append(hints, "The tools with reason "+notShownBudget+" cannot be shown: their definitions exceed the size of a model request. Answer with the tools shown.")
+	}
+	if len(hints) > 0 {
+		response["hint"] = strings.Join(hints, " ")
 	}
 	text, _ := json.Marshal(response)
 	return llm.ToolResult{CallID: call.ID, Content: textToolResult(string(text))}

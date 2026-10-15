@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +24,10 @@ type AgentConfig struct {
 	// SearchThreshold is the largest MCP catalog shown whole to the model;
 	// 0 keeps the default of the agent, a negative value never searches.
 	SearchThreshold int
+	// SearchScoreRatio is the share of the best score of a search under
+	// which a result is not shown; 0 keeps the default of the agent, a
+	// negative value shows every result.
+	SearchScoreRatio float64
 }
 
 func LoadAgent() (AgentConfig, error) {
@@ -56,6 +61,16 @@ func loadAgent(getenv func(string) string) (AgentConfig, error) {
 			return AgentConfig{}, fmt.Errorf("parse OPENSVC_AI_TOOL_SEARCH_THRESHOLD %q: expected an integer between 1 and %d, or -1 to never search", value, maximumSearchThreshold)
 		}
 		config.SearchThreshold = threshold
+	}
+	if value := strings.TrimSpace(getenv("OPENSVC_AI_TOOL_SEARCH_SCORE_RATIO")); value != "" {
+		ratio, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(ratio) || ratio < 0 || ratio > 1 {
+			return AgentConfig{}, fmt.Errorf("parse OPENSVC_AI_TOOL_SEARCH_SCORE_RATIO %q: expected a number between 0 and 1, 0 to show every result", value)
+		}
+		config.SearchScoreRatio = ratio
+		if ratio == 0 {
+			config.SearchScoreRatio = -1
+		}
 	}
 	return config, nil
 }

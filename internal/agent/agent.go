@@ -39,6 +39,10 @@ type Config struct {
 	// CoreTools are the tools always shown when the MCP marks none with
 	// CoreToolMeta.
 	CoreTools []string
+	// SearchScoreRatio is the share of the best score of a search under
+	// which a result is not shown. 0 means DefaultSearchScoreRatio, a
+	// negative value shows every result.
+	SearchScoreRatio float64
 }
 
 type Agent struct {
@@ -68,7 +72,10 @@ type TurnResult struct {
 type Exposure struct {
 	SystemPromptSHA256 string
 	ToolSearch         bool
-	ShownTools         []string
+	// SearchScoreRatio is the ratio the searches of the turn used; 0 when
+	// every result is shown or the catalog is not searched.
+	SearchScoreRatio float64
+	ShownTools       []string
 }
 
 // MCPServer is the MCP server of a turn: the name and version it announced,
@@ -184,7 +191,10 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	// finish completes a result with what the turn used and was given.
 	finish := func(turn TurnResult) TurnResult {
 		turn.MCP = result.MCP
-		turn.Exposure = Exposure{SystemPromptSHA256: hex.EncodeToString(promptSum[:]), ToolSearch: selection.search, ShownTools: slices.Clone(selection.shown)}
+		turn.Exposure = Exposure{
+			SystemPromptSHA256: hex.EncodeToString(promptSum[:]), ToolSearch: selection.search,
+			SearchScoreRatio: selection.scoreRatio, ShownTools: slices.Clone(selection.shown),
+		}
 		return turn
 	}
 	messages := make([]llm.Message, 0, len(history)+len(state.Messages)+3)
