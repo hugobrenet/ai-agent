@@ -476,6 +476,10 @@ func TestSearchToolAsksForKeywords(t *testing.T) {
 			t.Errorf("%s description lacks the guidance: %q", name, text)
 		}
 	}
+	batch := "After a search, request the independent read-only tools you need together in the next step, when all their arguments are already known. Wait for prerequisite results before making dependent calls."
+	if !strings.Contains(searchInstruction, batch) {
+		t.Errorf("the search instruction does not ask to batch the tools found: %q", searchInstruction)
+	}
 	if !strings.Contains(query.Description, "At most 512 UTF-8 bytes.") {
 		t.Errorf("query description lacks the byte bound: %q", query.Description)
 	}
