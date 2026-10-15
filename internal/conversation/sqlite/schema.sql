@@ -23,9 +23,7 @@ CREATE TABLE turns (
     error_code TEXT NOT NULL DEFAULT '',
     started_at INTEGER NOT NULL,
     completed_at INTEGER,
-    mcp_server TEXT NOT NULL DEFAULT '' CHECK (length(mcp_server) <= 256),
-    mcp_version TEXT NOT NULL DEFAULT '' CHECK (length(mcp_version) <= 256),
-    tools_sha256 TEXT NOT NULL DEFAULT '' CHECK (length(tools_sha256) <= 64),
+    runs_json BLOB NOT NULL DEFAULT '[]',
     UNIQUE (conversation_id, sequence)
 );
 

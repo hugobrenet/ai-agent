@@ -18,6 +18,7 @@ import (
 	"github.com/opensvc/ai-agent/internal/api"
 	"github.com/opensvc/ai-agent/internal/backend/oc3"
 	"github.com/opensvc/ai-agent/internal/backend/om3"
+	"github.com/opensvc/ai-agent/internal/buildinfo"
 	"github.com/opensvc/ai-agent/internal/config"
 	"github.com/opensvc/ai-agent/internal/conversation"
 	conversationsqlite "github.com/opensvc/ai-agent/internal/conversation/sqlite"
@@ -83,7 +84,7 @@ func main() {
 	for _, spec := range specs {
 		serviceConfig := conversation.ServiceConfig{
 			Backend: spec.name, Lifetime: conversationConfig.Lifetime, FeedbackRetention: conversationConfig.FeedbackRetention,
-			FeedbackContext: conversation.NewFeedbackContext(spec.name, agentVersion(), llmConfig.Model, spec.systemPrompt),
+			Agent: conversation.NewAgentInfo(buildinfo.Version(), llmConfig.Model, spec.systemPrompt),
 		}
 		backend, service, err := newBackend(spec, model, conversationStore, agent.Config{SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout}, serviceConfig)
 		if err != nil {

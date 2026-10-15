@@ -239,7 +239,7 @@ func (s *serviceTestStore) BeginTurn(context.Context, Owner, string, string, tim
 	}
 	return Turn{ID: "turn-id", ConversationID: s.item.ID, Sequence: 1, Status: TurnRunning, StartedAt: serviceTestNow}, nil
 }
-func (s *serviceTestStore) CompleteTurn(_ context.Context, _ Owner, _ string, _ string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, _ TurnAgent) error {
+func (s *serviceTestStore) CompleteTurn(_ context.Context, _ Owner, _ string, _ string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, _ TurnRun) error {
 	s.completed = true
 	s.completedMessages = append([]llm.Message(nil), messages...)
 	s.item.UpdatedAt = completedAt

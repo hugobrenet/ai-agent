@@ -181,7 +181,8 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 	store, _ := openTestStore(t, Config{})
 	service, err := conversation.NewService(store, unusedRunner{}, conversation.ServiceConfig{
 		Backend: "om3", FeedbackRetention: 48 * time.Hour,
-		FeedbackContext: conversation.NewFeedbackContext("om3", "v1.2.3", "gpt-test", "You are a test assistant."),
+		// The agent serving the feedback is not the one that ran the turn.
+		Agent: conversation.NewAgentInfo("v9-current", "gpt-current", "Another prompt."),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -191,13 +192,29 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The turn waits on a confirmation, then resumes on an updated MCP.
 	now := time.Now()
+	before := conversation.NewAgentInfo("v1.2.3", "gpt-test", "You are a test assistant.")
+	first := conversation.TurnRun{
+		AgentVersion: before.Version, Model: before.Model, SystemPromptSHA256: before.SystemPromptSHA256,
+		MCPServer: "om3-mcp", MCPVersion: "v1", ToolsSHA256: strings.Repeat("ab", 32),
+	}
 	if _, err := store.BeginTurn(t.Context(), testOwner, item.ID, "turn-1", now); err != nil {
 		t.Fatal(err)
 	}
-	long := strings.Repeat("v", 300)
-	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", now.Add(time.Second), now.Add(time.Hour), toolTranscript(),
-		conversation.TurnAgent{MCPServer: "oc3-mcp", MCPVersion: long, ToolsSHA256: strings.Repeat("ab", 32)}); err != nil {
+	if err := store.SuspendTurn(t.Context(), testOwner, conversation.PendingConfirmation{
+		ConversationID: item.ID, TurnID: "turn-1", ConfirmationID: "confirmation-1",
+		ToolName: "stop_object", Arguments: json.RawMessage(`{}`), ArgumentsHash: "hash", State: []byte(`{}`),
+		CreatedAt: now, ExpiresAt: now.Add(time.Minute), Run: first,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimConfirmation(t.Context(), testOwner, item.ID, "turn-1", "confirmation-1", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.MCPVersion = strings.Repeat("v", 300)
+	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", now.Add(2*time.Second), now.Add(time.Hour), toolTranscript(), second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -220,8 +237,9 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 	if err := json.Unmarshal(record.Context, &agentContext); err != nil {
 		t.Fatal(err)
 	}
-	if agentContext.Backend != "om3" || agentContext.AgentVersion != "v1.2.3" || agentContext.Model != "gpt-test" || len(agentContext.SystemPromptSHA256) != 64 ||
-		agentContext.MCPServer != "oc3-mcp" || agentContext.MCPVersion != long[:256] || agentContext.ToolsSHA256 != strings.Repeat("ab", 32) {
+	second.MCPVersion = second.MCPVersion[:256]
+	if agentContext.Backend != "om3" || len(agentContext.Runs) != 2 || agentContext.Runs[0] != first || agentContext.Runs[1] != second ||
+		len(first.SystemPromptSHA256) != 64 {
 		t.Fatalf("context = %+v", agentContext)
 	}
 
@@ -234,5 +252,35 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 	}
 	if err := service.DeleteFeedback(t.Context(), identity, item.ID, "turn-1"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTurnRunsSkipAnUnchangedResumption(t *testing.T) {
+	store, _ := openTestStore(t, Config{})
+	item := testConversation("conversation-1", testOwner, testNow)
+	if err := store.CreateConversation(t.Context(), item); err != nil {
+		t.Fatal(err)
+	}
+	run := conversation.TurnRun{AgentVersion: "v1", Model: "gpt", MCPServer: "om3-mcp", MCPVersion: "v1"}
+	pending := conversation.PendingConfirmation{
+		ConversationID: item.ID, TurnID: "turn-1", ConfirmationID: "confirmation-1",
+		ToolName: "stop_object", Arguments: json.RawMessage(`{}`), ArgumentsHash: "hash", State: []byte(`{}`),
+		CreatedAt: testNow, ExpiresAt: testNow.Add(time.Minute), Run: run,
+	}
+	if _, err := store.BeginTurn(t.Context(), testOwner, item.ID, "turn-1", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SuspendTurn(t.Context(), testOwner, pending); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimConfirmation(t.Context(), testOwner, item.ID, "turn-1", "confirmation-1", testNow.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", testNow.Add(2*time.Second), testNow.Add(time.Hour), toolTranscript(), run); err != nil {
+		t.Fatal(err)
+	}
+	turn, _, err := store.TurnMessages(t.Context(), testOwner, item.ID, "turn-1")
+	if err != nil || len(turn.Runs) != 1 || turn.Runs[0] != run {
+		t.Fatalf("runs = %+v, %v", turn.Runs, err)
 	}
 }

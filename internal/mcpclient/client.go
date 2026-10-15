@@ -10,14 +10,16 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opensvc/ai-agent/internal/auth"
+	"github.com/opensvc/ai-agent/internal/buildinfo"
 	"github.com/opensvc/ai-agent/internal/config"
 	"github.com/opensvc/ai-agent/internal/requestid"
 )
 
-const (
-	clientName    = "opensvc-ai-agent"
-	clientVersion = "v0.1.0"
-)
+const clientName = "opensvc-ai-agent"
+
+// clientVersion is the version the agent announces to the MCP servers, the
+// one its feedback records.
+var clientVersion = buildinfo.Version()
 
 // Client creates request-scoped MCP sessions. It never retains a Bearer token.
 type Client struct {

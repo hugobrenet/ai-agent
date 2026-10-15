@@ -1,8 +1,12 @@
 package conversation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"time"
+
+	"github.com/opensvc/ai-agent/internal/agent"
 )
 
 // Owner binds a conversation to the backend it was created on and to the
@@ -63,16 +67,47 @@ type Turn struct {
 	ErrorCode      string
 	StartedAt      time.Time
 	CompletedAt    *time.Time
-	// Agent describes what answered the turn, once completed.
-	Agent TurnAgent
+	// Runs are the executions of the turn: one, plus one per resumption
+	// after a confirmation that ran on a different agent or MCP server.
+	Runs []TurnRun
 }
 
-// TurnAgent is the MCP server a completed turn used: its name and version,
-// and the hash of its tool catalog.
-type TurnAgent struct {
-	MCPServer   string
-	MCPVersion  string
-	ToolsSHA256 string
+// MaxTurnRuns bounds the executions recorded on a turn.
+const MaxTurnRuns = 32
+
+// TurnRun describes what executed a turn, or a part of it until a
+// confirmation: the agent, its model and system prompt, and the MCP server
+// with the hash of its tool catalog.
+type TurnRun struct {
+	AgentVersion       string `json:"agent_version"`
+	Model              string `json:"model"`
+	SystemPromptSHA256 string `json:"system_prompt_sha256"`
+	MCPServer          string `json:"mcp_server"`
+	MCPVersion         string `json:"mcp_version"`
+	ToolsSHA256        string `json:"tools_sha256"`
+}
+
+// AgentInfo describes the agent of a backend: its version, its model and a
+// hash of its system prompt.
+type AgentInfo struct {
+	Version            string
+	Model              string
+	SystemPromptSHA256 string
+}
+
+// NewAgentInfo describes the agent of a backend; only a hash of its system
+// prompt is kept.
+func NewAgentInfo(version string, model string, systemPrompt string) AgentInfo {
+	sum := sha256.Sum256([]byte(systemPrompt))
+	return AgentInfo{Version: version, Model: model, SystemPromptSHA256: hex.EncodeToString(sum[:])}
+}
+
+// run describes an execution of a turn by this agent on an MCP server.
+func (a AgentInfo) run(mcp agent.MCPServer) TurnRun {
+	return TurnRun{
+		AgentVersion: a.Version, Model: a.Model, SystemPromptSHA256: a.SystemPromptSHA256,
+		MCPServer: mcp.Name, MCPVersion: mcp.Version, ToolsSHA256: mcp.ToolsSHA256,
+	}
 }
 
 // PendingConfirmation is the tool call a suspended turn waits on, with the
@@ -88,4 +123,7 @@ type PendingConfirmation struct {
 	State          []byte
 	CreatedAt      time.Time
 	ExpiresAt      time.Time
+	// Run describes the execution that suspended the turn; it is added to
+	// the runs of the turn.
+	Run TurnRun
 }

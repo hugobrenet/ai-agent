@@ -2,8 +2,6 @@ package conversation
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -93,26 +91,11 @@ type FeedbackRecord struct {
 	Context json.RawMessage
 }
 
-// FeedbackContext describes the agent of a backend for its feedback.
+// FeedbackContext describes what answered a turn, in its feedback: the
+// backend, and the runs of the turn as recorded while it executed.
 type FeedbackContext struct {
-	Backend string `json:"backend"`
-	// AgentVersion is the version of the agent binary, with its source
-	// revision when the build records it.
-	AgentVersion       string `json:"agent_version"`
-	Model              string `json:"model"`
-	SystemPromptSHA256 string `json:"system_prompt_sha256"`
-	// MCPServer, MCPVersion and ToolsSHA256 describe the MCP server that
-	// answered the turn, as recorded when it completed.
-	MCPServer   string `json:"mcp_server"`
-	MCPVersion  string `json:"mcp_version"`
-	ToolsSHA256 string `json:"tools_sha256"`
-}
-
-// NewFeedbackContext describes the agent of a backend from its version, its
-// model and its system prompt, of which only a hash is kept.
-func NewFeedbackContext(backend string, agentVersion string, model string, systemPrompt string) FeedbackContext {
-	sum := sha256.Sum256([]byte(systemPrompt))
-	return FeedbackContext{Backend: backend, AgentVersion: agentVersion, Model: model, SystemPromptSHA256: hex.EncodeToString(sum[:])}
+	Backend string    `json:"backend"`
+	Runs    []TurnRun `json:"runs"`
 }
 
 // TurnSnapshot is the copy of a turn kept with its feedback.
@@ -213,9 +196,11 @@ func (s *Service) SetFeedback(ctx context.Context, identity auth.Identity, conve
 	if err != nil {
 		return FeedbackRecord{}, fmt.Errorf("encode turn snapshot: %w", err)
 	}
-	feedbackContext := s.config.FeedbackContext
-	feedbackContext.MCPServer, feedbackContext.MCPVersion, feedbackContext.ToolsSHA256 = turn.Agent.MCPServer, turn.Agent.MCPVersion, turn.Agent.ToolsSHA256
-	agentContext, err := json.Marshal(feedbackContext)
+	runs := turn.Runs
+	if runs == nil {
+		runs = []TurnRun{}
+	}
+	agentContext, err := json.Marshal(FeedbackContext{Backend: s.config.Backend, Runs: runs})
 	if err != nil {
 		return FeedbackRecord{}, fmt.Errorf("encode feedback context: %w", err)
 	}
