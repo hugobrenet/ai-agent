@@ -34,7 +34,8 @@ type LLMConfig struct {
 }
 
 // LoadLLM loads the LLM backend independently from the HTTP API configuration.
-// The daemon will call it when the orchestration layer is wired.
+// The daemon calls it at startup to build the LLM client shared by all
+// backends.
 func LoadLLM() (LLMConfig, error) {
 	return loadLLM(os.Getenv)
 }

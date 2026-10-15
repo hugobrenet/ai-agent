@@ -1,6 +1,8 @@
 // Package om3 is the om3 backend of the agent: its MCP serves the OpenSVC
-// daemons of clusters. A request names its target cluster, whose daemon
-// verifies the token, and may name a node as a routing hint.
+// daemons of clusters. A request names its target cluster, and may name a
+// node as a routing hint. The MCP verifies the token signature, issuer and
+// audience; the daemon of the target cluster confirms the identity and
+// enforces grants.
 package om3
 
 import (
@@ -14,8 +16,9 @@ import (
 )
 
 const (
-	// ClusterIDHeader selects the cluster whose daemon verifies the token. It
-	// is required, and never trusted as an identity on its own.
+	// ClusterIDHeader selects the cluster whose daemon confirms the identity
+	// the MCP verified. It is required, and never trusted as an identity on
+	// its own.
 	ClusterIDHeader = "X-OpenSVC-Cluster-ID"
 	// NodeHeader is an optional routing hint, never an identity.
 	NodeHeader = "X-OpenSVC-Node"
@@ -55,7 +58,7 @@ type identityResponse struct {
 func (a *Authenticator) Authenticate(ctx context.Context, header http.Header, token string) (context.Context, auth.Identity, error) {
 	cluster, clusterErr := targetFromHeader(header, ClusterIDHeader)
 	node, nodeErr := targetFromHeader(header, NodeHeader)
-	// The cluster ID selects which daemon verifies the token: it is required.
+	// The cluster ID selects which daemon confirms the identity: it is required.
 	if clusterErr != nil || nodeErr != nil || cluster == "" {
 		return nil, auth.Identity{}, auth.ErrInvalidToken
 	}

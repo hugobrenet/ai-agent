@@ -56,14 +56,18 @@ Authorization: Bearer <OpenID Connect access token>
 X-OpenSVC-Cluster-ID: <ID of the cluster it is intended for>
 ```
 
+and may add `X-OpenSVC-Node: <node name>`, an optional routing hint read by
+om3 only.
+
 The client obtains the token by signing in with the OpenID provider the
 daemons of the cluster trust; the om3 MCP accepts no other token. Before
 each operation, the agent verifies the token through the om3 MCP
-`GET /mcp/auth/whoami`, served only on its local socket: MCP selects the
+`GET /mcp/auth/whoami`, served only on its local socket: MCP verifies the
+token signature, issuer and audience it is configured with, selects the
 cluster from the header and relays the token to that daemon's
-`GET /api/auth/whoami`. The cluster header only selects where the token is
-verified: a token intended for another cluster is refused by the selected
-daemon.
+`GET /api/auth/whoami`, which confirms the identity. The cluster header only
+selects the target: a token intended for another cluster is refused by the
+selected daemon.
 
 The agent treats the token as opaque. It uses the returned identity and
 expiry for conversation ownership and request deadlines, and delegates the
@@ -86,11 +90,12 @@ Authorization: Bearer <OpenID Connect access token>
 ```
 
 Before each operation, the agent verifies the token through the oc3 MCP
-`GET /mcp/auth/whoami`, served only on its local socket: MCP relays the token
+`GET /mcp/auth/whoami`, served only on its local socket: MCP verifies the
+token signature, issuer and audience it is configured with, relays the token
 to the collector's `GET /api/auth/whoami`, and answers the issuer, subject
 and expiry the collector confirmed. The agent forwards no other header to the
 oc3 MCP, and delegates the same token to it for the tools. The collector
-verifies the token and enforces the visibility of the user's account. The
+enforces the visibility of the user's account. The
 answer is reused as for om3.
 
 ## Conversations
@@ -116,8 +121,9 @@ server-sent events. Only one turn runs at a time in a conversation.
 
 ## Identity and isolation
 
-A conversation is bound to its backend and to the verified cluster ID, issuer
-and subject of its creator. Listing returns only the conversations of the
+A conversation is bound to its backend and to the verified issuer and subject
+of its creator, plus the verified cluster ID for om3; oc3 conversations have no
+cluster. Listing returns only the conversations of the
 caller on that backend. Reading, renaming or deleting another identity's
 conversation returns 404, as for a missing one, without revealing whether it
 exists.

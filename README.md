@@ -76,6 +76,25 @@ For browser clients, set `OPENSVC_AI_CORS_ALLOWED_ORIGINS` to comma-separated
 webapp origins, or `*` to allow all origins. Empty by default. See the
 [browser client guide](docs/webapp.md#cors) for examples and restrictions.
 
+### Optional environment variables
+
+| Variable | Default | Bounds |
+| --- | --- | --- |
+| `OPENSVC_AI_LISTEN_ADDR` | `127.0.0.1:8090` | explicit IP address and port 1-65535 |
+| `OPENSVC_AI_CONVERSATION_DB_PATH` | `/var/lib/opensvc-ai-agent/conversations.db` | |
+| `OPENSVC_AI_CONVERSATION_LIFETIME` | `168h` | `1h` to `8760h` |
+| `OPENSVC_AI_OC3_MCP_SOCKET` | unset: `oc3` not served | absolute path |
+| `OPENSVC_AI_CORS_ALLOWED_ORIGINS` | empty: no CORS | exact origins or `*` |
+| `OPENSVC_AI_MAX_CONCURRENT_ASKS` | `4` | 1 to 128 |
+| `OPENSVC_AI_SHUTDOWN_TIMEOUT` | `30s` | `1s` to `5m` |
+| `OPENSVC_AI_AGENT_MAX_ITERATIONS` | `8` | 1 to 32 |
+| `OPENSVC_AI_AGENT_TIMEOUT` | `5m` | `1s` to `30m` |
+| `OPENSVC_AI_LLM_TIMEOUT` | `2m` | any positive duration |
+| `OPENSVC_AI_LLM_MAX_OUTPUT_TOKENS` | `4096` | 1 to 131072 |
+
+Durations use the Go syntax, such as `90s` or `2h30m`. An invalid value
+prevents startup.
+
 ## Start
 
 ```bash

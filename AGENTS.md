@@ -4,7 +4,8 @@
 
 This project is a standalone Go daemon that orchestrates LLM turns and
 authenticated OpenSVC MCP tool calls for cluster diagnostics. It exposes an
-HTTPS API used by the OpenSVC webapp, with persistent conversations, under one route prefix per backend (`/v1/om3`). It does not issue OpenSVC tokens or implement daemon operations.
+HTTPS API used by the OpenSVC webapp, with persistent conversations, under one route prefix per backend (`/v1/om3`, and `/v1/oc3` when the
+collector MCP is configured). It does not issue OpenSVC tokens or implement daemon operations.
 
 Keep the agent independent from the om3 binary, a local daemon, the MCP
 implementation and any particular LLM provider. OpenSVC semantics and factual
@@ -87,21 +88,23 @@ Conversations must not retain MCP sessions or provider-specific state.
 - Treat the bearer token as opaque. Bound its size and reject missing,
   duplicate or malformed Authorization headers and query-string tokens.
   Do not decode JWTs or duplicate OpenSVC token rules: MCP owns profile
-  selection, claims, algorithms, dates, target coherence and catalogue routing;
-  the daemon verifies signatures and permissions.
+  selection, signature, issuer, audience, claims, algorithms, dates, target
+  coherence and catalogue routing; the daemon or collector then confirms the
+  identity and enforces grants.
 - The om3 backend requires one bounded `X-OpenSVC-Cluster-ID` header and reads
   an optional `X-OpenSVC-Node` header, without interpreting them against token
-  claims. It forwards them unchanged; the cluster ID selects where MCP
-  verifies the token.
+  claims. It forwards them unchanged; the cluster ID selects the daemon that
+  confirms the identity.
 - The oc3 backend requires the user's OpenID Connect access token and no
   other header, and forwards none to the oc3 MCP.
 - Reach each MCP only through its local Unix socket
   (`OPENSVC_AI_OM3_MCP_SOCKET`, `OPENSVC_AI_OC3_MCP_SOCKET`). MCP accepts
-  delegated tokens there, never on an HTTPS listener. Do not add a network
-  fallback.
-- Authenticate through the MCP's `GET /mcp/auth/whoami` bridge on that socket,
-  which delegates signature verification to the daemon or the collector
-  `GET /api/auth/whoami`.
+  only OpenID Connect access tokens there, never on an HTTPS listener. Do not
+  add a network fallback.
+- Authenticate through the MCP's `GET /mcp/auth/whoami` bridge on that socket.
+  The MCP verifies the signature, issuer and audience itself, then relays the
+  token to the daemon or collector `GET /api/auth/whoami`, which confirms the
+  identity. Daemon-issued tokens are refused.
   Require a bounded JSON response with complete identity fields and a future
   expiry. This returned identity is authoritative; for om3, the requested
   cluster must match the response. Apply the returned expiry to the operation deadline.
@@ -112,15 +115,14 @@ Conversations must not retain MCP sessions or provider-specific state.
   an MCP answer is reused at most a minute and never past its expiry, a
   refusal five seconds, an unavailable verification never; keys are hashes of
   the token and its MCP headers, and the cache holds identities, never tokens.
-- Delegate the unchanged JWT and explicit cluster/node headers to MCP in private
-  request context; hide all from LLM contexts. Never retain
-  it in a shared client or global state. Daemon grants remain authoritative.
+- Delegate the unchanged token and, for om3, the cluster/node headers to MCP
+  in private request context; hide all from LLM contexts. Never retain it in a
+  shared client or global state. Daemon or collector grants remain
+  authoritative.
 - Keep OpenSVC and provider credentials separate. Never place OpenSVC JWTs,
   identities or grants in LLM contexts, prompts, tool arguments or provider
   requests; preserve cancellation and deadlines when removing authentication.
-- Use HTTPS with TLS 1.2+, validate MCP chain and hostname, and bind delegated
-  credentials to the configured origin. No MCP redirects or environment proxies.
-  An explicit MCP CA bundle replaces system roots.
+- Never follow MCP redirects or use environment proxies on the socket.
 - Browser CORS is opt-in through `OPENSVC_AI_CORS_ALLOWED_ORIGINS`: exact
   origins or a standalone `*`. Handle preflights before JWT authentication;
   real operations still authenticate. Never enable automatic browser credentials

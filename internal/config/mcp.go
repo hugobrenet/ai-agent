@@ -35,7 +35,7 @@ func loadMCP(getenv func(string) string) (MCPConfig, error) {
 }
 
 // ParseMCPSocket requires an absolute Unix socket path. An MCP accepts
-// delegated tokens only on its local socket. The socket need not exist yet: it
+// OpenID Connect access tokens only on its local socket. The socket need not exist yet: it
 // is dialed per request, so MCP may start after the agent.
 func ParseMCPSocket(value string) (string, error) {
 	path, err := absoluteFile(value)

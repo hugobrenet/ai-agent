@@ -1,7 +1,7 @@
 # OpenID client headers
 
-Each protected HTTPS request supplies the user's access token, cluster ID and
-daemon node name:
+Each protected HTTPS request under `/v1/om3` supplies the user's access token
+and cluster ID, and may name a daemon node:
 
 ```http
 Authorization: Bearer <OpenID access_token>
@@ -9,18 +9,21 @@ X-OpenSVC-Cluster-ID: <cluster.config.id>
 X-OpenSVC-Node: <daemon.nodename>
 ```
 
-Use these headers for every backend route: conversation creation, listing,
-reading, renaming, deletion, turns and confirmations. The routes
-are listed in the [client API](api.md#routes). The request bodies and SSE
+`X-OpenSVC-Node` is optional and om3-only. Requests under `/v1/oc3` send only
+`Authorization`, and no other header. Use the headers of the backend for each
+of its routes: conversation creation, listing, reading, renaming, deletion,
+turns and confirmations. The routes are listed in the
+[client API](api.md#routes). The request bodies and SSE
 events are unchanged: a turn still sends only `{"prompt":"..."}`. The target
 belongs in the header so authentication completes before reading the body.
 Use the current token after renewal; the agent does not refresh tokens.
 
 Each target header is one exact, nonempty value of at most 256 bytes, without
 surrounding whitespace, control characters or commas. Duplicate headers are
-rejected. Both are required for OpenID: the MCP resolves the exact cluster/node
-pair in its administrator-owned catalogue, never a client-supplied URL or DNS
-lookup. Missing or unknown targets are refused without fallback.
+rejected. The cluster ID is required; the node, when present, narrows the
+target. The MCP resolves the target in its administrator-owned catalogue,
+never a client-supplied URL or DNS lookup. Missing or unknown targets are
+refused without fallback.
 Only OpenID Connect access tokens are accepted: a token issued by the daemon
 itself, after a local sign-in, is refused.
 
@@ -30,11 +33,11 @@ The MCP checks structure, required `iss/sub/aud/exp`, optional `nbf`, a
 nonempty `kid`, and asymmetric algorithms RS256/384/512, PS256/384/512 or
 ES256/384/512.
 
-These checks do not establish authenticity. The agent treats the token as
-opaque and forwards the exact
-Bearer and both target headers to its configured MCP's `GET /mcp/auth/whoami`.
-The MCP must validate through the target daemon, which must authenticate it as
-an OpenID Connect token, with its signature, issuer and audience, and return:
+The agent treats the token as opaque and forwards the exact Bearer and target
+headers to its configured MCP's `GET /mcp/auth/whoami` over the MCP's local
+Unix socket. The MCP verifies the token signature, with the issuer and
+audience configured in the MCP, before relaying it to the target daemon, which
+confirms the identity and enforces grants. The om3 MCP then returns:
 
 ```json
 {
@@ -45,16 +48,19 @@ an OpenID Connect token, with its signature, issuer and audience, and return:
 }
 ```
 
-The agent validates this bounded JSON response: complete identity fields,
-a future expiry, and the requested cluster ID. It does not decode the JWT or
+The oc3 MCP returns the same fields without `cluster_id`, after the collector
+confirms the identity. The agent validates this bounded JSON response: complete
+identity fields, a future expiry and, for om3, the requested cluster ID. It does not decode the JWT or
 compare claims locally. The returned subject remains the opaque OpenID `sub`,
 not `preferred_username`. MCP credential refusals, expired identities or a
 requested-cluster mismatch return 401; unavailable verification or malformed
 bridge responses return 503. No conversation or model access is
-allowed before this check. Conversation ownership is backend + cluster +
-issuer + subject. Each subsequent MCP request carries the same Bearer and targets
-from private request context over MCP's local Unix socket; none is exposed to
-the model or stored as a credential. Origin binding applies to all headers.
+allowed before this check. The agent caches a whoami answer at most one
+minute, never past its expiry, and a refusal five seconds. Conversation
+ownership is backend + issuer + subject, plus the cluster ID for om3; oc3
+conversations have no cluster. Each subsequent MCP request carries the same
+Bearer and targets from private request context over MCP's local Unix socket;
+none is exposed to the model or stored as a credential. Origin binding applies to all headers.
 The returned expiry bounds the protected operation. Authentication itself
 uses a short timeout, without locally reading the token's expiry.
 
@@ -63,7 +69,7 @@ uses a short timeout, without locally reading the token's expiry.
 `GET /v1/om3/conversations/{id}/messages` returns persisted user/assistant display
 text from completed turns only. Supply the same Bearer and target headers as
 other conversation operations. Every read verifies identity again; access is
-bound to cluster ID + issuer + subject. Missing and foreign IDs both return 404;
+bound to the conversation owner. Missing and foreign IDs both return 404;
 owned expired conversations return 410. Successful responses use
 `Cache-Control: no-store`.
 
@@ -207,12 +213,3 @@ in restrictive mode return 403; invalid preflight methods/headers also return
 Clients without `Origin` are unaffected. CORS is a browser
 policy, not an authentication mechanism or protection against non-browser
 clients. No CORS headers or origin registrations are sent to MCP or daemons.
-
-## Integration status
-
-This is the agent-side OpenSVC delegation contract. It uses MCP's local Unix
-socket, not MCP's OAuth HTTPS endpoint reserved for external agents. The MCP
-must serve OpenID routing and the identity bridge described above on that
-socket before an actual OpenID request can succeed; the MCP-side checks listed
-above are subject to that work.
-Browser cross-origin access is configurable as described above.

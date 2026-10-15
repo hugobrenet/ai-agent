@@ -1,6 +1,8 @@
 // Package oc3 is the oc3 backend of the agent: its MCP serves the OpenSVC
 // collector. A request carries only the OpenID Connect access token of its
-// user, which the collector verifies; it names no cluster or node.
+// user; it names no cluster or node. The MCP verifies the token signature,
+// issuer and audience; the collector confirms the identity and enforces the
+// visibility of the account.
 package oc3
 
 import (
@@ -40,8 +42,8 @@ type identityResponse struct {
 }
 
 // Authenticate asks the MCP who the token is. The MCP takes OpenID Connect
-// access tokens only, and the collector verifies them; the agent treats the
-// token as opaque.
+// access tokens only, verifies them and relays them to the collector, which
+// confirms the identity; the agent treats the token as opaque.
 func (a *Authenticator) Authenticate(ctx context.Context, _ http.Header, token string) (context.Context, auth.Identity, error) {
 	var response identityResponse
 	if err := a.mcp.WhoAmI(ctx, token, &response); err != nil {
