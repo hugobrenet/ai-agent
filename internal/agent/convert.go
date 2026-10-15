@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opensvc/ai-agent/internal/llm"
@@ -108,6 +109,9 @@ func encodeToolResult(result *mcp.CallToolResult) (json.RawMessage, error) {
 		Content:           content,
 		StructuredContent: result.StructuredContent,
 	}
+	if structured, ok := duplicatedStructuredContent(result); ok {
+		payload.Content, payload.StructuredContent = []mcp.Content{}, structured
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("encode MCP tool result: %w", err)
@@ -116,4 +120,45 @@ func encodeToolResult(result *mcp.CallToolResult) (json.RawMessage, error) {
 		return nil, fmt.Errorf("MCP tool result exceeds %d bytes", maxToolResult)
 	}
 	return data, nil
+}
+
+// duplicatedStructuredContent returns the exact text of a result whose only
+// content is a text holding its structured content, as the MCP SDK adds for
+// the clients that do not read structured content: the model then receives
+// the structured content once, in the bytes the server wrote, instead of
+// twice. A text with annotations or metadata, several contents, or a text
+// that differs in any value, such as an integer the decoded structured
+// content no longer holds exactly, keeps both forms. The result itself is
+// not changed.
+func duplicatedStructuredContent(result *mcp.CallToolResult) (json.RawMessage, bool) {
+	if result.StructuredContent == nil || len(result.Content) != 1 {
+		return nil, false
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok || text.Annotations != nil || len(text.Meta) != 0 {
+		return nil, false
+	}
+	// The text is decoded with its numbers as written, never as float64.
+	decoder := json.NewDecoder(strings.NewReader(text.Text))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	fromText, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	fromStructured, err := json.Marshal(result.StructuredContent)
+	if err != nil || !bytes.Equal(fromText, fromStructured) {
+		return nil, false
+	}
+	compact := bytes.Buffer{}
+	if err := json.Compact(&compact, []byte(text.Text)); err != nil {
+		return nil, false
+	}
+	return compact.Bytes(), true
 }

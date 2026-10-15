@@ -41,7 +41,11 @@ const searchKeywordsGuidance = "Use 3–8 English keywords describing the requir
 // searchInstruction is added to the system prompt when the model sees a
 // part of the catalog only.
 const searchInstruction = "Only some tools are listed. When none fits, call " + SearchToolName +
-	"; the tools it finds can be called from the next step on. " + searchKeywordsGuidance
+	"; the tools it finds can be called from the next step on. " + searchKeywordsGuidance + " " + searchBatchGuidance
+
+// searchBatchGuidance asks the model to request the tools a search found
+// together, as the backend prompts do for independent calls.
+const searchBatchGuidance = "After a search, request the independent read-only tools you need together in the next step, when all their arguments are already known. Wait for prerequisite results before making dependent calls."
 
 // searchToolSchema describes the bounds of the query. toolsearch counts
 // toolsearch.MaxQueryBytes in UTF-8 bytes, while maxLength counts characters:

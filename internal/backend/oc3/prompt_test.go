@@ -13,6 +13,8 @@ func TestSystemPromptGroundsToolArguments(t *testing.T) {
 		"Only use identifiers provided by the user or returned by successful tool results.",
 		"Examples in tool descriptions or schemas are illustrative and are never discovered identifiers.",
 		"If a prerequisite discovery tool fails or does not return a required identifier, do not call any dependent tool, even when a likely value can be inferred; stop that diagnostic branch and report the uncertainty.",
+		"When multiple independent read-only tool calls are needed and all their arguments are already known, request them in the same step. Wait for prerequisite results before requesting dependent calls.",
+		"Tool results of earlier turns may be partial: a _history_compaction field lists what was omitted. Treat omitted data as unknown. When you need omitted details, call an appropriate read-only tool, never again a tool that changes state. A new read is a new observation that may differ from the earlier one: when the user asks for an earlier value that was omitted, say it is no longer available.",
 		"Collector dates are in the collector local time without a zone.",
 	} {
 		if !strings.Contains(SystemPrompt, instruction) {
