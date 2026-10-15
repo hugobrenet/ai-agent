@@ -1375,6 +1375,10 @@
             "minimum": 1,
             "description": "The model iteration of the turn."
           },
+          "turn_id": {
+            "type": "string",
+            "description": "`completed`: the ID of the stored turn, to give a feedback on it."
+          },
           "text_delta": {
             "type": "string",
             "description": "`text_delta`: the next piece of the answer."

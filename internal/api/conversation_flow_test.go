@@ -100,6 +100,11 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 			if turnNumber != 1 {
 				t.Fatal("reading messages ran a model turn")
 			}
+			// The completion names the stored turn, the one its messages carry,
+			// for the client to rate the answer without reloading.
+			if want := `"turn_id":"` + page.Messages[1].TurnID + `"`; !strings.Contains(response.Body.String(), want) {
+				t.Fatalf("completed event without %s: %s", want, response.Body.String())
+			}
 			foreignMessages := httptest.NewRecorder()
 			handler.ServeHTTP(foreignMessages, requestWithToken(http.MethodGet, "/v1/om3/conversations/"+id+"/messages", "bob", ""))
 			if foreignMessages.Code != http.StatusNotFound || strings.Contains(foreignMessages.Body.String(), "answer first") {

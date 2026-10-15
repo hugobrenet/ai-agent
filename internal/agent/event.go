@@ -29,6 +29,9 @@ type Event struct {
 	FinishReason llm.FinishReason
 	Confirmation *Confirmation
 	Iteration    int
+	// TurnID is set on the completion of a stored turn, for the client to
+	// refer to it, such as with a feedback.
+	TurnID string
 }
 
 type EmitFunc func(Event) error
