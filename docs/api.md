@@ -124,21 +124,33 @@ server-sent events. Only one turn runs at a time in a conversation.
 ## Tool search
 
 When the MCP of a backend lists more tools than
-`OPENSVC_AI_TOOL_SEARCH_THRESHOLD` (20 by default), the model does not see
-them all. It sees `search_tools`, a tool of the agent, and an active set:
+`OPENSVC_AI_TOOL_SEARCH_THRESHOLD` (20 by default), or tools too large for
+one model request (1 MiB), the model does not see them all. A threshold of
+`-1` searches only such a large catalog. The agent accepts catalogs of up to
+1024 tools and 4 MiB, the size of one MCP response. It sees `search_tools`, a tool of the agent, and an active set:
 
 - the core tools: those the MCP marks with `"opensvc/core": true` in their
   `_meta`, else the default list of the backend;
 - the tools called in the recent history of the conversation, at most 8;
 - the tools its searches found during the turn.
 
-`search_tools` takes English keywords and an optional limit (5 by default,
-10 at most). The agent ranks the catalog with BM25 over the name, title,
+`search_tools` takes a query and an optional limit (5 by default, 10 at
+most). Its description, the description of its query and the system prompt
+ask the model for 3 to 8 English keywords describing the required
+capability, without greetings, full sentences or resource identifiers: a
+whole question brings words that favor the wrong tools. The query is bounded
+to 512 UTF-8 bytes (its schema can only state 512 characters as
+`maxLength`), its first 32 distinct terms are searched, and a query without
+a searchable term is refused. The agent ranks the catalog with BM25 over the name, title,
 description, parameters and `opensvc/keywords` metadata of each tool, and
 returns the best tools with the first sentence of their description; they
-are shown from the next model call of the turn. A turn runs at most 3
-searches, counted in its tool calls; a refused search is a tool error for the
-model. A tool of the catalog the model calls without having been shown it
+are shown from the next model call of the turn. When the tools shown would
+exceed the size of a model request, the oldest tools that are not core make
+room, those of the history first; a tool that still does not fit is
+returned with `shown` false. A turn runs at most 3
+valid searches, counted in its tool calls; a refused search is a tool error
+for the model and does not count. A turn suspended while searching keeps
+searching when it resumes. A tool of the catalog the model calls without having been shown it
 runs as any other, with its annotations and confirmation. The searches are
 stored with the tool calls of the turn, so that a feedback shows them, and
 a turn resumed after a confirmation sees the tools it found.
@@ -169,13 +181,17 @@ The first feedback of a turn copies it for review: the question, the answer,
 and the tool calls with their arguments, error flag and the start of their
 results, each truncated. It also records what executed the turn, as the
 turn recorded it while it ran: the agent version, the model, a hash of the
-system prompt, and the MCP server, with the name and version it announced
+system prompt actually sent, whether the tool catalog was searched and the
+tools shown to the model, and the MCP server, with the name and version it announced
 and a hash of the tools it listed, which changes with any tool name,
 description, schema or annotation. A turn resumed after a confirmation on a
 different agent or MCP records one run per execution. The feedback holds no
 identity: it stays linked to its turn while the conversation exists, for the
 user to change it, and is then kept anonymous
-until `OPENSVC_AI_FEEDBACK_RETENTION` (180 days by default) ends. The agent
+until `OPENSVC_AI_FEEDBACK_RETENTION` (180 days by default) ends. The
+context is bounded to 16 KiB: beyond, it leaves out the shown tools of the
+runs, counted in `shown_tools_omitted`, then the runs between the first and
+the last, counted in `runs_omitted`, and sets `truncated`. The agent
 keeps at most 4096 feedback; beyond, a new one returns 409 `feedback_limit`.
 
 `opensvc-ai-agentd feedback export [-since 720h] [-with-tool-results]`, run on

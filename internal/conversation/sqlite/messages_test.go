@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -180,5 +181,34 @@ func TestDisplayMessagesRejectOversizedSingleMessageWithoutTruncation(t *testing
 		if _, err := store.ListMessages(t.Context(), testOwner, item.ID, conversation.MessageQuery{}); !errors.Is(err, conversation.ErrMessageTooLarge) {
 			t.Fatalf("oversized display error = %v", err)
 		}
+	}
+}
+
+// A message stores the tool calls the agent runs per model answer, 8, and
+// not more.
+func TestStoreHoldsTheToolCallsOfOneAnswer(t *testing.T) {
+	batch := func(count int) []llm.Message {
+		var calls []llm.ToolCall
+		var results []llm.ToolResult
+		for i := range count {
+			id := fmt.Sprintf("call-%d", i)
+			calls = append(calls, llm.ToolCall{ID: id, Name: "get_node_status", Arguments: json.RawMessage(`{}`)})
+			results = append(results, llm.ToolResult{CallID: id, Content: json.RawMessage(`{}`)})
+		}
+		return []llm.Message{
+			{Role: llm.RoleUser, Text: "status"},
+			{Role: llm.RoleAssistant, ToolCalls: calls},
+			{Role: llm.RoleTool, ToolResults: results},
+			{Role: llm.RoleAssistant, Text: "done"},
+		}
+	}
+	if _, _, err := encodeMessages(batch(maxStoredToolCallsPerMessage)); err != nil {
+		t.Fatalf("%d calls refused: %v", maxStoredToolCallsPerMessage, err)
+	}
+	if _, _, err := encodeMessages(batch(maxStoredToolCallsPerMessage + 1)); err == nil {
+		t.Fatal("too many calls accepted")
+	}
+	if maxStoredToolCallsPerMessage != 8 {
+		t.Fatalf("stored calls per message = %d, the agent runs 8 per answer", maxStoredToolCallsPerMessage)
 	}
 }

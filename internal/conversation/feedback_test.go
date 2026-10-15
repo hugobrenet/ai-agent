@@ -3,6 +3,7 @@ package conversation
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -67,5 +68,58 @@ func TestTurnSnapshotIsBounded(t *testing.T) {
 	}
 	if got := NewTurnSnapshot(turn, []llm.Message{{Role: llm.RoleUser, Text: "é" + strings.Repeat("x", maxSnapshotTextBytes)}}); !strings.HasSuffix(got.Question, "…") || !json.Valid([]byte(`"`+got.Question+`"`)) {
 		t.Fatalf("cut question = %q", got.Question)
+	}
+}
+
+func TestFeedbackContextFitsItsBudget(t *testing.T) {
+	names := func(count int) []string {
+		out := make([]string, count)
+		for i := range out {
+			out[i] = fmt.Sprintf("%0128d", i)
+		}
+		return out
+	}
+	run := TurnRun{AgentVersion: "v1", Model: "gpt", MCPServer: "om3-mcp", ToolSearch: true}
+	small := run
+	small.ShownTools = []string{"search_tools", "get_node_status"}
+	data, err := newFeedbackContext("om3", []TurnRun{small})
+	if err != nil || strings.Contains(string(data), "truncated") || !strings.Contains(string(data), "get_node_status") {
+		t.Fatalf("small context = %s, %v", data, err)
+	}
+
+	// Two runs of 256 names of 128 bytes exceed the budget: their shown
+	// tools are left out and counted.
+	big := run
+	big.ShownTools = names(256)
+	data, err = newFeedbackContext("om3", []TurnRun{big, big})
+	if err != nil || len(data) > MaxFeedbackContextBytes {
+		t.Fatalf("big context: %d bytes, %v", len(data), err)
+	}
+	var context FeedbackContext
+	if err := json.Unmarshal(data, &context); err != nil {
+		t.Fatal(err)
+	}
+	omitted := context.Runs[0].ShownToolsOmitted + context.Runs[1].ShownToolsOmitted
+	kept := len(context.Runs[0].ShownTools) + len(context.Runs[1].ShownTools)
+	if !context.Truncated || omitted == 0 || omitted+kept != 512 || context.Runs[0].ShownToolsOmitted != 256 {
+		t.Fatalf("context = truncated %v, kept %d, omitted %d", context.Truncated, kept, omitted)
+	}
+
+	// The runs of a long turn are left out between the first and the last.
+	long := make([]TurnRun, MaxTurnRuns)
+	for i := range long {
+		long[i] = run
+		long[i].AgentVersion = strings.Repeat("v", 200) + fmt.Sprint(i)
+		long[i].Model, long[i].MCPVersion, long[i].SystemPromptSHA256 = strings.Repeat("m", 256), strings.Repeat("x", 256), strings.Repeat("a", 64)
+	}
+	data, err = newFeedbackContext("om3", long)
+	if err != nil || len(data) > MaxFeedbackContextBytes {
+		t.Fatalf("long context: %d bytes, %v", len(data), err)
+	}
+	context = FeedbackContext{}
+	_ = json.Unmarshal(data, &context)
+	if !context.Truncated || context.RunsOmitted == 0 || len(context.Runs)+context.RunsOmitted != MaxTurnRuns ||
+		context.Runs[0].AgentVersion != long[0].AgentVersion || context.Runs[len(context.Runs)-1].AgentVersion != long[MaxTurnRuns-1].AgentVersion {
+		t.Fatalf("long context kept %d runs, omitted %d", len(context.Runs), context.RunsOmitted)
 	}
 }

@@ -357,7 +357,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 			err := errors.New("conversation turn both completed and suspended")
 			return errors.Join(err, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "agent_incomplete"))
 		}
-		return t.suspend(*result.Suspended, t.service.config.Agent.run(result.MCP), emit)
+		return t.suspend(*result.Suspended, t.service.config.Agent.run(result.MCP, result.Exposure), emit)
 	}
 	if completedEvent == nil {
 		err := errors.New("conversation turn completed without a completion event")
@@ -372,7 +372,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 	completeErr := t.service.store.CompleteTurn(
 		finalizeCtx, t.owner, t.conversationID, t.turnID, completedAt,
 		completedAt.Add(t.service.config.Lifetime), result.Messages,
-		t.service.config.Agent.run(result.MCP),
+		t.service.config.Agent.run(result.MCP, result.Exposure),
 	)
 	cancel()
 	if completeErr != nil {

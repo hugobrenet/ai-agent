@@ -42,7 +42,10 @@ type SuspendedTurn struct {
 	// Searches their count, for the resumed turn to see the same tools.
 	ActiveTools []string `json:"active_tools,omitempty"`
 	Searches    int      `json:"searches,omitempty"`
-	ToolTitle   string   `json:"tool_title"`
+	// ToolSearch tells that the turn searched the catalog: it keeps
+	// searching when it resumes, so that its planned search calls run.
+	ToolSearch bool   `json:"tool_search,omitempty"`
+	ToolTitle  string `json:"tool_title"`
 }
 
 // PendingCall returns the call waiting for confirmation.

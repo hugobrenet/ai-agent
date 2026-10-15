@@ -1,9 +1,8 @@
 package conversation
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/opensvc/ai-agent/internal/agent"
@@ -76,37 +75,47 @@ type Turn struct {
 const MaxTurnRuns = 32
 
 // TurnRun describes what executed a turn, or a part of it until a
-// confirmation: the agent, its model and system prompt, and the MCP server
-// with the hash of its tool catalog.
+// confirmation: the agent and its model, the hash of the system prompt
+// actually sent, the MCP server with the hash of its tool catalog, whether
+// the catalog was searched and the tools shown to the model.
 type TurnRun struct {
-	AgentVersion       string `json:"agent_version"`
-	Model              string `json:"model"`
-	SystemPromptSHA256 string `json:"system_prompt_sha256"`
-	MCPServer          string `json:"mcp_server"`
-	MCPVersion         string `json:"mcp_version"`
-	ToolsSHA256        string `json:"tools_sha256"`
+	AgentVersion       string   `json:"agent_version"`
+	Model              string   `json:"model"`
+	SystemPromptSHA256 string   `json:"system_prompt_sha256"`
+	MCPServer          string   `json:"mcp_server"`
+	MCPVersion         string   `json:"mcp_version"`
+	ToolsSHA256        string   `json:"tools_sha256"`
+	ToolSearch         bool     `json:"tool_search"`
+	ShownTools         []string `json:"shown_tools"`
+	// ShownToolsOmitted counts the tools shown left out of ShownTools.
+	ShownToolsOmitted int `json:"shown_tools_omitted,omitempty"`
 }
 
-// AgentInfo describes the agent of a backend: its version, its model and a
-// hash of its system prompt.
+// Equal tells whether two runs describe the same execution context.
+func (r TurnRun) Equal(other TurnRun) bool {
+	return r.AgentVersion == other.AgentVersion && r.Model == other.Model && r.SystemPromptSHA256 == other.SystemPromptSHA256 &&
+		r.MCPServer == other.MCPServer && r.MCPVersion == other.MCPVersion && r.ToolsSHA256 == other.ToolsSHA256 &&
+		r.ToolSearch == other.ToolSearch && slices.Equal(r.ShownTools, other.ShownTools) && r.ShownToolsOmitted == other.ShownToolsOmitted
+}
+
+// AgentInfo describes the agent of a backend: its version and its model.
 type AgentInfo struct {
-	Version            string
-	Model              string
-	SystemPromptSHA256 string
+	Version string
+	Model   string
 }
 
-// NewAgentInfo describes the agent of a backend; only a hash of its system
-// prompt is kept.
-func NewAgentInfo(version string, model string, systemPrompt string) AgentInfo {
-	sum := sha256.Sum256([]byte(systemPrompt))
-	return AgentInfo{Version: version, Model: model, SystemPromptSHA256: hex.EncodeToString(sum[:])}
+// NewAgentInfo describes the agent of a backend.
+func NewAgentInfo(version string, model string) AgentInfo {
+	return AgentInfo{Version: version, Model: model}
 }
 
-// run describes an execution of a turn by this agent on an MCP server.
-func (a AgentInfo) run(mcp agent.MCPServer) TurnRun {
+// run describes an execution of a turn by this agent, as the agent reported
+// it: the MCP server and what the model was given.
+func (a AgentInfo) run(mcp agent.MCPServer, exposure agent.Exposure) TurnRun {
 	return TurnRun{
-		AgentVersion: a.Version, Model: a.Model, SystemPromptSHA256: a.SystemPromptSHA256,
+		AgentVersion: a.Version, Model: a.Model, SystemPromptSHA256: exposure.SystemPromptSHA256,
 		MCPServer: mcp.Name, MCPVersion: mcp.Version, ToolsSHA256: mcp.ToolsSHA256,
+		ToolSearch: exposure.ToolSearch, ShownTools: exposure.ShownTools,
 	}
 }
 

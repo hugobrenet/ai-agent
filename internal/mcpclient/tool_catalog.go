@@ -8,9 +8,13 @@ import (
 )
 
 const (
-	maxMCPToolCount           = 128
+	// The catalog the MCP may list: the agent shows the model a part of
+	// it when it is large, searching the rest. The MCP SDK lists up to
+	// 1000 tools per page, so that a whole catalog may come in one response:
+	// it is bounded as one response.
+	maxMCPToolCount           = 1024
 	maxMCPToolDefinitionBytes = 512 << 10
-	maxMCPToolCatalogBytes    = 4 << 20
+	maxMCPToolCatalogBytes    = int(maxMCPResponseBodyBytes)
 )
 
 type toolCatalog struct {
