@@ -36,6 +36,7 @@ type AskUsage struct {
 type AskEvent struct {
 	Type         string           `json:"type"`
 	Iteration    int              `json:"iteration,omitempty"`
+	TurnID       string           `json:"turn_id,omitempty"`
 	TextDelta    string           `json:"text_delta,omitempty"`
 	ToolName     string           `json:"tool_name,omitempty"`
 	ToolError    *bool            `json:"tool_error,omitempty"`
@@ -345,6 +346,7 @@ func newAskEvent(event agent.Event) AskEvent {
 		}
 	case agent.EventCompleted:
 		streamEvent.FinishReason = string(event.FinishReason)
+		streamEvent.TurnID = event.TurnID
 	case agent.EventConfirmationRequired:
 		c := event.Confirmation
 		streamEvent.Confirmation = &AskConfirmation{

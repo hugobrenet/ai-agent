@@ -118,7 +118,8 @@ readable without a schema change. Metadata routes and SSE remain unchanged.
 Under each assistant answer, offer 👍 and 👎. After a 👎, offer the optional
 reasons and a free text field "What did you expect?", then send them with
 `PUT /v1/om3/conversations/{id}/turns/{turn_id}/feedback`, using the
-`turn_id` of the message:
+`turn_id` of the message, or of the `completed` event for an answer just
+streamed:
 
 | Reason | Code |
 |---|---|

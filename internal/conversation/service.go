@@ -378,6 +378,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 	if completeErr != nil {
 		return errors.Join(completeErr, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "persistence_failed"))
 	}
+	completedEvent.TurnID = t.turnID
 	if err := emit(*completedEvent); err != nil {
 		return fmt.Errorf("emit committed conversation completion: %w", err)
 	}
