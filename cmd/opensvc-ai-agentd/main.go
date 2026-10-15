@@ -88,7 +88,7 @@ func main() {
 		}
 		backend, service, err := newBackend(spec, model, conversationStore, agent.Config{
 			SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout,
-			SearchThreshold: agentConfig.SearchThreshold, CoreTools: spec.coreTools,
+			SearchThreshold: agentConfig.SearchThreshold, SearchScoreRatio: agentConfig.SearchScoreRatio, CoreTools: spec.coreTools,
 		}, serviceConfig)
 		if err != nil {
 			cancelStartup()

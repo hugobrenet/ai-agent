@@ -143,11 +143,19 @@ to 512 UTF-8 bytes (its schema can only state 512 characters as
 `maxLength`), its first 32 distinct terms are searched, and a query without
 a searchable term is refused. The agent ranks the catalog with BM25 over the name, title,
 description, parameters and `opensvc/keywords` metadata of each tool, and
-returns the best tools with the first sentence of their description; they
-are shown from the next model call of the turn. When the tools shown would
+returns the best tools with the first sentence of their description. Those
+scoring at least `OPENSVC_AI_TOOL_SEARCH_SCORE_RATIO` (0.30 by default, an
+experimental value) of the best score of the search are shown from the next
+model call of the turn; the others are listed with `shown` false and
+`reason` `low_score`. BM25 scores compare within one search only, hence a
+ratio rather than an absolute score. A tool already shown stays shown. A
+query naming a tool of the catalog exactly returns that tool alone, marked
+`exact`, without a BM25 ranking, and shows it within the budget, never
+removing a core tool for it: the way to show a tool listed but not shown. A ratio of `0` shows every
+result. When the tools shown would
 exceed the size of a model request, the oldest tools that are not core make
 room, those of the history first; a tool that still does not fit is
-returned with `shown` false. A turn runs at most 3
+returned with `shown` false and `reason` `budget`. A turn runs at most 3
 valid searches, counted in its tool calls; a refused search is a tool error
 for the model and does not count. A turn suspended while searching keeps
 searching when it resumes. A tool of the catalog the model calls without having been shown it

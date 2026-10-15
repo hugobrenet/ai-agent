@@ -78,3 +78,27 @@ func TestLoadAgentToolSearchThreshold(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAgentToolSearchScoreRatio(t *testing.T) {
+	for value, want := range map[string]float64{"": 0, "0.3": 0.3, "0.2": 0.2, "1": 1, "0": -1} {
+		config, err := loadAgent(func(key string) string {
+			if key == "OPENSVC_AI_TOOL_SEARCH_SCORE_RATIO" {
+				return value
+			}
+			return ""
+		})
+		if err != nil || config.SearchScoreRatio != want {
+			t.Fatalf("ratio %q = %v, %v", value, config.SearchScoreRatio, err)
+		}
+	}
+	for _, value := range []string{"-0.1", "1.5", "NaN", "many"} {
+		if _, err := loadAgent(func(key string) string {
+			if key == "OPENSVC_AI_TOOL_SEARCH_SCORE_RATIO" {
+				return value
+			}
+			return ""
+		}); err == nil {
+			t.Fatalf("ratio %q accepted", value)
+		}
+	}
+}

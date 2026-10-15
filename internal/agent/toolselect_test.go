@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -442,7 +443,8 @@ func TestASearchMakesRoomForTheToolsFound(t *testing.T) {
 		t.Fatal(err)
 	}
 	found = string(result.Messages[2].ToolResults[0].Content)
-	if !strings.Contains(found, `\"name\":\"fifth\"`) || !strings.Contains(found, `\"shown\":false`) || !strings.Contains(found, "cannot be shown") {
+	if !strings.Contains(found, `\"name\":\"fifth\"`) || !strings.Contains(found, `\"shown\":false`) || !strings.Contains(found, "cannot be shown") ||
+		!strings.Contains(found, `\"reason\":\"budget\"`) || strings.Contains(found, "low_score") {
 		t.Fatalf("found without room = %s", found)
 	}
 }
@@ -504,4 +506,202 @@ func mustIndex(t *testing.T) *toolsearch.Index {
 		t.Fatal(err)
 	}
 	return index
+}
+
+// filterCatalog gives clearly ordered scores for the query "node hardware
+// inventory": the hardware tool first, the disks tool far behind.
+func filterCatalog() []*mcp.Tool {
+	tool := func(name, description string) *mcp.Tool {
+		return &mcp.Tool{Name: name, Description: description, InputSchema: objectSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}
+	}
+	return []*mcp.Tool{
+		tool("get_cluster_status", "The status of the cluster."),
+		tool("list_node_hardware", "The hardware inventory of a node: node hardware, PCI devices and memory banks of the node hardware inventory."),
+		tool("list_node_disks", "The disks a node sees, with their size."),
+		tool("list_node_packages", "The packages installed."),
+		tool("get_node_san_topology", "The fibre channel paths."),
+	}
+}
+
+func newTestSelection(t *testing.T, tools []*mcp.Tool, ratio float64) (*toolSelection, map[string]string) {
+	t.Helper()
+	converted, _, err := convertTools(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{config: Config{SearchThreshold: 1, SearchScoreRatio: ratio, CoreTools: []string{"get_cluster_status"}}, indexes: &indexCache{}}
+	hash, _ := toolCatalogHash(tools)
+	selection, err := agent.selectTools(tools, converted, hash, nil, &SuspendedTurn{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	titles := map[string]string{}
+	return selection, titles
+}
+
+type searchResponse struct {
+	Tools []searchMatch `json:"tools"`
+	Hint  string        `json:"hint"`
+	raw   string
+}
+
+func runSearch(t *testing.T, selection *toolSelection, titles map[string]string, arguments string) searchResponse {
+	t.Helper()
+	result := selection.run(llm.ToolCall{ID: "s", Name: SearchToolName, Arguments: json.RawMessage(arguments)}, titles)
+	if result.IsError {
+		t.Fatalf("search refused: %s", result.Content)
+	}
+	var envelope struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	_ = json.Unmarshal(result.Content, &envelope)
+	var response searchResponse
+	if err := json.Unmarshal([]byte(envelope.Content[0].Text), &response); err != nil {
+		t.Fatal(err)
+	}
+	response.raw = envelope.Content[0].Text
+	return response
+}
+
+func TestSearchShowsOnlyTheResultsNearTheBestScore(t *testing.T) {
+	selection, titles := newTestSelection(t, filterCatalog(), 0)
+	response := runSearch(t, selection, titles, `{"query":"node hardware inventory disks"}`)
+	scores := map[string]searchMatch{}
+	for _, match := range response.Tools {
+		scores[match.Name] = match
+	}
+	best := response.Tools[0]
+	if best.Name != "list_node_hardware" || !best.Shown || best.Reason != "" {
+		t.Fatalf("best = %+v", best)
+	}
+	for _, match := range response.Tools[1:] {
+		wantShown := *match.Score >= DefaultSearchScoreRatio**best.Score
+		if match.Shown != wantShown || (!match.Shown && match.Reason != "low_score") {
+			t.Errorf("%s: score %v of %v, shown %v, reason %q", match.Name, *match.Score, *best.Score, match.Shown, match.Reason)
+		}
+	}
+	for _, match := range response.Tools {
+		if match.Score == nil || match.Exact {
+			t.Fatalf("a search result without its score: %+v", match)
+		}
+	}
+	if !slices.ContainsFunc(response.Tools, func(match searchMatch) bool { return match.Reason == "low_score" }) {
+		t.Fatalf("no result was filtered: %+v", response.Tools)
+	}
+	if !strings.Contains(response.Hint, "exact name") || strings.Contains(response.Hint, "exceed") {
+		t.Fatalf("hint = %q", response.Hint)
+	}
+	// The results filtered stay listed with their summary, never shown.
+	for _, match := range response.Tools {
+		if match.Summary == "" || slices.Contains(selection.active, match.Name) != match.Shown {
+			t.Fatalf("match %+v, active %v", match, selection.active)
+		}
+	}
+}
+
+func TestSearchingAnExactNameShowsAFilteredTool(t *testing.T) {
+	selection, titles := newTestSelection(t, filterCatalog(), 0)
+	first := runSearch(t, selection, titles, `{"query":"node hardware inventory disks"}`)
+	var filtered string
+	for _, match := range first.Tools {
+		if match.Reason == "low_score" {
+			filtered = match.Name
+			break
+		}
+	}
+	if filtered == "" {
+		t.Fatal("nothing filtered")
+	}
+	second := runSearch(t, selection, titles, `{"query":"`+filtered+`"}`)
+	shown := slices.IndexFunc(second.Tools, func(match searchMatch) bool { return match.Name == filtered })
+	if shown < 0 || !second.Tools[shown].Shown || !slices.Contains(selection.active, filtered) {
+		t.Fatalf("exact name search = %+v", second.Tools)
+	}
+}
+
+func TestSearchNeverHidesAToolAlreadyShown(t *testing.T) {
+	selection, titles := newTestSelection(t, filterCatalog(), 0)
+	// The core tool matches "status" weakly beside a strong hardware match.
+	response := runSearch(t, selection, titles, `{"query":"node hardware inventory status"}`)
+	for _, match := range response.Tools {
+		if match.Name == "get_cluster_status" && (!match.Shown || match.Reason != "") {
+			t.Fatalf("the core tool was hidden: %+v", match)
+		}
+	}
+	if !slices.Contains(selection.active, "get_cluster_status") {
+		t.Fatal("the core tool left the active set")
+	}
+}
+
+func TestANegativeRatioShowsEveryResult(t *testing.T) {
+	selection, titles := newTestSelection(t, filterCatalog(), -1)
+	response := runSearch(t, selection, titles, `{"query":"node hardware inventory disks"}`)
+	for _, match := range response.Tools {
+		if !match.Shown || match.Reason != "" {
+			t.Fatalf("filtered without a ratio: %+v", match)
+		}
+	}
+	if selection.scoreRatio != 0 {
+		t.Fatalf("ratio = %v", selection.scoreRatio)
+	}
+}
+
+func TestTheRatioIsRecordedInTheExposure(t *testing.T) {
+	for ratio, want := range map[float64]float64{0: DefaultSearchScoreRatio, 0.2: 0.2, -1: 0} {
+		model := &scriptedLLM{t: t, steps: []llmStep{textStep("ok")}}
+		result, err := searchAgent(t, model, &fakeSession{tools: searchCatalog()}, Config{SearchScoreRatio: ratio}).RunTurn(t.Context(), nil, "x", func(Event) error { return nil })
+		if err != nil || result.Exposure.SearchScoreRatio != want {
+			t.Fatalf("ratio %v: exposure %+v, %v", ratio, result.Exposure, err)
+		}
+	}
+}
+
+// A tool asked by its exact name is returned alone and shown, whatever its
+// rank among the tools of the catalog, even past the results of a search
+// or with a name made of stop words only.
+func TestAnExactNameIsFoundWhateverItsRank(t *testing.T) {
+	tool := func(name, description string) *mcp.Tool {
+		return &mcp.Tool{Name: name, Description: description, InputSchema: objectSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}
+	}
+	catalog := []*mcp.Tool{tool("get_cluster_status", "The status of the cluster.")}
+	// Sixty tools match the words of the name better than the tool itself.
+	for i := range 60 {
+		catalog = append(catalog, tool(fmt.Sprintf("list_node_item_%02d", i), "List node items: node item list, node item list, node item list."))
+	}
+	catalog = append(catalog, tool("list_node_item", "Rarely needed."), tool("to_the_of", "A tool named with stop words."))
+	for _, name := range []string{"list_node_item", "to_the_of"} {
+		selection, titles := newTestSelection(t, catalog, 0)
+		response := runSearch(t, selection, titles, `{"query":" `+name+` ","limit":1}`)
+		if len(response.Tools) != 1 || response.Tools[0].Name != name || !response.Tools[0].Exact || !response.Tools[0].Shown || !slices.Contains(selection.active, name) {
+			t.Fatalf("%s: response = %+v", name, response.Tools)
+		}
+		if response.Tools[0].Score != nil || strings.Contains(response.raw, `"score"`) {
+			t.Fatalf("%s: an exact name carries a score: %s", name, response.raw)
+		}
+		if selection.searches != 1 {
+			t.Fatalf("%s: searches = %d", name, selection.searches)
+		}
+	}
+}
+
+// An exact name returns one tool even with a larger limit, and its own
+// search never removes it to make room for others.
+func TestAnExactNameIsReturnedAloneAndKept(t *testing.T) {
+	big := func(name string) *mcp.Tool {
+		return &mcp.Tool{Name: name, Description: name + " tool.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+			InputSchema: map[string]any{"type": "object", "description": strings.Repeat("s", 220<<10)}}
+	}
+	catalog := []*mcp.Tool{big("first"), big("second"), big("third"), big("fourth"), big("fifth")}
+	catalog[0].Meta = mcp.Meta{CoreToolMeta: true}
+	selection, titles := newTestSelection(t, catalog, 0)
+	// Three tools found earlier fill the budget beside the core tool.
+	for _, name := range []string{"second", "third", "fourth"} {
+		selection.add(name)
+	}
+	response := runSearch(t, selection, titles, `{"query":"fifth","limit":10}`)
+	if len(response.Tools) != 1 || !response.Tools[0].Shown || !slices.Contains(selection.active, "fifth") || !slices.Contains(selection.active, "first") {
+		t.Fatalf("response = %+v, active = %v", response.Tools, selection.active)
+	}
 }
