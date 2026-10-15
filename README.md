@@ -124,6 +124,19 @@ The [client API](docs/api.md) lists the routes of each backend and how they
 authenticate. Browser clients, such as the webapp, also follow the
 [browser client guide](docs/webapp.md).
 
+## Development
+
+```bash
+go fmt ./...
+go test ./...
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+```
+
+The CI runs the same checks, plus module verification and a race-enabled test
+run. `internal/llm/staticcheck.conf` keeps the capital letter of the provider
+API names that start its error messages.
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
