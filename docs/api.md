@@ -130,7 +130,8 @@ one model request (1 MiB), the model does not see them all. A threshold of
 1024 tools and 4 MiB, the size of one MCP response. It sees `search_tools`, a tool of the agent, and an active set:
 
 - the core tools: those the MCP marks with `"opensvc/core": true` in their
-  `_meta`, else the default list of the backend;
+  `_meta`. om3-mcp and oc3-mcp mark their own; the agent holds no list of
+  them;
 - the tools called in the recent history of the conversation, at most 8;
 - the tools its searches found during the turn.
 

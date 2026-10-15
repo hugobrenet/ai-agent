@@ -64,12 +64,12 @@ func main() {
 	}
 	// om3 is always served; oc3 only when its MCP socket is configured.
 	specs := []backendSpec{{
-		name: "om3", socketPath: mcpConfig.OM3SocketPath, systemPrompt: om3.SystemPrompt, coreTools: om3.CoreTools, newMCPClient: om3.NewMCPClient,
+		name: "om3", socketPath: mcpConfig.OM3SocketPath, systemPrompt: om3.SystemPrompt, newMCPClient: om3.NewMCPClient,
 		newAuthenticator: func(client *mcpclient.Client) api.Authenticator { return om3.NewAuthenticator(client) },
 	}}
 	if mcpConfig.OC3SocketPath != "" {
 		specs = append(specs, backendSpec{
-			name: "oc3", socketPath: mcpConfig.OC3SocketPath, systemPrompt: oc3.SystemPrompt, coreTools: oc3.CoreTools, newMCPClient: oc3.NewMCPClient,
+			name: "oc3", socketPath: mcpConfig.OC3SocketPath, systemPrompt: oc3.SystemPrompt, newMCPClient: oc3.NewMCPClient,
 			newAuthenticator: func(client *mcpclient.Client) api.Authenticator { return oc3.NewAuthenticator(client) },
 		})
 	}
@@ -88,7 +88,7 @@ func main() {
 		}
 		backend, service, err := newBackend(spec, model, conversationStore, agent.Config{
 			SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout,
-			SearchThreshold: agentConfig.SearchThreshold, SearchScoreRatio: agentConfig.SearchScoreRatio, CoreTools: spec.coreTools,
+			SearchThreshold: agentConfig.SearchThreshold, SearchScoreRatio: agentConfig.SearchScoreRatio,
 		}, serviceConfig)
 		if err != nil {
 			cancelStartup()
@@ -169,7 +169,6 @@ type backendSpec struct {
 	name             string
 	socketPath       string
 	systemPrompt     string
-	coreTools        []string
 	newMCPClient     func(string) (*mcpclient.Client, error)
 	newAuthenticator func(*mcpclient.Client) api.Authenticator
 }
