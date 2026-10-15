@@ -82,7 +82,7 @@ func testClientListsAndCallsToolsWithDelegatedJWT(t *testing.T, clusterID, node 
 	}
 }
 
-func TestClientRejectsMissingDelegatedJWT(t *testing.T) {
+func TestClientRejectsMissingAccessToken(t *testing.T) {
 	var requestCount atomic.Int64
 	endpoint := serveUnix(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		requestCount.Add(1)
@@ -92,8 +92,8 @@ func TestClientRejectsMissingDelegatedJWT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create MCP client: %v", err)
 	}
-	if _, err := client.Connect(t.Context()); err == nil || !strings.Contains(err.Error(), "JWT is missing") {
-		t.Fatalf("connect error = %v, want missing JWT", err)
+	if _, err := client.Connect(t.Context()); err == nil || !strings.Contains(err.Error(), "access token of the user is missing") {
+		t.Fatalf("connect error = %v, want a missing access token", err)
 	}
 	if requestCount.Load() != 0 {
 		t.Fatalf("server received %d requests without a JWT", requestCount.Load())
@@ -152,7 +152,7 @@ func TestClientDoesNotExposeJWTInErrors(t *testing.T) {
 	}
 }
 
-func TestSessionRequiresJWTOnEveryOperation(t *testing.T) {
+func TestSessionRequiresTheAccessTokenOnEveryOperation(t *testing.T) {
 	const token = "delegated-test-token"
 	server := mcp.NewServer(&mcp.Implementation{Name: "test-mcp", Version: "v0.1.0"}, nil)
 	streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
@@ -176,8 +176,8 @@ func TestSessionRequiresJWTOnEveryOperation(t *testing.T) {
 	t.Cleanup(func() { _ = session.Close() })
 
 	_, err = session.ListTools(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "JWT is missing") {
-		t.Fatalf("list tools error = %v, want missing JWT", err)
+	if err == nil || !strings.Contains(err.Error(), "access token of the user is missing") {
+		t.Fatalf("list tools error = %v, want a missing access token", err)
 	}
 }
 
