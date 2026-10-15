@@ -13,13 +13,15 @@ type contextWithoutAuthentication struct {
 	context.Context
 }
 
-// WithBearerToken returns a context carrying a delegated OpenSVC access JWT.
+// WithBearerToken returns a context carrying the user's OpenID Connect access
+// token, opaque to the agent.
 // Callers must keep the returned context scoped to a single agent request.
 func WithBearerToken(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, bearerTokenContextKey{}, token)
 }
 
-// BearerTokenFromContext returns the delegated OpenSVC access JWT.
+// BearerTokenFromContext returns the user's OpenID Connect access token,
+// opaque to the agent.
 func BearerTokenFromContext(ctx context.Context) (string, bool) {
 	token, ok := ctx.Value(bearerTokenContextKey{}).(string)
 	return token, ok && token != ""

@@ -34,7 +34,7 @@ const (
 )
 
 // New creates an MCP client over the trusted local Unix socket. MCP accepts
-// delegated OpenSVC tokens only there; filesystem permissions protect it.
+// the users' OpenID Connect access tokens only there; filesystem permissions protect it.
 // forwardedHeaders names the headers of the backend this MCP serves: the
 // client sends them only as the request context carries them.
 func New(socketPath string, forwardedHeaders ...string) (*Client, error) {
@@ -72,7 +72,8 @@ func securedHTTPClient(base *http.Client, origin string, forwardedHeaders []stri
 	return &clientCopy
 }
 
-// Connect initializes an MCP session using the delegated JWT in ctx.
+// Connect initializes an MCP session using the user's OpenID Connect access
+// token in ctx, opaque to the agent.
 func (c *Client) Connect(ctx context.Context) (*Session, error) {
 	if _, ok := auth.BearerTokenFromContext(ctx); !ok {
 		return nil, fmt.Errorf("connect MCP: delegated OpenSVC access JWT is missing from request context")

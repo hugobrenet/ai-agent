@@ -798,7 +798,7 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "The access token of the user, in `Authorization: Bearer <token>` only: never in the query string or a cookie. `om3`: a token issued by the daemon or an OpenID Connect token the daemon trusts, with the `X-OpenSVC-Cluster-ID` header of the cluster that verifies it. `oc3`: the OpenID Connect access token of the collector user, and no other header."
+        "description": "The access token of the user, in `Authorization: Bearer <token>` only: never in the query string or a cookie. `om3`: the OpenID Connect access token of the user, with the `X-OpenSVC-Cluster-ID` header of the target cluster and, optionally, the `X-OpenSVC-Node` header; a token issued by the daemon is refused. `oc3`: the OpenID Connect access token of the collector user, and no other header."
       }
     },
     "parameters": {
