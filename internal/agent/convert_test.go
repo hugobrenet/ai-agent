@@ -82,3 +82,90 @@ func modelCatalogTools() []*mcp.Tool {
 	}
 	return tools
 }
+
+// decodedResult decodes a tool result as the MCP client does.
+func decodedResult(t *testing.T, wire string) *mcp.CallToolResult {
+	t.Helper()
+	var result mcp.CallToolResult
+	if err := json.Unmarshal([]byte(wire), &result); err != nil {
+		t.Fatal(err)
+	}
+	return &result
+}
+
+func TestEncodeToolResultSendsADuplicatedStructuredContentOnce(t *testing.T) {
+	// The server writes its fields in struct order; the client decodes the
+	// structured content into a map whose keys sort otherwise.
+	text := `{"node":"dev5n1","count":2,"disks":[{"id":"vda","size_bytes":53687091200},{"id":"vdb","size_bytes":21474836480}],"ratio":0.5,"ok":true,"none":null}`
+	wire, _ := json.Marshal(map[string]any{
+		"content":           []map[string]any{{"type": "text", "text": text}},
+		"structuredContent": json.RawMessage(text),
+	})
+	encoded, err := encodeToolResult(decodedResult(t, string(wire)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"content":[],"structuredContent":` + text + `}`; string(encoded) != want {
+		t.Fatalf("encoded = %s\nwant      %s", encoded, want)
+	}
+}
+
+func TestEncodeToolResultKeepsBothFormsUnlessExactlyDuplicated(t *testing.T) {
+	structured := `{"node":"dev5n1","count":2}`
+	result := func(contents string, structured string, isError bool) string {
+		wire := `{"content":` + contents + `,"structuredContent":` + structured
+		if isError {
+			wire += `,"isError":true`
+		}
+		return wire + `}`
+	}
+	textOf := func(text string) string {
+		quoted, _ := json.Marshal(text)
+		return `{"type":"text","text":` + string(quoted) + `}`
+	}
+	for name, wire := range map[string]string{
+		"different text":   result(`[`+textOf(`{"node":"dev5n2","count":2}`)+`]`, structured, false),
+		"plain text":       result(`[`+textOf(`2 nodes`)+`]`, structured, false),
+		"several contents": result(`[`+textOf(structured)+`,`+textOf(structured)+`]`, structured, false),
+		"annotations":      result(`[{"type":"text","text":`+string(must(json.Marshal(structured)))+`,"annotations":{"priority":1}}]`, structured, false),
+		"metadata":         result(`[{"type":"text","text":`+string(must(json.Marshal(structured)))+`,"_meta":{"k":"v"}}]`, structured, false),
+		"trailing text":    result(`[`+textOf(structured+` {}`)+`]`, structured, false),
+		// The decoded structured content lost the last digits of the integer:
+		// the text alone holds it exactly.
+		"large integer": result(`[`+textOf(`{"id":12345678901234567890}`)+`]`, `{"id":12345678901234567890}`, false),
+		"exponent":      result(`[`+textOf(`{"size":1e3}`)+`]`, `{"size":1e3}`, false),
+	} {
+		decoded := decodedResult(t, wire)
+		encoded, err := encodeToolResult(decoded)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var payload struct {
+			Content           []json.RawMessage `json:"content"`
+			StructuredContent json.RawMessage   `json:"structuredContent"`
+		}
+		if err := json.Unmarshal(encoded, &payload); err != nil || len(payload.Content) == 0 || len(payload.StructuredContent) == 0 {
+			t.Fatalf("%s: one form was dropped: %s", name, encoded)
+		}
+		if len(decoded.Content) == 0 {
+			t.Fatalf("%s: the MCP result was changed", name)
+		}
+	}
+	// An error result holds its message as text, without structured content.
+	encoded, err := encodeToolResult(decodedResult(t, `{"content":[`+textOf("node not found")+`],"isError":true}`))
+	if err != nil || !strings.Contains(string(encoded), "node not found") {
+		t.Fatalf("error result = %s, %v", encoded, err)
+	}
+	// The duplicate is dropped only from the payload, never from the result.
+	duplicated := decodedResult(t, result(`[`+textOf(structured)+`]`, structured, false))
+	if _, err := encodeToolResult(duplicated); err != nil || len(duplicated.Content) != 1 {
+		t.Fatalf("the MCP result was changed: %+v, %v", duplicated, err)
+	}
+}
+
+func must(data []byte, err error) []byte {
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
