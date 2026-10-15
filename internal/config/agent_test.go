@@ -54,3 +54,27 @@ func TestLoadAgentRejectsInvalidMaxIterations(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAgentToolSearchThreshold(t *testing.T) {
+	for value, want := range map[string]int{"": 0, "40": 40, "-1": -1, "1024": 1024} {
+		config, err := loadAgent(func(key string) string {
+			if key == "OPENSVC_AI_TOOL_SEARCH_THRESHOLD" {
+				return value
+			}
+			return ""
+		})
+		if err != nil || config.SearchThreshold != want {
+			t.Fatalf("threshold %q = %d, %v", value, config.SearchThreshold, err)
+		}
+	}
+	for _, value := range []string{"0", "-2", "1025", "many"} {
+		if _, err := loadAgent(func(key string) string {
+			if key == "OPENSVC_AI_TOOL_SEARCH_THRESHOLD" {
+				return value
+			}
+			return ""
+		}); err == nil {
+			t.Fatalf("threshold %q accepted", value)
+		}
+	}
+}

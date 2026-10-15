@@ -38,7 +38,11 @@ type SuspendedTurn struct {
 	Text           string           `json:"text"`
 	Calls          []llm.ToolCall   `json:"calls"`
 	Results        []llm.ToolResult `json:"results"`
-	ToolTitle      string           `json:"tool_title"`
+	// ActiveTools are the tools the searches of the turn found, and
+	// Searches their count, for the resumed turn to see the same tools.
+	ActiveTools []string `json:"active_tools,omitempty"`
+	Searches    int      `json:"searches,omitempty"`
+	ToolTitle   string   `json:"tool_title"`
 }
 
 // PendingCall returns the call waiting for confirmation.
@@ -58,6 +62,9 @@ func (s SuspendedTurn) validate(maxIterations int) error {
 	}
 	if len(s.Calls) == 0 || len(s.Calls) > maxToolCallsPerTurn || len(s.Results) >= len(s.Calls) {
 		return fmt.Errorf("suspended turn has no pending tool call")
+	}
+	if s.Searches < 0 || s.Searches > maxSearchesPerTurn || len(s.ActiveTools) > maxModelTools {
+		return fmt.Errorf("suspended turn tool search state is out of range")
 	}
 	if s.TotalToolCalls < len(s.Calls) || s.TotalToolCalls > maxToolCallsPerAsk {
 		return fmt.Errorf("suspended turn tool call count %d is out of range", s.TotalToolCalls)

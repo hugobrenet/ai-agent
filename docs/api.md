@@ -121,7 +121,29 @@ server-sent events. Only one turn runs at a time in a conversation.
   from its creation and then from its last completed turn; an expired
   conversation returns 410.
 
-## Feedback
+## Tool search
+
+When the MCP of a backend lists more tools than
+`OPENSVC_AI_TOOL_SEARCH_THRESHOLD` (20 by default), the model does not see
+them all. It sees `search_tools`, a tool of the agent, and an active set:
+
+- the core tools: those the MCP marks with `"opensvc/core": true` in their
+  `_meta`, else the default list of the backend;
+- the tools called in the recent history of the conversation, at most 8;
+- the tools its searches found during the turn.
+
+`search_tools` takes English keywords and an optional limit (5 by default,
+10 at most). The agent ranks the catalog with BM25 over the name, title,
+description, parameters and `opensvc/keywords` metadata of each tool, and
+returns the best tools with the first sentence of their description; they
+are shown from the next model call of the turn. A turn runs at most 3
+searches, counted in its tool calls; a refused search is a tool error for the
+model. A tool of the catalog the model calls without having been shown it
+runs as any other, with its annotations and confirmation. The searches are
+stored with the tool calls of the turn, so that a feedback shows them, and
+a turn resumed after a confirmation sees the tools it found.
+
+
 
 The user rates a completed turn, to help review and improve the tools and the
 prompts. `PUT …/turns/{turn_id}/feedback` takes:
