@@ -90,6 +90,7 @@ webapp origins, or `*` to allow all origins. Empty by default. See the
 | `OPENSVC_AI_SHUTDOWN_TIMEOUT` | `30s` | `1s` to `5m` |
 | `OPENSVC_AI_AGENT_MAX_ITERATIONS` | `8` | 1 to 32 |
 | `OPENSVC_AI_AGENT_TIMEOUT` | `5m` | `1s` to `30m` |
+| `OPENSVC_AI_TOOL_SEARCH_THRESHOLD` | `20` | `1` to `1024`, or `-1` to never search |
 | `OPENSVC_AI_LLM_TIMEOUT` | `2m` | any positive duration |
 | `OPENSVC_AI_LLM_MAX_OUTPUT_TOKENS` | `4096` | 1 to 131072 |
 

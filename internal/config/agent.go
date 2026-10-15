@@ -14,11 +14,15 @@ const (
 	DefaultAgentTimeout       = 5 * time.Minute
 	minimumAgentTimeout       = time.Second
 	maximumAgentTimeout       = 30 * time.Minute
+	maximumSearchThreshold    = 1024
 )
 
 type AgentConfig struct {
 	MaxIterations int
 	Timeout       time.Duration
+	// SearchThreshold is the largest MCP catalog shown whole to the model;
+	// 0 keeps the default of the agent, a negative value never searches.
+	SearchThreshold int
 }
 
 func LoadAgent() (AgentConfig, error) {
@@ -45,6 +49,13 @@ func loadAgent(getenv func(string) string) (AgentConfig, error) {
 			)
 		}
 		config.Timeout = timeout
+	}
+	if value := strings.TrimSpace(getenv("OPENSVC_AI_TOOL_SEARCH_THRESHOLD")); value != "" {
+		threshold, err := strconv.Atoi(value)
+		if err != nil || threshold < -1 || threshold == 0 || threshold > maximumSearchThreshold {
+			return AgentConfig{}, fmt.Errorf("parse OPENSVC_AI_TOOL_SEARCH_THRESHOLD %q: expected an integer between 1 and %d, or -1 to never search", value, maximumSearchThreshold)
+		}
+		config.SearchThreshold = threshold
 	}
 	return config, nil
 }

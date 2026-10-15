@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,12 +29,21 @@ type Config struct {
 	SystemPrompt  string
 	MaxIterations int
 	Timeout       time.Duration
+	// SearchThreshold is the largest MCP catalog shown whole to the model;
+	// beyond, it sees the core tools and searches the others with
+	// search_tools. 0 means DefaultSearchThreshold, a negative value never
+	// searches.
+	SearchThreshold int
+	// CoreTools are the tools always shown when the MCP marks none with
+	// CoreToolMeta.
+	CoreTools []string
 }
 
 type Agent struct {
 	llm        llm.Client
 	connectMCP MCPConnectFunc
 	config     Config
+	indexes    *indexCache
 }
 
 // TurnResult contains the provider-neutral messages produced by one completed
@@ -73,7 +83,7 @@ func New(llmClient llm.Client, connectMCP MCPConnectFunc, config Config) (*Agent
 	if config.Timeout <= 0 {
 		return nil, fmt.Errorf("agent timeout must be positive")
 	}
-	return &Agent{llm: llmClient, connectMCP: connectMCP, config: config}, nil
+	return &Agent{llm: llmClient, connectMCP: connectMCP, config: config, indexes: &indexCache{}}, nil
 }
 
 // RunTurn executes one user turn after a complete provider-neutral history.
@@ -144,11 +154,21 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		return result, err
 	}
 	toolsByName := make(map[string]*mcp.Tool, len(mcpTools))
+	titles := make(map[string]string, len(mcpTools))
 	for _, tool := range mcpTools {
 		toolsByName[tool.Name] = tool
+		titles[tool.Name] = toolTitle(tool)
+	}
+	selection, err := a.selectTools(mcpTools, tools, result.MCP.ToolsSHA256, history, state)
+	if err != nil {
+		return result, err
+	}
+	systemPrompt := a.config.SystemPrompt
+	if selection.search {
+		systemPrompt += "\n" + searchInstruction
 	}
 	messages := make([]llm.Message, 0, len(history)+len(state.Messages)+3)
-	messages = append(messages, llm.Message{Role: llm.RoleSystem, Text: a.config.SystemPrompt})
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Text: systemPrompt})
 	messages = append(messages, history...)
 	messages = append(messages, state.Messages...)
 	llmContext := auth.WithoutAuthentication(ctx)
@@ -158,6 +178,18 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	executeCalls := func() (bool, error) {
 		for len(state.Results) < len(state.Calls) {
 			call := state.Calls[len(state.Results)]
+			if selection.search && call.Name == SearchToolName {
+				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, Iteration: state.Iteration}); err != nil {
+					return false, err
+				}
+				searchResult := selection.run(call, titles)
+				state.ActiveTools, state.Searches = slices.Clone(selection.active), selection.searches
+				if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: searchResult.IsError, Iteration: state.Iteration}); err != nil {
+					return false, err
+				}
+				state.Results = append(state.Results, searchResult)
+				continue
+			}
 			tool, ok := toolsByName[call.Name]
 			if !ok {
 				return false, fmt.Errorf("LLM requested unknown MCP tool %q", call.Name)
@@ -222,7 +254,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			finish     llm.FinishReason
 			completion bool
 		)
-		request := llm.Request{Messages: messages, Tools: tools}
+		request := llm.Request{Messages: messages, Tools: selection.tools()}
 		if err := a.llm.Stream(llmContext, request, func(event llm.Event) error {
 			if err := event.Validate(); err != nil {
 				return fmt.Errorf("validate LLM event: %w", err)
@@ -281,7 +313,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			return result, fmt.Errorf("agent reached maximum of %d iterations before a final answer", a.config.MaxIterations)
 		}
 		for _, call := range calls {
-			if _, ok := toolsByName[call.Name]; !ok {
+			if !selection.known(call.Name) {
 				return result, fmt.Errorf("LLM requested unknown MCP tool %q", call.Name)
 			}
 		}
