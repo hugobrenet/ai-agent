@@ -145,12 +145,14 @@ feedback of their turn, for the client to show it again.
 
 The first feedback of a turn copies it for review: the question, the answer,
 and the tool calls with their arguments, error flag and the start of their
-results, each truncated. It also records the backend, the agent version, the
-model and a hash of the system prompt, as configured when the feedback is
-given, and the MCP server that answered the turn: the name and version it
-announced, and a hash of the tools it listed, which changes with any tool
-name, description, schema or annotation. The feedback holds no identity: it stays linked to its turn while the
-conversation exists, for the user to change it, and is then kept anonymous
+results, each truncated. It also records what executed the turn, as the
+turn recorded it while it ran: the agent version, the model, a hash of the
+system prompt, and the MCP server, with the name and version it announced
+and a hash of the tools it listed, which changes with any tool name,
+description, schema or annotation. A turn resumed after a confirmation on a
+different agent or MCP records one run per execution. The feedback holds no
+identity: it stays linked to its turn while the conversation exists, for the
+user to change it, and is then kept anonymous
 until `OPENSVC_AI_FEEDBACK_RETENTION` (180 days by default) ends. The agent
 keeps at most 4096 feedback; beyond, a new one returns 409 `feedback_limit`.
 

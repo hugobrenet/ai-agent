@@ -41,6 +41,10 @@ func (s *Store) SuspendTurn(ctx context.Context, owner conversation.Owner, pendi
 	if turn.Status != conversation.TurnRunning {
 		return fmt.Errorf("%w: turn %q is %s", conversation.ErrConflict, pending.TurnID, turn.Status)
 	}
+	runs, err := encodeRuns(turn.Runs, pending.Run)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO confirmations(turn_id, confirmation_id, tool_name, tool_title, arguments_json, arguments_hash, state_json, created_at, expires_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -53,8 +57,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		return fmt.Errorf("insert confirmation: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-UPDATE turns SET status = 'awaiting_confirmation'
-WHERE id = ? AND conversation_id = ? AND status = 'running'`, pending.TurnID, pending.ConversationID); err != nil {
+UPDATE turns SET status = 'awaiting_confirmation', runs_json = ?
+WHERE id = ? AND conversation_id = ? AND status = 'running'`, runs, pending.TurnID, pending.ConversationID); err != nil {
 		return fmt.Errorf("suspend conversation turn: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE conversations SET updated_at = ? WHERE id = ?", toUnixNano(pending.CreatedAt), pending.ConversationID); err != nil {

@@ -49,8 +49,8 @@ type ServiceConfig struct {
 	ConfirmationLifetime time.Duration
 	// FeedbackRetention is how long a feedback is kept.
 	FeedbackRetention time.Duration
-	// FeedbackContext describes the agent of the backend in its feedback.
-	FeedbackContext FeedbackContext
+	// Agent describes the agent of the backend, recorded on each turn.
+	Agent AgentInfo
 }
 
 type Service struct {
@@ -104,9 +104,6 @@ func withServiceDefaults(config ServiceConfig) ServiceConfig {
 	}
 	if config.FeedbackRetention == 0 {
 		config.FeedbackRetention = DefaultFeedbackRetention
-	}
-	if config.FeedbackContext.Backend == "" {
-		config.FeedbackContext.Backend = config.Backend
 	}
 	return config
 }
@@ -360,7 +357,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 			err := errors.New("conversation turn both completed and suspended")
 			return errors.Join(err, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "agent_incomplete"))
 		}
-		return t.suspend(*result.Suspended, emit)
+		return t.suspend(*result.Suspended, t.service.config.Agent.run(result.MCP), emit)
 	}
 	if completedEvent == nil {
 		err := errors.New("conversation turn completed without a completion event")
@@ -375,7 +372,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 	completeErr := t.service.store.CompleteTurn(
 		finalizeCtx, t.owner, t.conversationID, t.turnID, completedAt,
 		completedAt.Add(t.service.config.Lifetime), result.Messages,
-		TurnAgent{MCPServer: result.MCP.Name, MCPVersion: result.MCP.Version, ToolsSHA256: result.MCP.ToolsSHA256},
+		t.service.config.Agent.run(result.MCP),
 	)
 	cancel()
 	if completeErr != nil {
@@ -390,7 +387,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 // suspend stores the turn waiting for a confirmation, then asks the client for
 // the decision of the user. The request is emitted only once stored, so a
 // client can always answer it.
-func (t *PreparedTurn) suspend(state agent.SuspendedTurn, emit agent.EmitFunc) error {
+func (t *PreparedTurn) suspend(state agent.SuspendedTurn, run TurnRun, emit agent.EmitFunc) error {
 	call, err := state.PendingCall()
 	if err != nil {
 		return errors.Join(err, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "agent_incomplete"))
@@ -408,7 +405,7 @@ func (t *PreparedTurn) suspend(state agent.SuspendedTurn, emit agent.EmitFunc) e
 		ConversationID: t.conversationID, TurnID: t.turnID, ConfirmationID: confirmationID,
 		ToolName: call.Name, ToolTitle: state.ToolTitle, Arguments: call.Arguments,
 		ArgumentsHash: agent.ArgumentsHash(call.Arguments), State: encoded,
-		CreatedAt: createdAt, ExpiresAt: createdAt.Add(t.service.config.ConfirmationLifetime),
+		CreatedAt: createdAt, ExpiresAt: createdAt.Add(t.service.config.ConfirmationLifetime), Run: run,
 	}
 	suspendCtx, cancel := context.WithTimeout(context.Background(), t.service.config.FinalizeTimeout)
 	suspendErr := t.service.store.SuspendTurn(suspendCtx, t.owner, pending)

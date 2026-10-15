@@ -18,7 +18,7 @@ import (
 // flowSession is an MCP session offering one destructive tool.
 type flowSession struct{ calls []string }
 
-func (s *flowSession) ServerInfo() (string, string) { return "test-mcp", "v9.9.9" }
+func (s *flowSession) ServerInfo() (string, string) { return "flow-mcp", "v2" }
 
 func (s *flowSession) ListTools(context.Context) ([]*mcp.Tool, error) {
 	destructive := true
@@ -70,7 +70,7 @@ func TestConfirmationFlowSuspendsStoresAndResumesATurn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			service, err := conversation.NewService(store, orchestrator, conversation.ServiceConfig{Backend: "om3"})
+			service, err := conversation.NewService(store, orchestrator, conversation.ServiceConfig{Backend: "om3", Agent: conversation.NewAgentInfo("v1.0.0", "gpt-test", "You are a test assistant.")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,6 +123,13 @@ func TestConfirmationFlowSuspendsStoresAndResumesATurn(t *testing.T) {
 			history, err := store.LoadHistory(t.Context(), testOwner, item.ID)
 			if err != nil || len(history) != 4 || history[0].Text != "stop web" || history[3].Text != "answered" {
 				t.Fatalf("the resumed turn was not stored whole: %#v %v", history, err)
+			}
+			// The suspended and the resumed runs used the same agent and MCP:
+			// the turn records one run, with the MCP it announced.
+			stored, _, err := store.TurnMessages(t.Context(), testOwner, item.ID, request.TurnID)
+			if err != nil || len(stored.Runs) != 1 || stored.Runs[0].AgentVersion != "v1.0.0" || stored.Runs[0].Model != "gpt-test" ||
+				stored.Runs[0].MCPServer != "flow-mcp" || stored.Runs[0].MCPVersion != "v2" || len(stored.Runs[0].ToolsSHA256) != 64 {
+				t.Fatalf("turn runs = %+v, %v", stored.Runs, err)
 			}
 		})
 	}

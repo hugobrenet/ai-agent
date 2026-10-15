@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -236,7 +237,7 @@ VALUES (?, ?, ?, 'running', '', ?, NULL)`, turn.ID, turn.ConversationID, turn.Se
 	return turn, nil
 }
 
-func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conversationID string, turnID string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, agent conversation.TurnAgent) error {
+func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conversationID string, turnID string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, run conversation.TurnRun) error {
 	if err := validateOwnerAndID(owner, conversationID); err != nil {
 		return err
 	}
@@ -248,10 +249,6 @@ func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conv
 	}
 	if !expiresAt.After(completedAt) {
 		return fmt.Errorf("%w: conversation expiry must follow turn completion", conversation.ErrInvalid)
-	}
-	agent.MCPServer, agent.MCPVersion = boundedText(agent.MCPServer, 256), boundedText(agent.MCPVersion, 256)
-	if len(agent.ToolsSHA256) > 64 {
-		return fmt.Errorf("%w: tool catalog hash is too long", conversation.ErrInvalid)
 	}
 	encoded, addedBytes, err := encodeMessages(messages)
 	if err != nil {
@@ -276,6 +273,10 @@ func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conv
 	}
 	if completedAt.Before(turn.StartedAt) {
 		return fmt.Errorf("%w: turn completion precedes start", conversation.ErrInvalid)
+	}
+	runs, err := encodeRuns(turn.Runs, run)
+	if err != nil {
+		return err
 	}
 	var messageCount int
 	if err := tx.QueryRowContext(ctx, `
@@ -309,8 +310,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE turns
-SET status = 'completed', error_code = '', completed_at = ?, mcp_server = ?, mcp_version = ?, tools_sha256 = ?
-WHERE id = ? AND conversation_id = ? AND status = 'running'`, toUnixNano(completedAt), agent.MCPServer, agent.MCPVersion, agent.ToolsSHA256, turnID, conversationID); err != nil {
+SET status = 'completed', error_code = '', completed_at = ?, runs_json = ?
+WHERE id = ? AND conversation_id = ? AND status = 'running'`, toUnixNano(completedAt), runs, turnID, conversationID); err != nil {
 		return fmt.Errorf("complete conversation turn: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -564,10 +565,11 @@ WHERE id = ? AND backend = ? AND cluster_id = ? AND issuer = ? AND subject = ?`,
 func getTurn(ctx context.Context, tx *sql.Tx, conversationID string, turnID string) (conversation.Turn, error) {
 	var item conversation.Turn
 	var status string
+	var runs []byte
 	var startedAt int64
 	var completedAt sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
-SELECT id, conversation_id, sequence, status, error_code, started_at, completed_at, mcp_server, mcp_version, tools_sha256
+SELECT id, conversation_id, sequence, status, error_code, started_at, completed_at, runs_json
 FROM turns
 WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 		&item.ID,
@@ -577,14 +579,15 @@ WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 		&item.ErrorCode,
 		&startedAt,
 		&completedAt,
-		&item.Agent.MCPServer,
-		&item.Agent.MCPVersion,
-		&item.Agent.ToolsSHA256,
+		&runs,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.Turn{}, conversation.ErrNotFound
 		}
 		return conversation.Turn{}, fmt.Errorf("read conversation turn: %w", err)
+	}
+	if err := decodeStrictJSON(runs, &item.Runs); err != nil {
+		return conversation.Turn{}, fmt.Errorf("decode turn runs: %w", err)
 	}
 	item.Status = conversation.TurnStatus(status)
 	item.StartedAt = fromUnixNano(startedAt)
@@ -655,6 +658,25 @@ func validateIdentifier(kind string, value string) error {
 		return fmt.Errorf("%w: %s ID is invalid", conversation.ErrInvalid, kind)
 	}
 	return nil
+}
+
+// encodeRuns adds run to the runs of a turn, unless it equals the last one,
+// with its texts announced by servers bounded.
+func encodeRuns(runs []conversation.TurnRun, run conversation.TurnRun) ([]byte, error) {
+	for _, field := range []*string{&run.AgentVersion, &run.Model, &run.SystemPromptSHA256, &run.MCPServer, &run.MCPVersion, &run.ToolsSHA256} {
+		*field = boundedText(*field, 256)
+	}
+	if len(runs) == 0 || runs[len(runs)-1] != run {
+		if len(runs) >= conversation.MaxTurnRuns {
+			return nil, fmt.Errorf("%w: a turn records at most %d runs", conversation.ErrLimit, conversation.MaxTurnRuns)
+		}
+		runs = append(runs, run)
+	}
+	data, err := json.Marshal(runs)
+	if err != nil {
+		return nil, fmt.Errorf("encode turn runs: %w", err)
+	}
+	return data, nil
 }
 
 // boundedText cuts text announced by a server to at most limit bytes, on a

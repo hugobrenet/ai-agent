@@ -60,7 +60,7 @@ func TestStoreSuspendsAndResumesATurnOnce(t *testing.T) {
 		t.Fatalf("a claimed confirmation is still pending: %+v", got)
 	}
 	messages := []llm.Message{{Role: llm.RoleUser, Text: "stop web"}, {Role: llm.RoleAssistant, Text: "stopped"}}
-	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", testNow.Add(6*time.Second), testNow.Add(time.Hour), messages, conversation.TurnAgent{}); err != nil {
+	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", testNow.Add(6*time.Second), testNow.Add(time.Hour), messages, conversation.TurnRun{}); err != nil {
 		t.Fatalf("the resumed turn did not complete: %v", err)
 	}
 }
