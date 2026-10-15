@@ -89,13 +89,16 @@ type TurnRun struct {
 	ShownTools         []string `json:"shown_tools"`
 	// ShownToolsOmitted counts the tools shown left out of ShownTools.
 	ShownToolsOmitted int `json:"shown_tools_omitted,omitempty"`
+	// History describes the history sent to the model.
+	History *HistoryStats `json:"history,omitempty"`
 }
 
 // Equal tells whether two runs describe the same execution context.
 func (r TurnRun) Equal(other TurnRun) bool {
 	return r.AgentVersion == other.AgentVersion && r.Model == other.Model && r.SystemPromptSHA256 == other.SystemPromptSHA256 &&
 		r.MCPServer == other.MCPServer && r.MCPVersion == other.MCPVersion && r.ToolsSHA256 == other.ToolsSHA256 &&
-		r.ToolSearch == other.ToolSearch && slices.Equal(r.ShownTools, other.ShownTools) && r.ShownToolsOmitted == other.ShownToolsOmitted
+		r.ToolSearch == other.ToolSearch && slices.Equal(r.ShownTools, other.ShownTools) && r.ShownToolsOmitted == other.ShownToolsOmitted &&
+		(r.History == nil) == (other.History == nil) && (r.History == nil || *r.History == *other.History)
 }
 
 // AgentInfo describes the agent of a backend: its version and its model.
@@ -111,8 +114,9 @@ func NewAgentInfo(version string, model string) AgentInfo {
 
 // run describes an execution of a turn by this agent, as the agent reported
 // it: the MCP server and what the model was given.
-func (a AgentInfo) run(mcp agent.MCPServer, exposure agent.Exposure) TurnRun {
+func (a AgentInfo) run(mcp agent.MCPServer, exposure agent.Exposure, history *HistoryStats) TurnRun {
 	return TurnRun{
+		History:      history,
 		AgentVersion: a.Version, Model: a.Model, SystemPromptSHA256: exposure.SystemPromptSHA256,
 		MCPServer: mcp.Name, MCPVersion: mcp.Version, ToolsSHA256: mcp.ToolsSHA256,
 		ToolSearch: exposure.ToolSearch, ShownTools: exposure.ShownTools,

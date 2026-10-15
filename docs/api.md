@@ -157,6 +157,33 @@ a turn resumed after a confirmation sees the tools it found.
 
 
 
+## History compaction
+
+The model receives the earlier turns of a conversation as a compact copy;
+the stored messages, the feedback and the export keep the original results.
+The tool calls, their arguments and call IDs are kept. Small results, errors
+and results without structured content are kept as they are. A structured
+result over 2 KiB is compacted to at most 2 KiB: its scalars and small
+objects of scalars, such as a provenance, are kept, numbers as written and
+strings unchanged; a string over 256 bytes is omitted whole; collections
+keep their first items, 8 at first, fewer until the result fits. Beyond
+16 KiB of tool results in the history, the oldest results are reduced
+further, down to a marker alone, and as a last resort the oldest turns are
+left out whole.
+
+A compacted result carries a `_history_compaction` field: the policy
+(`v1`), `partial`, the original size, and its omissions, at most 16, each a
+JSON pointer into the result with its kind (`array_tail`, `object_entries`,
+`long_string`, `depth`, `content`, `value`) and the items kept and omitted;
+no artificial item is added to the data. The system prompt tells the model
+that omitted data is unknown, to read omitted details again with a read-only
+tool, never again with a tool that changes state, and that a new read is a
+new observation. Each run records the policy, its budgets, the sizes of the
+history loaded, compacted and sent, the results compacted and the turns left
+out.
+
+## Feedback
+
 The user rates a completed turn, to help review and improve the tools and the
 prompts. `PUT …/turns/{turn_id}/feedback` takes:
 

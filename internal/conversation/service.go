@@ -47,6 +47,9 @@ type ServiceConfig struct {
 	// ConfirmationLifetime bounds the wait for the decision of the user on
 	// a tool call requiring confirmation.
 	ConfirmationLifetime time.Duration
+	// HistoryCompaction bounds the tool results of the history the model
+	// receives; the zero value is DefaultHistoryCompaction.
+	HistoryCompaction HistoryCompaction
 	// FeedbackRetention is how long a feedback is kept.
 	FeedbackRetention time.Duration
 	// Agent describes the agent of the backend, recorded on each turn.
@@ -214,13 +217,13 @@ func (s *Service) PrepareTurn(ctx context.Context, identity auth.Identity, conve
 	if err != nil {
 		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, turn.ID, TurnFailed, "history_failed"))
 	}
-	history, err = boundHistory(history, s.config.MaxHistoryMessages, s.config.MaxHistoryBytes)
+	history, stats, err := s.prepareHistory(history)
 	if err != nil {
 		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, turn.ID, TurnFailed, "history_invalid"))
 	}
 	return &PreparedTurn{
 		service: s, owner: item.Owner, conversationID: item.ID, turnID: turn.ID,
-		prompt: prompt, history: history,
+		prompt: prompt, history: history, historyStats: stats,
 	}, nil
 }
 
@@ -252,13 +255,13 @@ func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identit
 	if err != nil {
 		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, turnID, TurnFailed, "history_failed"))
 	}
-	history, err = boundHistory(history, s.config.MaxHistoryMessages, s.config.MaxHistoryBytes)
+	history, stats, err := s.prepareHistory(history)
 	if err != nil {
 		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, turnID, TurnFailed, "history_invalid"))
 	}
 	return &PreparedTurn{
 		service: s, owner: item.Owner, conversationID: item.ID, turnID: turnID,
-		history: history, resume: &state, decision: decision,
+		history: history, historyStats: stats, resume: &state, decision: decision,
 	}, nil
 }
 
@@ -312,6 +315,7 @@ type PreparedTurn struct {
 	turnID         string
 	prompt         string
 	history        []llm.Message
+	historyStats   *HistoryStats
 	resume         *agent.SuspendedTurn
 	decision       agent.Decision
 	mu             sync.Mutex
@@ -357,7 +361,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 			err := errors.New("conversation turn both completed and suspended")
 			return errors.Join(err, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "agent_incomplete"))
 		}
-		return t.suspend(*result.Suspended, t.service.config.Agent.run(result.MCP, result.Exposure), emit)
+		return t.suspend(*result.Suspended, t.service.config.Agent.run(result.MCP, result.Exposure, t.historyStats), emit)
 	}
 	if completedEvent == nil {
 		err := errors.New("conversation turn completed without a completion event")
@@ -372,7 +376,7 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 	completeErr := t.service.store.CompleteTurn(
 		finalizeCtx, t.owner, t.conversationID, t.turnID, completedAt,
 		completedAt.Add(t.service.config.Lifetime), result.Messages,
-		t.service.config.Agent.run(result.MCP, result.Exposure),
+		t.service.config.Agent.run(result.MCP, result.Exposure, t.historyStats),
 	)
 	cancel()
 	if completeErr != nil {
@@ -478,6 +482,24 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(data), nil
+}
+
+// prepareHistory gives the model a compact copy of the stored history,
+// within its bounds, and describes it.
+func (s *Service) prepareHistory(history []llm.Message) ([]llm.Message, *HistoryStats, error) {
+	loaded := historySize(history)
+	compacted, stats := compactHistory(history, s.config.HistoryCompaction)
+	bounded, err := boundHistory(compacted, s.config.MaxHistoryMessages, s.config.MaxHistoryBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, message := range compacted[:len(compacted)-len(bounded)] {
+		if message.Role == llm.RoleUser {
+			stats.RemovedTurns++
+		}
+	}
+	stats.LoadedBytes, stats.CompactedBytes, stats.SentBytes = loaded, historySize(compacted), historySize(bounded)
+	return bounded, &stats, nil
 }
 
 func boundHistory(history []llm.Message, maxMessages int, maxBytes int) ([]llm.Message, error) {
