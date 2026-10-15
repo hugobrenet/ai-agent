@@ -166,10 +166,23 @@ and results without structured content are kept as they are. A structured
 result over 2 KiB is compacted to at most 2 KiB: its scalars and small
 objects of scalars, such as a provenance, are kept, numbers as written and
 strings unchanged; a string over 256 bytes is omitted whole; collections
-keep their first items, 8 at first, fewer until the result fits. Beyond
-16 KiB of tool results in the history, the oldest results are reduced
-further, down to a marker alone, and as a last resort the oldest turns are
-left out whole.
+keep their first items, 8 at first, fewer until the result fits, and an
+array keeps the prefix before its first item it cannot keep whole, so that
+the indexes stay true; an object of more than 32 entries, such as a status
+per node, keeps its first entries; collections nested deeper than 6 levels
+are omitted. Beside the structured content, the text copy the MCP SDK adds
+is dropped: a single text, without annotations or metadata, holding the
+value of the structured content and nothing after it. Distinct texts, such
+as a warning, keep the prefix of those of at most 256 bytes, so that their
+indexes stay true. The budget holds for the whole result, texts and marker
+included: the texts kept are dropped before the structured content, and the
+last resort is a marker alone. The keys of a compacted object are sorted.
+
+Beyond 16 KiB of tool results in the history, the oldest results are
+reduced further, down to a marker alone. When they still exceed it, the
+oldest turn is left out whole and the turns kept are compacted again from
+their original results. A policy given to the service is completed with the
+default values of its fields left at zero, and refused when invalid.
 
 A compacted result carries a `_history_compaction` field: the policy
 (`v1`), `partial`, the original size, and its omissions, at most 16, each a

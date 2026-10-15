@@ -48,7 +48,8 @@ type ServiceConfig struct {
 	// a tool call requiring confirmation.
 	ConfirmationLifetime time.Duration
 	// HistoryCompaction bounds the tool results of the history the model
-	// receives; the zero value is DefaultHistoryCompaction.
+	// receives; a field left at zero takes the value of
+	// DefaultHistoryCompaction, and an invalid policy is refused.
 	HistoryCompaction HistoryCompaction
 	// FeedbackRetention is how long a feedback is kept.
 	FeedbackRetention time.Duration
@@ -80,6 +81,9 @@ func NewService(store Store, runner TurnRunner, config ServiceConfig) (*Service,
 		config.FeedbackRetention <= 0 {
 		return nil, fmt.Errorf("conversation service limits must be positive")
 	}
+	if err := config.HistoryCompaction.validate(); err != nil {
+		return nil, err
+	}
 	return &Service{store: store, runner: runner, config: config, now: time.Now, newID: randomID}, nil
 }
 
@@ -108,6 +112,7 @@ func withServiceDefaults(config ServiceConfig) ServiceConfig {
 	if config.FeedbackRetention == 0 {
 		config.FeedbackRetention = DefaultFeedbackRetention
 	}
+	config.HistoryCompaction = config.HistoryCompaction.withDefaults()
 	return config
 }
 
@@ -488,14 +493,23 @@ func randomID() (string, error) {
 // within its bounds, and describes it.
 func (s *Service) prepareHistory(history []llm.Message) ([]llm.Message, *HistoryStats, error) {
 	loaded := historySize(history)
-	compacted, stats := compactHistory(history, s.config.HistoryCompaction)
+	compacted, stats, compactedAt := compactHistory(history, s.config.HistoryCompaction)
 	bounded, err := boundHistory(compacted, s.config.MaxHistoryMessages, s.config.MaxHistoryBytes)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, message := range compacted[:len(compacted)-len(bounded)] {
+	// The turns boundHistory leaves out, and their compacted results, are
+	// not sent: they count as removed, not as compacted.
+	removed := len(compacted) - len(bounded)
+	for _, message := range compacted[:removed] {
 		if message.Role == llm.RoleUser {
 			stats.RemovedTurns++
+		}
+	}
+	stats.CompactedResults = 0
+	for _, index := range compactedAt {
+		if index >= removed {
+			stats.CompactedResults++
 		}
 	}
 	stats.LoadedBytes, stats.CompactedBytes, stats.SentBytes = loaded, historySize(compacted), historySize(bounded)
