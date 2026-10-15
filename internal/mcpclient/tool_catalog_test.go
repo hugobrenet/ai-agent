@@ -44,3 +44,11 @@ func TestToolCatalogBoundsAggregateDefinitions(t *testing.T) {
 		break
 	}
 }
+
+// A catalog the agent accepts fits in one MCP response: the SDK lists up to
+// 1000 tools per page.
+func TestToolCatalogFitsOneResponse(t *testing.T) {
+	if int64(maxMCPToolCatalogBytes) > maxMCPResponseBodyBytes {
+		t.Fatalf("catalog limit %d exceeds the response limit %d", maxMCPToolCatalogBytes, maxMCPResponseBodyBytes)
+	}
+}

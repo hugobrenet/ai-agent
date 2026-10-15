@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -33,20 +34,32 @@ const (
 	maxModelTools = 1024
 )
 
+// searchKeywordsGuidance tells the model how to write a search query: a
+// whole question brings words that favor the wrong tools.
+const searchKeywordsGuidance = "Use 3–8 English keywords describing the required capability. Omit greetings, full sentences, and specific resource identifiers."
+
 // searchInstruction is added to the system prompt when the model sees a
 // part of the catalog only.
 const searchInstruction = "Only some tools are listed. When none fits, call " + SearchToolName +
-	" with English keywords describing the data or the action you need; the tools it finds can be called from the next step on."
+	"; the tools it finds can be called from the next step on. " + searchKeywordsGuidance
 
-var searchToolSchema = json.RawMessage(`{"type":"object","properties":{` +
-	`"query":{"type":"string","description":"English keywords of the data or action needed, such as node hardware inventory"},` +
-	`"limit":{"type":"integer","minimum":1,"maximum":10,"description":"optional number of tools to return; defaults to 5"}},` +
-	`"required":["query"],"additionalProperties":false}`)
+// searchToolSchema describes the bounds of the query. toolsearch counts
+// toolsearch.MaxQueryBytes in UTF-8 bytes, while maxLength counts characters:
+// maxLength is only the loosest bound a schema can state, and the
+// description gives the exact one. A query without a searchable word is
+// refused, and only its first toolsearch.MaxQueryTerms distinct terms are
+// searched.
+var searchToolSchema = json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{`+
+	`"query":{"type":"string","minLength":1,"maxLength":%d,"description":%q},`+
+	`"limit":{"type":"integer","minimum":1,"maximum":%d,"description":"optional number of tools to return; defaults to %d"}},`+
+	`"required":["query"],"additionalProperties":false}`,
+	toolsearch.MaxQueryBytes, searchKeywordsGuidance+" At most "+strconv.Itoa(toolsearch.MaxQueryBytes)+" UTF-8 bytes. Example: node hardware inventory.",
+	maxSearchResults, defaultSearchResults))
 
 var searchTool = llm.Tool{
 	Name: SearchToolName,
-	Description: "Search the tools of the backend by keywords, when none of the listed tools fits the question. " +
-		"Returns the best matching tools with a summary; they can be called from the next step on.",
+	Description: "Search the tools of the backend when none of the listed tools fits the question. " + searchKeywordsGuidance +
+		" Returns the best matching tools with a summary; they can be called from the next step on.",
 	InputSchema: searchToolSchema,
 }
 
@@ -60,6 +73,13 @@ type toolSelection struct {
 	index    *toolsearch.Index
 	active   []string
 	searches int
+	// bytes is the size of the tools shown, bounded by
+	// maxModelToolCatalogBytes.
+	bytes int
+	// shown are the tools sent to the model during the turn, in order.
+	shown []string
+	// core are the tools never removed to make room for the tools found.
+	core map[string]bool
 }
 
 // indexCache keeps the index of the last catalog, by its hash.
@@ -85,14 +105,20 @@ func (c *indexCache) get(hash string, tools []*mcp.Tool) (*toolsearch.Index, err
 
 func (a *Agent) selectTools(mcpTools []*mcp.Tool, converted []llm.Tool, catalogHash string, history []llm.Message, state *SuspendedTurn) (*toolSelection, error) {
 	selection := &toolSelection{all: converted, catalog: make(map[string]llm.Tool, len(converted))}
+	catalogBytes := 0
 	for _, tool := range converted {
 		selection.catalog[tool.Name] = tool
+		catalogBytes += toolBytes(tool)
 	}
 	threshold := a.config.SearchThreshold
 	if threshold == 0 {
 		threshold = DefaultSearchThreshold
 	}
-	if threshold < 0 || len(converted) <= threshold {
+	// A turn suspended while searching keeps searching when it resumes, so
+	// that the search calls it planned still run in the agent. A catalog
+	// too large for one model request is searched whatever the threshold.
+	search := state.ToolSearch || catalogBytes > maxModelToolCatalogBytes || (threshold > 0 && len(converted) > threshold)
+	if !search {
 		return selection, nil
 	}
 	if _, exists := selection.catalog[SearchToolName]; exists {
@@ -103,14 +129,19 @@ func (a *Agent) selectTools(mcpTools []*mcp.Tool, converted []llm.Tool, catalogH
 		return nil, err
 	}
 	selection.search, selection.index, selection.searches = true, index, state.Searches
+	selection.core = map[string]bool{}
+	selection.bytes = toolBytes(searchTool)
+	state.ToolSearch = true
 	for _, tool := range mcpTools {
-		if core, _ := tool.Meta[CoreToolMeta].(bool); core {
-			selection.add(tool.Name)
+		if core, _ := tool.Meta[CoreToolMeta].(bool); core && selection.add(tool.Name) {
+			selection.core[tool.Name] = true
 		}
 	}
 	if len(selection.active) == 0 {
 		for _, name := range a.config.CoreTools {
-			selection.add(name)
+			if selection.add(name) {
+				selection.core[name] = true
+			}
 		}
 	}
 	// The tools of the last turns, the most recent first, for the questions
@@ -129,25 +160,55 @@ func (a *Agent) selectTools(mcpTools []*mcp.Tool, converted []llm.Tool, catalogH
 	return selection, nil
 }
 
-// add activates a catalog tool, and reports whether it was not active yet.
+// add activates a catalog tool, and reports whether it was not active yet. A
+// tool beyond the size of a model request is not shown.
 func (s *toolSelection) add(name string) bool {
-	if _, ok := s.catalog[name]; !ok || slices.Contains(s.active, name) {
+	tool, ok := s.catalog[name]
+	if !ok || slices.Contains(s.active, name) || s.bytes+toolBytes(tool) > maxModelToolCatalogBytes {
 		return false
 	}
 	s.active = append(s.active, name)
+	s.bytes += toolBytes(tool)
 	return true
+}
+
+// show activates a tool a search found. When the tools shown leave no room,
+// the oldest tools that are not core tools are removed, the tools of the
+// history first, to make room for it. It reports whether the tool is shown.
+func (s *toolSelection) show(name string) bool {
+	if slices.Contains(s.active, name) {
+		return true
+	}
+	tool, ok := s.catalog[name]
+	if !ok {
+		return false
+	}
+	for s.bytes+toolBytes(tool) > maxModelToolCatalogBytes {
+		oldest := slices.IndexFunc(s.active, func(active string) bool { return !s.core[active] })
+		if oldest < 0 {
+			return false
+		}
+		s.bytes -= toolBytes(s.catalog[s.active[oldest]])
+		s.active = slices.Delete(s.active, oldest, oldest+1)
+	}
+	return s.add(name)
 }
 
 // tools are the tools of the next model request. Found tools come last, so
 // that the start of the list stays the same within the turn.
 func (s *toolSelection) tools() []llm.Tool {
-	if !s.search {
-		return s.all
+	tools := s.all
+	if s.search {
+		tools = make([]llm.Tool, 0, len(s.active)+1)
+		tools = append(tools, searchTool)
+		for _, name := range s.active {
+			tools = append(tools, s.catalog[name])
+		}
 	}
-	tools := make([]llm.Tool, 0, len(s.active)+1)
-	tools = append(tools, searchTool)
-	for _, name := range s.active {
-		tools = append(tools, s.catalog[name])
+	for _, tool := range tools {
+		if !slices.Contains(s.shown, tool.Name) {
+			s.shown = append(s.shown, tool.Name)
+		}
 	}
 	return tools
 }
@@ -169,6 +230,9 @@ type searchMatch struct {
 	Title   string  `json:"title,omitempty"`
 	Summary string  `json:"summary"`
 	Score   float64 `json:"score"`
+	// Shown is false for a tool found but not shown: its definition does
+	// not fit in a model request beside the core tools.
+	Shown bool `json:"shown"`
 }
 
 // run executes a search_tools call: the tools found become active. A
@@ -184,7 +248,7 @@ func (s *toolSelection) run(call llm.ToolCall, titles map[string]string) llm.Too
 	decoder := json.NewDecoder(strings.NewReader(string(call.Arguments)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&arguments); err != nil {
-		return fail("search_tools takes a query, English keywords, and an optional limit.")
+		return fail("search_tools takes a query and an optional limit. " + searchKeywordsGuidance)
 	}
 	if arguments.Limit == 0 {
 		arguments.Limit = defaultSearchResults
@@ -192,23 +256,30 @@ func (s *toolSelection) run(call llm.ToolCall, titles map[string]string) llm.Too
 	if arguments.Limit < 1 || arguments.Limit > maxSearchResults {
 		return fail(fmt.Sprintf("The limit of search_tools must be between 1 and %d.", maxSearchResults))
 	}
-	s.searches++
 	results, err := s.index.Search(arguments.Query, arguments.Limit)
 	if err != nil {
-		return fail("The query of search_tools must be a few English keywords.")
+		return fail("The query of search_tools has no searchable keyword, or exceeds " + strconv.Itoa(toolsearch.MaxQueryBytes) + " bytes. " + searchKeywordsGuidance)
 	}
+	// Only a valid search counts, whether it finds tools or not.
+	s.searches++
 	matches := make([]searchMatch, 0, len(results))
+	hidden := false
 	for _, result := range results {
-		s.add(result.Name)
+		shown := s.show(result.Name)
+		hidden = hidden || !shown
 		matches = append(matches, searchMatch{
 			Name: result.Name, Title: titles[result.Name], Summary: summary(s.catalog[result.Name].Description),
-			Score: math.Round(result.Score*100) / 100,
+			Score: math.Round(result.Score*100) / 100, Shown: shown,
 		})
 	}
-	text, _ := json.Marshal(map[string]any{"tools": matches})
-	if len(matches) == 0 {
-		text = []byte(`{"tools":[],"hint":"No tool matches these keywords. Try other English words, or answer with the tools available."}`)
+	response := map[string]any{"tools": matches}
+	switch {
+	case len(matches) == 0:
+		response["hint"] = "No tool matches these keywords. Try other English words, or answer with the tools available."
+	case hidden:
+		response["hint"] = "The tools with shown false were found but cannot be shown: their definitions exceed the size of a model request. Answer with the tools shown."
 	}
+	text, _ := json.Marshal(response)
 	return llm.ToolResult{CallID: call.ID, Content: textToolResult(string(text))}
 }
 

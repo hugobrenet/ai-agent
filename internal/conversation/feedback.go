@@ -91,11 +91,55 @@ type FeedbackRecord struct {
 	Context json.RawMessage
 }
 
+// MaxFeedbackContextBytes bounds the context of a feedback, so that a
+// feedback is always stored beside its bounded snapshot.
+const MaxFeedbackContextBytes = 16 << 10
+
 // FeedbackContext describes what answered a turn, in its feedback: the
-// backend, and the runs of the turn as recorded while it executed.
+// backend, and the runs of the turn as recorded while it executed. Truncated
+// tells that, to fit MaxFeedbackContextBytes, shown tools were left out of
+// runs, counted by their ShownToolsOmitted, and RunsOmitted runs between the
+// first and the last ones.
 type FeedbackContext struct {
-	Backend string    `json:"backend"`
-	Runs    []TurnRun `json:"runs"`
+	Backend     string    `json:"backend"`
+	Runs        []TurnRun `json:"runs"`
+	RunsOmitted int       `json:"runs_omitted,omitempty"`
+	Truncated   bool      `json:"truncated,omitempty"`
+}
+
+// newFeedbackContext encodes the context of a feedback within
+// MaxFeedbackContextBytes: it leaves out the shown tools of the runs, the
+// oldest runs first, then the runs between the first and the last ones.
+func newFeedbackContext(backend string, runs []TurnRun) (json.RawMessage, error) {
+	context := FeedbackContext{Backend: backend, Runs: make([]TurnRun, len(runs))}
+	for i, run := range runs {
+		run.ShownTools = slices.Clone(run.ShownTools)
+		if run.ShownTools == nil {
+			run.ShownTools = []string{}
+		}
+		context.Runs[i] = run
+	}
+	for {
+		data, err := json.Marshal(context)
+		if err != nil {
+			return nil, fmt.Errorf("encode feedback context: %w", err)
+		}
+		if len(data) <= MaxFeedbackContextBytes {
+			return data, nil
+		}
+		context.Truncated = true
+		if index := slices.IndexFunc(context.Runs, func(run TurnRun) bool { return len(run.ShownTools) > 0 }); index >= 0 {
+			context.Runs[index].ShownToolsOmitted += len(context.Runs[index].ShownTools)
+			context.Runs[index].ShownTools = []string{}
+			continue
+		}
+		if len(context.Runs) > 2 {
+			context.Runs = slices.Delete(context.Runs, 1, 2)
+			context.RunsOmitted++
+			continue
+		}
+		return nil, fmt.Errorf("feedback context exceeds %d bytes", MaxFeedbackContextBytes)
+	}
 }
 
 // TurnSnapshot is the copy of a turn kept with its feedback.
@@ -196,13 +240,9 @@ func (s *Service) SetFeedback(ctx context.Context, identity auth.Identity, conve
 	if err != nil {
 		return FeedbackRecord{}, fmt.Errorf("encode turn snapshot: %w", err)
 	}
-	runs := turn.Runs
-	if runs == nil {
-		runs = []TurnRun{}
-	}
-	agentContext, err := json.Marshal(FeedbackContext{Backend: s.config.Backend, Runs: runs})
+	agentContext, err := newFeedbackContext(s.config.Backend, turn.Runs)
 	if err != nil {
-		return FeedbackRecord{}, fmt.Errorf("encode feedback context: %w", err)
+		return FeedbackRecord{}, err
 	}
 	id, err := s.newID()
 	if err != nil {

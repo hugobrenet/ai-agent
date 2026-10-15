@@ -10,7 +10,9 @@ import (
 )
 
 const (
-	maxStoredToolCallsPerMessage = 4
+	// maxStoredToolCallsPerMessage is the maximum of tool calls the agent
+	// runs per model answer.
+	maxStoredToolCallsPerMessage = 8
 	maxStoredToolArguments       = 256 << 10
 	maxStoredToolResult          = 1 << 20
 )

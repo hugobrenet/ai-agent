@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -182,7 +183,7 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 	service, err := conversation.NewService(store, unusedRunner{}, conversation.ServiceConfig{
 		Backend: "om3", FeedbackRetention: 48 * time.Hour,
 		// The agent serving the feedback is not the one that ran the turn.
-		Agent: conversation.NewAgentInfo("v9-current", "gpt-current", "Another prompt."),
+		Agent: conversation.NewAgentInfo("v9-current", "gpt-current"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -194,10 +195,10 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 	}
 	// The turn waits on a confirmation, then resumes on an updated MCP.
 	now := time.Now()
-	before := conversation.NewAgentInfo("v1.2.3", "gpt-test", "You are a test assistant.")
 	first := conversation.TurnRun{
-		AgentVersion: before.Version, Model: before.Model, SystemPromptSHA256: before.SystemPromptSHA256,
-		MCPServer: "om3-mcp", MCPVersion: "v1", ToolsSHA256: strings.Repeat("ab", 32),
+		AgentVersion: "v1.2.3", Model: "gpt-test", SystemPromptSHA256: strings.Repeat("cd", 32), ToolSearch: true,
+		ShownTools: []string{"search_tools", "stop_object"},
+		MCPServer:  "om3-mcp", MCPVersion: "v1", ToolsSHA256: strings.Repeat("ab", 32),
 	}
 	if _, err := store.BeginTurn(t.Context(), testOwner, item.ID, "turn-1", now); err != nil {
 		t.Fatal(err)
@@ -213,6 +214,7 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := first
+	second.ShownTools = append([]string(nil), first.ShownTools...)
 	second.MCPVersion = strings.Repeat("v", 300)
 	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", now.Add(2*time.Second), now.Add(time.Hour), toolTranscript(), second); err != nil {
 		t.Fatal(err)
@@ -238,8 +240,7 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	second.MCPVersion = second.MCPVersion[:256]
-	if agentContext.Backend != "om3" || len(agentContext.Runs) != 2 || agentContext.Runs[0] != first || agentContext.Runs[1] != second ||
-		len(first.SystemPromptSHA256) != 64 {
+	if agentContext.Backend != "om3" || len(agentContext.Runs) != 2 || !agentContext.Runs[0].Equal(first) || !agentContext.Runs[1].Equal(second) {
 		t.Fatalf("context = %+v", agentContext)
 	}
 
@@ -280,7 +281,29 @@ func TestTurnRunsSkipAnUnchangedResumption(t *testing.T) {
 		t.Fatal(err)
 	}
 	turn, _, err := store.TurnMessages(t.Context(), testOwner, item.ID, "turn-1")
-	if err != nil || len(turn.Runs) != 1 || turn.Runs[0] != run {
+	if err != nil || len(turn.Runs) != 1 || !turn.Runs[0].Equal(run) {
 		t.Fatalf("runs = %+v, %v", turn.Runs, err)
+	}
+}
+
+// A feedback always fits: its bounded context beside its bounded snapshot.
+func TestFeedbackRecordHoldsTheBoundedContextAndSnapshot(t *testing.T) {
+	if maxFeedbackRecordBytes < conversation.MaxFeedbackContextBytes+48<<10 {
+		t.Fatalf("record limit %d leaves no room for a context of %d and a snapshot of 48 KiB", maxFeedbackRecordBytes, conversation.MaxFeedbackContextBytes)
+	}
+}
+
+func TestTurnRunsCountTheShownToolsLeftOut(t *testing.T) {
+	names := make([]string, maxRunShownTools+5)
+	for i := range names {
+		names[i] = fmt.Sprintf("tool_%d", i)
+	}
+	data, err := encodeRuns(nil, conversation.TurnRun{ShownTools: names})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runs []conversation.TurnRun
+	if err := json.Unmarshal(data, &runs); err != nil || len(runs[0].ShownTools) != maxRunShownTools || runs[0].ShownToolsOmitted != 5 {
+		t.Fatalf("runs = %d shown, %d omitted, %v", len(runs[0].ShownTools), runs[0].ShownToolsOmitted, err)
 	}
 }

@@ -84,7 +84,7 @@ func main() {
 	for _, spec := range specs {
 		serviceConfig := conversation.ServiceConfig{
 			Backend: spec.name, Lifetime: conversationConfig.Lifetime, FeedbackRetention: conversationConfig.FeedbackRetention,
-			Agent: conversation.NewAgentInfo(buildinfo.Version(), llmConfig.Model, spec.systemPrompt),
+			Agent: conversation.NewAgentInfo(buildinfo.Version(), llmConfig.Model),
 		}
 		backend, service, err := newBackend(spec, model, conversationStore, agent.Config{
 			SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout,

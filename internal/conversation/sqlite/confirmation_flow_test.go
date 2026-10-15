@@ -70,7 +70,7 @@ func TestConfirmationFlowSuspendsStoresAndResumesATurn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			service, err := conversation.NewService(store, orchestrator, conversation.ServiceConfig{Backend: "om3", Agent: conversation.NewAgentInfo("v1.0.0", "gpt-test", "You are a test assistant.")})
+			service, err := conversation.NewService(store, orchestrator, conversation.ServiceConfig{Backend: "om3", Agent: conversation.NewAgentInfo("v1.0.0", "gpt-test")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +128,8 @@ func TestConfirmationFlowSuspendsStoresAndResumesATurn(t *testing.T) {
 			// the turn records one run, with the MCP it announced.
 			stored, _, err := store.TurnMessages(t.Context(), testOwner, item.ID, request.TurnID)
 			if err != nil || len(stored.Runs) != 1 || stored.Runs[0].AgentVersion != "v1.0.0" || stored.Runs[0].Model != "gpt-test" ||
-				stored.Runs[0].MCPServer != "flow-mcp" || stored.Runs[0].MCPVersion != "v2" || len(stored.Runs[0].ToolsSHA256) != 64 {
+				stored.Runs[0].MCPServer != "flow-mcp" || stored.Runs[0].MCPVersion != "v2" || len(stored.Runs[0].ToolsSHA256) != 64 ||
+				len(stored.Runs[0].SystemPromptSHA256) != 64 || stored.Runs[0].ToolSearch || len(stored.Runs[0].ShownTools) == 0 {
 				t.Fatalf("turn runs = %+v, %v", stored.Runs, err)
 			}
 		})

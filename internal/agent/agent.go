@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +58,17 @@ type TurnResult struct {
 	Suspended    *SuspendedTurn
 	// MCP describes the MCP server the turn used.
 	MCP MCPServer
+	// Exposure describes what the model was given.
+	Exposure Exposure
+}
+
+// Exposure is what the model of a turn was given: a hash of the system
+// prompt actually sent, whether the catalog was searched, and the tools
+// sent, in the order they were first sent.
+type Exposure struct {
+	SystemPromptSHA256 string
+	ToolSearch         bool
+	ShownTools         []string
 }
 
 // MCPServer is the MCP server of a turn: the name and version it announced,
@@ -167,6 +180,13 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	if selection.search {
 		systemPrompt += "\n" + searchInstruction
 	}
+	promptSum := sha256.Sum256([]byte(systemPrompt))
+	// finish completes a result with what the turn used and was given.
+	finish := func(turn TurnResult) TurnResult {
+		turn.MCP = result.MCP
+		turn.Exposure = Exposure{SystemPromptSHA256: hex.EncodeToString(promptSum[:]), ToolSearch: selection.search, ShownTools: slices.Clone(selection.shown)}
+		return turn
+	}
 	messages := make([]llm.Message, 0, len(history)+len(state.Messages)+3)
 	messages = append(messages, llm.Message{Role: llm.RoleSystem, Text: systemPrompt})
 	messages = append(messages, history...)
@@ -235,7 +255,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			}
 			if suspended {
 				snapshot := *state
-				return TurnResult{Suspended: &snapshot, MCP: result.MCP}, nil
+				return finish(TurnResult{Suspended: &snapshot}), nil
 			}
 			assistantMessage := llm.Message{Role: llm.RoleAssistant, Text: state.Text, ToolCalls: state.Calls}
 			toolMessage := llm.Message{Role: llm.RoleTool, ToolResults: state.Results}
@@ -249,10 +269,10 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		state.Iteration++
 		iteration := state.Iteration
 		var (
-			calls      []llm.ToolCall
-			turnText   strings.Builder
-			finish     llm.FinishReason
-			completion bool
+			calls        []llm.ToolCall
+			turnText     strings.Builder
+			finishReason llm.FinishReason
+			completion   bool
 		)
 		request := llm.Request{Messages: messages, Tools: selection.tools()}
 		if err := a.llm.Stream(llmContext, request, func(event llm.Event) error {
@@ -278,7 +298,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 					return fmt.Errorf("LLM emitted multiple completion events")
 				}
 				completion = true
-				finish = event.FinishReason
+				finishReason = event.FinishReason
 			}
 			return nil
 		}); err != nil {
@@ -288,20 +308,20 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			return result, fmt.Errorf("LLM iteration %d ended without completion", iteration)
 		}
 		if len(calls) == 0 {
-			if finish == llm.FinishReasonToolCalls {
+			if finishReason == llm.FinishReasonToolCalls {
 				return result, fmt.Errorf("LLM iteration %d completed for tool calls without a tool call", iteration)
 			}
 			if turnText.Len() == 0 {
 				return result, fmt.Errorf("LLM iteration %d completed without text or tool calls", iteration)
 			}
-			if err := emitAgentEvent(emit, Event{Type: EventCompleted, FinishReason: finish, Iteration: iteration}); err != nil {
+			if err := emitAgentEvent(emit, Event{Type: EventCompleted, FinishReason: finishReason, Iteration: iteration}); err != nil {
 				return result, err
 			}
 			state.Messages = append(state.Messages, llm.Message{Role: llm.RoleAssistant, Text: turnText.String()})
-			return TurnResult{Messages: state.Messages, FinishReason: finish, MCP: result.MCP}, nil
+			return finish(TurnResult{Messages: state.Messages, FinishReason: finishReason}), nil
 		}
-		if finish != llm.FinishReasonToolCalls {
-			return result, fmt.Errorf("LLM iteration %d emitted tool calls with finish reason %q", iteration, finish)
+		if finishReason != llm.FinishReasonToolCalls {
+			return result, fmt.Errorf("LLM iteration %d emitted tool calls with finish reason %q", iteration, finishReason)
 		}
 		if len(calls) > maxToolCallsPerTurn {
 			return result, fmt.Errorf("LLM iteration %d requested %d tools, maximum is %d", iteration, len(calls), maxToolCallsPerTurn)
@@ -315,6 +335,11 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		for _, call := range calls {
 			if !selection.known(call.Name) {
 				return result, fmt.Errorf("LLM requested unknown MCP tool %q", call.Name)
+			}
+			// The bound of the arguments a turn stores, for every call, the
+			// calls of the agent included.
+			if len(call.Arguments) > maxToolArguments {
+				return result, fmt.Errorf("tool %q arguments exceed %d bytes", call.Name, maxToolArguments)
 			}
 		}
 		state.TotalToolCalls += len(calls)

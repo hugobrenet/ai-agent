@@ -17,20 +17,26 @@ import (
 var ErrToolCallLimit = errors.New("tool call limit exceeded")
 
 const (
-	maxToolCallsPerTurn      = 8
-	maxToolCallsPerAsk       = 16
-	maxToolArguments         = 256 << 10
-	maxToolResult            = 1 << 20
-	maxToolNameBytes         = 128
-	maxToolDescriptionBytes  = 4 << 10
-	maxToolInputSchemaBytes  = 256 << 10
+	maxToolCallsPerTurn     = 8
+	maxToolCallsPerAsk      = 16
+	maxToolArguments        = 256 << 10
+	maxToolResult           = 1 << 20
+	maxToolNameBytes        = 128
+	maxToolDescriptionBytes = 4 << 10
+	maxToolInputSchemaBytes = 256 << 10
+	// maxModelToolCatalogBytes bounds the tools of one model request, not
+	// the catalog: a larger catalog is searched.
 	maxModelToolCatalogBytes = 1 << 20
 )
+
+// toolBytes is the size of a tool in a model request.
+func toolBytes(tool llm.Tool) int {
+	return len(tool.Name) + len(tool.Description) + len(tool.InputSchema)
+}
 
 func convertTools(tools []*mcp.Tool) ([]llm.Tool, map[string]struct{}, error) {
 	converted := make([]llm.Tool, 0, len(tools))
 	names := make(map[string]struct{}, len(tools))
-	catalogBytes := 0
 	for index, tool := range tools {
 		if tool == nil {
 			return nil, nil, fmt.Errorf("MCP tool %d is nil", index)
@@ -51,11 +57,6 @@ func convertTools(tools []*mcp.Tool) ([]llm.Tool, map[string]struct{}, error) {
 		if len(schema) > maxToolInputSchemaBytes {
 			return nil, nil, fmt.Errorf("MCP tool %d input schema exceeds %d bytes", index, maxToolInputSchemaBytes)
 		}
-		definitionBytes := len(tool.Name) + len(tool.Description) + len(schema)
-		if catalogBytes+definitionBytes > maxModelToolCatalogBytes {
-			return nil, nil, fmt.Errorf("model tool catalog exceeds %d bytes", maxModelToolCatalogBytes)
-		}
-		catalogBytes += definitionBytes
 		names[tool.Name] = struct{}{}
 		converted = append(converted, llm.Tool{
 			Name:        tool.Name,

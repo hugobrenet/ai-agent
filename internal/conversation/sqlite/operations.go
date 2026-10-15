@@ -660,13 +660,25 @@ func validateIdentifier(kind string, value string) error {
 	return nil
 }
 
+// maxRunShownTools bounds the tools a run records as shown.
+const maxRunShownTools = 256
+
 // encodeRuns adds run to the runs of a turn, unless it equals the last one,
 // with its texts announced by servers bounded.
 func encodeRuns(runs []conversation.TurnRun, run conversation.TurnRun) ([]byte, error) {
 	for _, field := range []*string{&run.AgentVersion, &run.Model, &run.SystemPromptSHA256, &run.MCPServer, &run.MCPVersion, &run.ToolsSHA256} {
 		*field = boundedText(*field, 256)
 	}
-	if len(runs) == 0 || runs[len(runs)-1] != run {
+	if len(run.ShownTools) > maxRunShownTools {
+		run.ShownToolsOmitted += len(run.ShownTools) - maxRunShownTools
+		run.ShownTools = run.ShownTools[:maxRunShownTools]
+	}
+	shown := make([]string, 0, len(run.ShownTools))
+	for _, name := range run.ShownTools {
+		shown = append(shown, boundedText(name, 128))
+	}
+	run.ShownTools = shown
+	if len(runs) == 0 || !runs[len(runs)-1].Equal(run) {
 		if len(runs) >= conversation.MaxTurnRuns {
 			return nil, fmt.Errorf("%w: a turn records at most %d runs", conversation.ErrLimit, conversation.MaxTurnRuns)
 		}

@@ -62,11 +62,6 @@ func TestConvertToolsBoundsModelVisibleDefinitions(t *testing.T) {
 			}},
 			want: "input schema exceeds",
 		},
-		{
-			name:  "aggregate catalog",
-			tools: modelCatalogTools(),
-			want:  "model tool catalog exceeds",
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, _, err := convertTools(test.tools); err == nil || !strings.Contains(err.Error(), test.want) {
