@@ -148,16 +148,25 @@ scoring at least `OPENSVC_AI_TOOL_SEARCH_SCORE_RATIO` (0.30 by default, an
 experimental value) of the best score of the search are shown from the next
 model call of the turn; the others are listed with `shown` false and
 `reason` `low_score`. BM25 scores compare within one search only, hence a
-ratio rather than an absolute score. A tool already shown stays shown. A
+ratio rather than an absolute score. The result lists the tools first, then
+`next`, which names the tools shown and asks the model to call them directly
+rather than search for them again, then `hint`, about the tools not shown: a
+model reading the hint about the `low_score` tools first searched again for
+the tools already shown, until its searches and iterations ran out. A tool already shown stays shown. A
 query naming a tool of the catalog exactly returns that tool alone, marked
 `exact`, without a BM25 ranking, and shows it within the budget, never
-removing a core tool for it: the way to show a tool listed but not shown. A ratio of `0` shows every
+removing a core tool for it: the way to show a tool listed but not shown.
+Only the hint of a result says so, beside the tools it concerns: said in the
+system prompt and in the description of `search_tools`, it made the model
+search again the exact name of the tools already shown. A ratio of `0` shows every
 result. When the tools shown would
 exceed the size of a model request, the oldest tools that are not core make
 room, those of the history first; a tool that still does not fit is
 returned with `shown` false and `reason` `budget`. A turn runs at most 3
 valid searches, counted in its tool calls; a refused search is a tool error
-for the model and does not count. A turn suspended while searching keeps
+for the model and does not count. The last search says so in `next`, and
+`search_tools` is no longer offered to the model afterwards: it answers with
+the tools shown. A search it still requests is refused as a tool error. A turn suspended while searching keeps
 searching when it resumes. A tool of the catalog the model calls without having been shown it
 runs as any other, with its annotations and confirmation. The searches are
 stored with the tool calls of the turn, so that a feedback shows them, and

@@ -182,11 +182,19 @@ func TestSearchRefusalsAreToolErrors(t *testing.T) {
 	}
 }
 
+// Past the searches of a turn, search_tools is no longer offered, and the
+// last search says so: the model answers instead of searching in a loop. A
+// search the model still calls is refused as a tool error.
 func TestSearchIsLimitedPerTurn(t *testing.T) {
 	session := &fakeSession{tools: searchCatalog()}
+	var offered [][]string
 	steps := []llmStep{}
 	for i := range maxSearchesPerTurn + 1 {
-		steps = append(steps, searchCallStep(string(rune('a'+i)), SearchToolName, `{"query":"node"}`))
+		step := searchCallStep(string(rune('a'+i)), SearchToolName, `{"query":"node"}`)
+		steps = append(steps, func(request llm.Request, emit llm.EmitFunc) error {
+			offered = append(offered, toolNames(request.Tools))
+			return step(request, emit)
+		})
 	}
 	steps = append(steps, textStep("done"))
 	agent := searchAgent(t, &scriptedLLM{t: t, steps: steps}, session, Config{})
@@ -194,6 +202,14 @@ func TestSearchIsLimitedPerTurn(t *testing.T) {
 	result, err := agent.RunTurn(t.Context(), nil, "search", func(Event) error { return nil })
 	if err != nil {
 		t.Fatal(err)
+	}
+	for i, tools := range offered {
+		if slices.Contains(tools, SearchToolName) != (i < maxSearchesPerTurn) {
+			t.Fatalf("request %d offered %v", i+1, tools)
+		}
+	}
+	if final := result.Messages[2*maxSearchesPerTurn].ToolResults[0]; final.IsError || !strings.Contains(string(final.Content), "last search") {
+		t.Fatalf("last search = %s", final.Content)
 	}
 	last := result.Messages[2*(maxSearchesPerTurn+1)].ToolResults[0]
 	if !last.IsError || !strings.Contains(string(last.Content), "limited") {
@@ -541,6 +557,7 @@ func newTestSelection(t *testing.T, tools []*mcp.Tool, ratio float64) (*toolSele
 
 type searchResponse struct {
 	Tools []searchMatch `json:"tools"`
+	Next  string        `json:"next"`
 	Hint  string        `json:"hint"`
 	raw   string
 }
@@ -590,8 +607,17 @@ func TestSearchShowsOnlyTheResultsNearTheBestScore(t *testing.T) {
 	if !slices.ContainsFunc(response.Tools, func(match searchMatch) bool { return match.Reason == "low_score" }) {
 		t.Fatalf("no result was filtered: %+v", response.Tools)
 	}
-	if !strings.Contains(response.Hint, "exact name") || strings.Contains(response.Hint, "exceed") {
+	if !strings.Contains(response.Hint, "exact name") || !strings.Contains(response.Hint, "no shown tool fits") || strings.Contains(response.Hint, "exceed") {
 		t.Fatalf("hint = %q", response.Hint)
+	}
+	// The next step names the tools shown, and comes before the hint about
+	// those not shown, so that the hint is not read as the next step.
+	if !strings.Contains(response.Next, "call list_node_hardware") || !strings.Contains(response.Next, "without searching for them again") ||
+		strings.Contains(response.Next, "last search") {
+		t.Fatalf("next = %q", response.Next)
+	}
+	if tools, next, hint := strings.Index(response.raw, `"tools"`), strings.Index(response.raw, `"next"`), strings.Index(response.raw, `"hint"`); tools >= next || next >= hint {
+		t.Fatalf("field order of %s", response.raw)
 	}
 	// The results filtered stay listed with their summary, never shown.
 	for _, match := range response.Tools {
@@ -703,5 +729,16 @@ func TestAnExactNameIsReturnedAloneAndKept(t *testing.T) {
 	response := runSearch(t, selection, titles, `{"query":"fifth","limit":10}`)
 	if len(response.Tools) != 1 || !response.Tools[0].Shown || !slices.Contains(selection.active, "fifth") || !slices.Contains(selection.active, "first") {
 		t.Fatalf("response = %+v, active = %v", response.Tools, selection.active)
+	}
+}
+
+// How to show a tool found but not shown is told by the hint of a search
+// result only: said in the prompt or the description of search_tools, it
+// made the model search again the exact name of the tools already shown.
+func TestOnlyTheSearchHintTellsHowToShowAFilteredTool(t *testing.T) {
+	for name, text := range map[string]string{"instruction": searchInstruction, "description": searchTool.Description, "schema": string(searchTool.InputSchema)} {
+		if strings.Contains(text, "exact name") {
+			t.Fatalf("the %s tells how to show a tool: %s", name, text)
+		}
 	}
 }

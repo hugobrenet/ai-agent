@@ -42,10 +42,14 @@ const (
 const searchKeywordsGuidance = "Use 3–8 English keywords describing the required capability. Omit greetings, full sentences, and specific resource identifiers."
 
 // searchInstruction is added to the system prompt when the model sees a
-// part of the catalog only.
+// part of the catalog only. It does not tell how to show a tool found but
+// not shown: the hint of a search result does, beside those tools. Said in
+// the prompt and in the description of search_tools, it made the model
+// search the exact name of the tools already shown, in 11 of 12 replays of
+// a first turn, against none without it.
 const searchInstruction = "Only some tools are listed. When none fits, call " + SearchToolName +
 	"; the tools it finds can be called from the next step on. " + searchKeywordsGuidance + " " + searchBatchGuidance +
-	" To get the definition of a tool found but not shown, search its exact name."
+	" Call the tools a search shows directly; never search again for a tool already shown."
 
 // searchBatchGuidance asks the model to request the tools a search found
 // together, as the backend prompts do for independent calls.
@@ -67,8 +71,7 @@ var searchToolSchema = json.RawMessage(fmt.Sprintf(`{"type":"object","properties
 var searchTool = llm.Tool{
 	Name: SearchToolName,
 	Description: "Search the tools of the backend when none of the listed tools fits the question. " + searchKeywordsGuidance +
-		" Returns the best matching tools with a summary; those shown can be called from the next step on." +
-		" To show a tool found but not shown, search its exact name.",
+		" Returns the best matching tools with a summary; those shown can be called from the next step on.",
 	InputSchema: searchToolSchema,
 }
 
@@ -219,7 +222,11 @@ func (s *toolSelection) tools() []llm.Tool {
 	tools := s.all
 	if s.search {
 		tools = make([]llm.Tool, 0, len(s.active)+1)
-		tools = append(tools, searchTool)
+		// Past the searches of a turn, search_tools is no longer offered: the
+		// model answers with the tools shown instead of searching in a loop.
+		if s.searches < maxSearchesPerTurn {
+			tools = append(tools, searchTool)
+		}
 		for _, name := range s.active {
 			tools = append(tools, s.catalog[name])
 		}
@@ -300,10 +307,9 @@ func (s *toolSelection) run(call llm.ToolCall, titles map[string]string) llm.Too
 				match.Reason = notShownBudget
 				hint = "The tool cannot be shown: its definition exceeds the size of a model request beside the core tools. Answer with the tools shown."
 			}
-			text, _ := json.Marshal(struct {
-				Tools []searchMatch `json:"tools"`
-				Hint  string        `json:"hint,omitempty"`
-			}{[]searchMatch{match}, hint})
+			matches := []searchMatch{match}
+			response := searchReply{Tools: matches, Next: s.next(matches), Hint: hint}
+			text, _ := json.Marshal(response)
 			return llm.ToolResult{CallID: call.ID, Content: textToolResult(string(text))}
 		}
 	}
@@ -349,22 +355,48 @@ func (s *toolSelection) run(call llm.ToolCall, titles map[string]string) llm.Too
 		}
 		matches = append(matches, match)
 	}
-	response := map[string]any{"tools": matches}
+	response := searchReply{Tools: matches, Next: s.next(matches)}
 	var hints []string
 	if len(matches) == 0 {
 		hints = append(hints, "No tool matches these keywords. Try other English words, or answer with the tools available.")
 	}
 	if reasons[notShownLowScore] {
-		hints = append(hints, "The tools with reason "+notShownLowScore+" matched these keywords weakly and are not shown: to use one, call "+SearchToolName+" with its exact name.")
+		hints = append(hints, "The tools with reason "+notShownLowScore+" matched these keywords weakly and are not shown. Only when no shown tool fits, search the exact name of one to show it.")
 	}
 	if reasons[notShownBudget] {
 		hints = append(hints, "The tools with reason "+notShownBudget+" cannot be shown: their definitions exceed the size of a model request. Answer with the tools shown.")
 	}
-	if len(hints) > 0 {
-		response["hint"] = strings.Join(hints, " ")
-	}
+	response.Hint = strings.Join(hints, " ")
 	text, _ := json.Marshal(response)
 	return llm.ToolResult{CallID: call.ID, Content: textToolResult(string(text))}
+}
+
+// searchReply is the result of search_tools for the model. Its fields
+// keep this order: the tools found, then what to do next, then the hints
+// about the tools not shown, so that a hint is not read as the next step.
+type searchReply struct {
+	Tools []searchMatch `json:"tools"`
+	Next  string        `json:"next,omitempty"`
+	Hint  string        `json:"hint,omitempty"`
+}
+
+// next tells the model to call the tools a search shows, rather than to
+// search for them again, and when the searches of the turn are spent.
+func (s *toolSelection) next(matches []searchMatch) string {
+	var shown []string
+	for _, match := range matches {
+		if match.Shown {
+			shown = append(shown, match.Name)
+		}
+	}
+	var next string
+	if len(shown) > 0 {
+		next = "The tools shown are callable now: call " + strings.Join(shown, ", ") + " directly in your next step if they fit, without searching for them again."
+	}
+	if s.searches >= maxSearchesPerTurn {
+		next = strings.TrimSpace(next + " This was the last search of this question: answer with the tools shown.")
+	}
+	return next
 }
 
 // summary is the first sentence of a description, bounded.
