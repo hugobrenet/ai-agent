@@ -67,7 +67,9 @@ func textStep(text string) llmStep {
 	}
 }
 
-func TestSearchShowsTheCoreThenTheToolsFound(t *testing.T) {
+// The tools a search found come right after search_tools, before the core
+// tools: listed last, the model searched again for them.
+func TestSearchShowsTheToolsFoundBeforeTheCore(t *testing.T) {
 	session := &fakeSession{tools: searchCatalog()}
 	var requests []llm.Request
 	record := func(step llmStep) llmStep {
@@ -92,7 +94,7 @@ func TestSearchShowsTheCoreThenTheToolsFound(t *testing.T) {
 	if got := toolNames(requests[0].Tools); !slices.Equal(got, []string{SearchToolName, "get_cluster_status"}) {
 		t.Fatalf("first tools = %v", got)
 	}
-	if got := toolNames(requests[1].Tools); !slices.Equal(got, []string{SearchToolName, "get_cluster_status", "list_node_hardware"}) {
+	if got := toolNames(requests[1].Tools); !slices.Equal(got, []string{SearchToolName, "list_node_hardware", "get_cluster_status"}) {
 		t.Fatalf("tools after the search = %v", got)
 	}
 	if !strings.Contains(requests[0].Messages[0].Text, searchInstruction) {
@@ -744,5 +746,15 @@ func TestOnlyTheSearchHintTellsHowToShowAFilteredTool(t *testing.T) {
 		if strings.Contains(text, "exact name") {
 			t.Fatalf("the %s tells how to show a tool: %s", name, text)
 		}
+	}
+}
+
+// Of the tools several searches found, the most recent come first.
+func TestTheToolsFoundLastComeFirst(t *testing.T) {
+	selection, titles := newTestSelection(t, filterCatalog(), 0)
+	runSearch(t, selection, titles, `{"query":"list_node_disks"}`)
+	runSearch(t, selection, titles, `{"query":"list_node_packages"}`)
+	if got := toolNames(selection.tools()); !slices.Equal(got, []string{SearchToolName, "list_node_packages", "list_node_disks", "get_cluster_status"}) {
+		t.Fatalf("tools = %v", got)
 	}
 }

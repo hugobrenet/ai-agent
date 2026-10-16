@@ -133,7 +133,10 @@ one model request (1 MiB), the model does not see them all. A threshold of
   `_meta`. om3-mcp and oc3-mcp mark their own; the agent holds no list of
   them;
 - the tools called in the recent history of the conversation, at most 8;
-- the tools its searches found during the turn.
+- the tools its searches found during the turn. They come right after
+  `search_tools`, the most recent first, then the core tools and those of the
+  history: listed last, after the core tools, the model searched again for a
+  tool it had been shown in half of the replays of a first turn.
 
 `search_tools` takes a query and an optional limit (5 by default, 10 at
 most). Its description, the description of its query and the system prompt

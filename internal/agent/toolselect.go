@@ -90,6 +90,9 @@ type toolSelection struct {
 	bytes int
 	// shown are the tools sent to the model during the turn, in order.
 	shown []string
+	// found are the tools the searches of the turn activated, the most
+	// recent first.
+	found []string
 	// core are the tools never removed to make room for the tools found.
 	core map[string]bool
 	// scoreRatio is the share of the best score under which a result is
@@ -204,13 +207,21 @@ func (s *toolSelection) show(name string) bool {
 			return false
 		}
 		s.bytes -= toolBytes(s.catalog[s.active[oldest]])
+		s.found = slices.DeleteFunc(s.found, func(found string) bool { return found == s.active[oldest] })
 		s.active = slices.Delete(s.active, oldest, oldest+1)
 	}
-	return s.add(name)
+	if !s.add(name) {
+		return false
+	}
+	s.found = slices.Insert(s.found, 0, name)
+	return true
 }
 
-// tools are the tools of the next model request. Found tools come last, so
-// that the start of the list stays the same within the turn.
+// tools are the tools of the next model request: search_tools, the tools
+// the searches of the turn found, the most recent first, then the core tools
+// and those of the history. A tool found right after search_tools is called:
+// listed after the core tools, the model searched again for a tool it had
+// been shown in 12 of 24 replays, against none.
 func (s *toolSelection) tools() []llm.Tool {
 	tools := s.all
 	if s.search {
@@ -220,8 +231,13 @@ func (s *toolSelection) tools() []llm.Tool {
 		if s.searches < maxSearchesPerTurn {
 			tools = append(tools, searchTool)
 		}
-		for _, name := range s.active {
+		for _, name := range s.found {
 			tools = append(tools, s.catalog[name])
+		}
+		for _, name := range s.active {
+			if !slices.Contains(s.found, name) {
+				tools = append(tools, s.catalog[name])
+			}
 		}
 	}
 	for _, tool := range tools {
