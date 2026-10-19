@@ -16,6 +16,8 @@ type createRequest struct {
 	StreamOptions       streamOptions  `json:"stream_options"`
 	Store               bool           `json:"store"`
 	MaxCompletionTokens int            `json:"max_completion_tokens"`
+	// ReasoningEffort is left out unless configured: the model applies its own.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type streamOptions struct {

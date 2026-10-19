@@ -284,3 +284,29 @@ func newTestClient(t *testing.T, baseURL string, authMode string, tokenSource To
 	}
 	return client
 }
+
+// The reasoning effort is sent when configured, and left out otherwise, so
+// that the model applies its own.
+func TestClientSendsTheConfiguredReasoningEffort(t *testing.T) {
+	for _, effort := range []string{"", "low"} {
+		var body map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			_ = json.NewDecoder(request.Body).Decode(&body)
+			response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+			_, _ = fmt.Fprint(response, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n")
+			_, _ = fmt.Fprint(response, "data: [DONE]\n\n")
+		}))
+		client, err := New(Config{BaseURL: server.URL + "/v1", Model: "test-model", AuthMode: AuthModeNone, Timeout: time.Minute, MaxOutputTokens: 1024, ReasoningEffort: effort}, server.Client())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Stream(t.Context(), llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Text: "health"}}}, func(llm.Event) error { return nil }); err != nil {
+			t.Fatalf("effort %q: %v", effort, err)
+		}
+		server.Close()
+		value, present := body["reasoning_effort"]
+		if effort == "" && present || effort != "" && value != effort {
+			t.Fatalf("effort %q: reasoning_effort = %v (present %v)", effort, value, present)
+		}
+	}
+}

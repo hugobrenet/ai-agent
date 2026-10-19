@@ -94,6 +94,7 @@ webapp origins, or `*` to allow all origins. Empty by default. See the
 | `OPENSVC_AI_TOOL_SEARCH_THRESHOLD` | `20` | `1` to `1024`, or `-1` to search only catalogs too large for one model request |
 | `OPENSVC_AI_LLM_TIMEOUT` | `2m` | any positive duration |
 | `OPENSVC_AI_LLM_MAX_OUTPUT_TOKENS` | `4096` | 1 to 131072 |
+| `OPENSVC_AI_LLM_REASONING_EFFORT` | unset: the model applies its own | `none`, `minimal`, `low`, `medium`, `high` or `xhigh`, as the model accepts; `responses` and `chat_completions` protocols only |
 
 Durations use the Go syntax, such as `90s` or `2h30m`. An invalid value
 prevents startup.

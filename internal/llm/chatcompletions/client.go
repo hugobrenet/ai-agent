@@ -32,6 +32,8 @@ type Config struct {
 	TokenSource     TokenSource
 	Timeout         time.Duration
 	MaxOutputTokens int
+	// ReasoningEffort is sent with each request when set.
+	ReasoningEffort string
 }
 
 // Client implements llm.Client using the Chat Completions HTTP protocol.
@@ -41,6 +43,7 @@ type Client struct {
 	authMode        string
 	tokenSource     TokenSource
 	maxOutputTokens int
+	reasoningEffort string
 	httpClient      *http.Client
 }
 
@@ -85,6 +88,7 @@ func New(config Config, httpClient *http.Client) (*Client, error) {
 		authMode:        config.AuthMode,
 		tokenSource:     config.TokenSource,
 		maxOutputTokens: config.MaxOutputTokens,
+		reasoningEffort: config.ReasoningEffort,
 		httpClient:      &clientCopy,
 	}, nil
 }
@@ -101,6 +105,7 @@ func (c *Client) Stream(ctx context.Context, request llm.Request, emit llm.EmitF
 	if err != nil {
 		return err
 	}
+	wireRequest.ReasoningEffort = c.reasoningEffort
 	body, err := json.Marshal(wireRequest)
 	if err != nil {
 		return fmt.Errorf("encode Chat Completions request: %w", err)

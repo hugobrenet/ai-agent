@@ -153,3 +153,38 @@ func TestLoadLLMMessagesAuthentication(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadLLMReasoningEffort(t *testing.T) {
+	base := map[string]string{
+		"OPENSVC_AI_LLM_PROTOCOL": "responses", "OPENSVC_AI_LLM_BASE_URL": "https://llm.example.test/v1",
+		"OPENSVC_AI_LLM_MODEL": "test-model", "OPENSVC_AI_LLM_AUTH_MODE": "none",
+	}
+	load := func(changes map[string]string) (LLMConfig, error) {
+		values := map[string]string{}
+		for key, value := range base {
+			values[key] = value
+		}
+		for key, value := range changes {
+			values[key] = value
+		}
+		return loadLLM(func(key string) string { return values[key] })
+	}
+	// Unset, the requests ask no effort: the model applies its own.
+	if config, err := load(nil); err != nil || config.ReasoningEffort != "" {
+		t.Fatalf("unset: %+v, %v", config, err)
+	}
+	for _, protocol := range []string{"responses", "chat_completions"} {
+		if config, err := load(map[string]string{"OPENSVC_AI_LLM_PROTOCOL": protocol, "OPENSVC_AI_LLM_REASONING_EFFORT": " low "}); err != nil || config.ReasoningEffort != "low" {
+			t.Fatalf("%s: %+v, %v", protocol, config, err)
+		}
+	}
+	for _, changes := range []map[string]string{
+		{"OPENSVC_AI_LLM_REASONING_EFFORT": "fast"},
+		{"OPENSVC_AI_LLM_REASONING_EFFORT": "Low"},
+		{"OPENSVC_AI_LLM_REASONING_EFFORT": "low", "OPENSVC_AI_LLM_PROTOCOL": "messages"},
+	} {
+		if _, err := load(changes); err == nil {
+			t.Fatalf("%v accepted", changes)
+		}
+	}
+}

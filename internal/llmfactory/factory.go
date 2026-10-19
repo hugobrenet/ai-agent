@@ -40,6 +40,7 @@ func New(processConfig config.LLMConfig, httpClient *http.Client) (llm.Client, e
 			TokenSource:     tokenSource,
 			Timeout:         processConfig.Timeout,
 			MaxOutputTokens: processConfig.MaxOutputTokens,
+			ReasoningEffort: processConfig.ReasoningEffort,
 		}, httpClient)
 	case config.LLMProtocolChatCompletions:
 		var tokenSource chatcompletions.TokenSource
@@ -53,6 +54,7 @@ func New(processConfig config.LLMConfig, httpClient *http.Client) (llm.Client, e
 			TokenSource:     tokenSource,
 			Timeout:         processConfig.Timeout,
 			MaxOutputTokens: processConfig.MaxOutputTokens,
+			ReasoningEffort: processConfig.ReasoningEffort,
 		}, httpClient)
 	default:
 		return nil, fmt.Errorf("unsupported LLM protocol %q", processConfig.Protocol)

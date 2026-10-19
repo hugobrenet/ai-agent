@@ -32,6 +32,8 @@ type Config struct {
 	TokenSource     TokenSource
 	Timeout         time.Duration
 	MaxOutputTokens int
+	// ReasoningEffort is sent with each request when set.
+	ReasoningEffort string
 }
 
 // Client implements llm.Client using the Responses HTTP protocol.
@@ -41,6 +43,7 @@ type Client struct {
 	authMode        string
 	tokenSource     TokenSource
 	maxOutputTokens int
+	reasoningEffort string
 	httpClient      *http.Client
 }
 
@@ -85,6 +88,7 @@ func New(config Config, httpClient *http.Client) (*Client, error) {
 		authMode:        config.AuthMode,
 		tokenSource:     config.TokenSource,
 		maxOutputTokens: config.MaxOutputTokens,
+		reasoningEffort: config.ReasoningEffort,
 		httpClient:      &clientCopy,
 	}, nil
 }
@@ -100,6 +104,9 @@ func (c *Client) Stream(ctx context.Context, request llm.Request, emit llm.EmitF
 	wireRequest, err := newCreateRequest(c.model, c.maxOutputTokens, request)
 	if err != nil {
 		return err
+	}
+	if c.reasoningEffort != "" {
+		wireRequest.Reasoning = &reasoning{Effort: c.reasoningEffort}
 	}
 	body, err := json.Marshal(wireRequest)
 	if err != nil {

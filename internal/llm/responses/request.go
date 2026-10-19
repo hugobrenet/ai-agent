@@ -15,6 +15,13 @@ type createRequest struct {
 	Stream          bool           `json:"stream"`
 	Store           bool           `json:"store"`
 	MaxOutputTokens int            `json:"max_output_tokens"`
+	// Reasoning is left out unless configured: the model applies its own.
+	Reasoning *reasoning `json:"reasoning,omitempty"`
+}
+
+// reasoning is the reasoning effort a request asks for.
+type reasoning struct {
+	Effort string `json:"effort"`
 }
 
 type inputMessage struct {
