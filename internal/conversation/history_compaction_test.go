@@ -493,3 +493,42 @@ func TestCompactedContentsKeepTheirIndexes(t *testing.T) {
 		t.Fatalf("prefix = %v, omissions = %+v", envelope.Content, marker.Omissions)
 	}
 }
+
+// The agent reads the tools the searches of the former turns showed in their
+// results: a search result, a text content alone, stays whole under the
+// budget of a result and under the global budget.
+func TestCompactHistoryKeepsASearchResultWhole(t *testing.T) {
+	var tools []string
+	for i := range 40 {
+		tools = append(tools, fmt.Sprintf(`{"name":"tool_%d","summary":"%s","shown":true}`, i, strings.Repeat("a summary ", 20)))
+	}
+	reply, _ := json.Marshal(`{"tools":[` + strings.Join(tools, ",") + `],"next":"The tools shown are callable now."}`)
+	search := json.RawMessage(`{"content":[{"type":"text","text":` + string(reply) + `}]}`)
+	if len(search) <= DefaultHistoryCompaction.MaxResultBytes {
+		t.Fatalf("the search result holds %d bytes, not more than the budget of a result", len(search))
+	}
+	history := turnWith("search", llm.ToolResult{CallID: "s", Content: search})
+	history[1].ToolCalls[0].Name = "search_tools"
+	for turn := range 6 {
+		var results []llm.ToolResult
+		for i := range 4 {
+			results = append(results, llm.ToolResult{CallID: fmt.Sprintf("t%d-%d", turn, i), Content: structuredResult(t, disks(24), true)})
+		}
+		history = append(history, turnWith(fmt.Sprintf("question %d", turn), results...)...)
+	}
+	compacted, stats, _ := compactHistory(history, HistoryCompaction{})
+	if stats.CompactedResults == 0 {
+		t.Fatalf("the history was not compacted: %+v", stats)
+	}
+	for _, message := range compacted {
+		for _, result := range message.ToolResults {
+			if result.CallID == "s" {
+				if string(result.Content) != string(search) {
+					t.Fatalf("the search result was compacted: %s", result.Content)
+				}
+				return
+			}
+		}
+	}
+	t.Fatalf("the search turn was left out: %+v", stats)
+}

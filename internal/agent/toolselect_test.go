@@ -758,3 +758,102 @@ func TestTheToolsFoundLastComeFirst(t *testing.T) {
 		t.Fatalf("tools = %v", got)
 	}
 }
+
+// The tools a search of a former turn showed stay shown, as those called:
+// the question after an action follows it without searching again.
+func TestSearchKeepsTheToolsAFormerSearchShowed(t *testing.T) {
+	catalog := searchCatalog()
+	catalog[0].Meta = nil
+	session := &fakeSession{tools: catalog}
+	shown, _ := json.Marshal(searchReply{Tools: []searchMatch{{Name: "list_node_packages", Shown: true}, {Name: "get_node", Shown: false, Reason: notShownLowScore}}})
+	history := []llm.Message{
+		{Role: llm.RoleUser, Text: "packages?"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s", Name: SearchToolName, Arguments: json.RawMessage(`{"query":"packages"}`)}}},
+		{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "s", Content: textToolResult(string(shown))}}},
+		{Role: llm.RoleAssistant, Text: "which node?"},
+	}
+	var tools []string
+	model := &scriptedLLM{t: t, steps: []llmStep{func(request llm.Request, emit llm.EmitFunc) error {
+		tools = toolNames(request.Tools)
+		return textStep("ok")(request, emit)
+	}}}
+	if _, err := searchAgent(t, model, session, Config{}).RunTurn(t.Context(), history, "n1", func(Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	// A tool found but not shown is not carried.
+	if !slices.Equal(tools, []string{SearchToolName, "list_node_packages"}) {
+		t.Fatalf("tools = %v", tools)
+	}
+}
+
+func TestSearchShownSkipsWhatItCannotRead(t *testing.T) {
+	for _, result := range []llm.ToolResult{
+		{IsError: true, Content: textToolResult(`{"tools":[{"name":"a","shown":true}]}`)},
+		{Content: json.RawMessage(`{"_history_compaction":"omitted"}`)},
+		{Content: textToolResult("not json")},
+		{},
+	} {
+		if names := searchShown(result); names != nil {
+			t.Fatalf("searchShown(%s) = %v", result.Content, names)
+		}
+	}
+}
+
+// The tools a former search showed are listed before the core tools, as the
+// tools found in the turn: listed after, the model searched them again.
+func TestSearchListsTheToolsAFormerSearchShowedFirst(t *testing.T) {
+	session := &fakeSession{tools: searchCatalog()}
+	shown, _ := json.Marshal(searchReply{Tools: []searchMatch{{Name: "list_node_packages", Shown: true}}})
+	history := []llm.Message{
+		{Role: llm.RoleUser, Text: "packages?"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s", Name: SearchToolName, Arguments: json.RawMessage(`{"query":"packages"}`)}}},
+		{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "s", Content: textToolResult(string(shown))}}},
+		{Role: llm.RoleAssistant, Text: "which node?"},
+	}
+	var tools []string
+	model := &scriptedLLM{t: t, steps: []llmStep{func(request llm.Request, emit llm.EmitFunc) error {
+		tools = toolNames(request.Tools)
+		return textStep("ok")(request, emit)
+	}}}
+	if _, err := searchAgent(t, model, session, Config{}).RunTurn(t.Context(), history, "n1", func(Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(tools, []string{SearchToolName, "list_node_packages", "get_cluster_status"}) {
+		t.Fatalf("tools = %v", tools)
+	}
+}
+
+// A search of the last turn showing many tools keeps 4 of them, the first,
+// and does not push out a tool called the turn before.
+func TestSearchBoundsTheToolsAFormerSearchShowed(t *testing.T) {
+	catalog := searchCatalog()
+	var matches []searchMatch
+	for i := range 8 {
+		name := fmt.Sprintf("tool_%d", i)
+		catalog = append(catalog, &mcp.Tool{Name: name, Description: "A tool.", InputSchema: objectSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}})
+		matches = append(matches, searchMatch{Name: name, Shown: true})
+	}
+	shown, _ := json.Marshal(searchReply{Tools: matches})
+	history := []llm.Message{
+		{Role: llm.RoleUser, Text: "hardware?"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "h", Name: "list_node_hardware", Arguments: json.RawMessage(`{}`)}}},
+		{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "h", Content: json.RawMessage(`{}`)}}},
+		{Role: llm.RoleAssistant, Text: "listed"},
+		{Role: llm.RoleUser, Text: "anything else?"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "s", Name: SearchToolName, Arguments: json.RawMessage(`{"query":"tools"}`)}}},
+		{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "s", Content: textToolResult(string(shown))}}},
+		{Role: llm.RoleAssistant, Text: "eight tools"},
+	}
+	var tools []string
+	model := &scriptedLLM{t: t, steps: []llmStep{func(request llm.Request, emit llm.EmitFunc) error {
+		tools = toolNames(request.Tools)
+		return textStep("ok")(request, emit)
+	}}}
+	if _, err := searchAgent(t, model, &fakeSession{tools: catalog}, Config{}).RunTurn(t.Context(), history, "and?", func(Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{SearchToolName, "tool_0", "tool_1", "tool_2", "tool_3", "get_cluster_status", "list_node_hardware"}
+	if !slices.Equal(tools, want) {
+		t.Fatalf("tools = %v, want %v", tools, want)
+	}
+}
