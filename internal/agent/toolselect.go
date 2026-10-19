@@ -28,10 +28,14 @@ const (
 	// under which a result is listed but not shown, an experimental value.
 	DefaultSearchScoreRatio = 0.30
 
-	maxSearchesPerTurn    = 3
-	defaultSearchResults  = 5
-	maxSearchResults      = 10
-	maxHistoryTools       = 8
+	maxSearchesPerTurn   = 3
+	defaultSearchResults = 5
+	maxSearchResults     = 10
+	maxHistoryTools      = 8
+	// maxHistoryShownTools bounds the tools a search of the recent turns
+	// showed without the model calling them, apart from maxHistoryTools: a
+	// search of the last turn does not push out the tools called before.
+	maxHistoryShownTools  = 4
 	maxSearchSummaryBytes = 240
 	// maxModelTools bounds the tools of a suspended turn state.
 	maxModelTools = 1024
@@ -93,6 +97,9 @@ type toolSelection struct {
 	// found are the tools the searches of the turn activated, the most
 	// recent first.
 	found []string
+	// carried are the tools a search of the recent turns showed, the most
+	// recent first, shown before the core tools as found.
+	carried []string
 	// core are the tools never removed to make room for the tools found.
 	core map[string]bool
 	// scoreRatio is the share of the best score under which a result is
@@ -163,12 +170,34 @@ func (a *Agent) selectTools(mcpTools []*mcp.Tool, converted []llm.Tool, catalogH
 		}
 	}
 	// The tools of the last turns, the most recent first, for the questions
-	// that follow them.
+	// that follow them: those called, and apart those a search showed. A
+	// question such as "give me the result" after an action follows it with
+	// a tool the search of the action showed but the model did not call:
+	// listed before the core tools, as the tools found in the turn, the
+	// model called it in 12 replays of 12; listed after them, it searched
+	// again in 4, and without it in 9.
+	results := map[string]llm.ToolResult{}
+	for _, message := range history {
+		for _, result := range message.ToolResults {
+			results[result.CallID] = result
+		}
+	}
 	recent := 0
-	for i := len(history) - 1; i >= 0 && recent < maxHistoryTools; i-- {
+	for i := len(history) - 1; i >= 0; i-- {
 		for _, call := range slices.Backward(history[i].ToolCalls) {
-			if recent < maxHistoryTools && selection.add(call.Name) {
-				recent++
+			if call.Name != SearchToolName {
+				if recent < maxHistoryTools && selection.add(call.Name) {
+					recent++
+				}
+				continue
+			}
+			for _, name := range searchShown(results[call.ID]) {
+				if len(selection.carried) >= maxHistoryShownTools || selection.core[name] || slices.Contains(selection.carried, name) {
+					continue
+				}
+				if selection.add(name) || slices.Contains(selection.active, name) {
+					selection.carried = append(selection.carried, name)
+				}
 			}
 		}
 	}
@@ -176,6 +205,38 @@ func (a *Agent) selectTools(mcpTools []*mcp.Tool, converted []llm.Tool, catalogH
 		selection.add(name)
 	}
 	return selection, nil
+}
+
+// searchShown gives the tools a search_tools result showed, in its order: none
+// for a refused search, or a result the history compaction cut. It relies on
+// the compaction keeping a search result whole: the compaction reduces the
+// results with a structured content only, and a search result has a text
+// content alone. A search result with a structured content, or a
+// compaction of the text results, would silently forget the searches of the
+// former turns: TestCompactHistoryKeepsASearchResultWhole holds it.
+func searchShown(result llm.ToolResult) []string {
+	if result.IsError {
+		return nil
+	}
+	var content struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(result.Content, &content) != nil || len(content.Content) != 1 {
+		return nil
+	}
+	var reply searchReply
+	if json.Unmarshal([]byte(content.Content[0].Text), &reply) != nil {
+		return nil
+	}
+	var names []string
+	for _, match := range reply.Tools {
+		if match.Shown {
+			names = append(names, match.Name)
+		}
+	}
+	return names
 }
 
 // add activates a catalog tool, and reports whether it was not active yet. A
@@ -208,6 +269,7 @@ func (s *toolSelection) show(name string) bool {
 		}
 		s.bytes -= toolBytes(s.catalog[s.active[oldest]])
 		s.found = slices.DeleteFunc(s.found, func(found string) bool { return found == s.active[oldest] })
+		s.carried = slices.DeleteFunc(s.carried, func(carried string) bool { return carried == s.active[oldest] })
 		s.active = slices.Delete(s.active, oldest, oldest+1)
 	}
 	if !s.add(name) {
@@ -234,8 +296,13 @@ func (s *toolSelection) tools() []llm.Tool {
 		for _, name := range s.found {
 			tools = append(tools, s.catalog[name])
 		}
+		for _, name := range s.carried {
+			if !slices.Contains(s.found, name) && slices.Contains(s.active, name) {
+				tools = append(tools, s.catalog[name])
+			}
+		}
 		for _, name := range s.active {
-			if !slices.Contains(s.found, name) {
+			if !slices.Contains(s.found, name) && !slices.Contains(s.carried, name) {
 				tools = append(tools, s.catalog[name])
 			}
 		}
