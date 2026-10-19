@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,11 @@ const (
 	LLMAuthModeAPIKey          = "api_key"
 )
 
+// LLMReasoningEfforts are the reasoning efforts OPENSVC_AI_LLM_REASONING_EFFORT
+// takes; a model accepts some of them only, and refuses the others at its
+// first request.
+var LLMReasoningEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh"}
+
 // LLMConfig contains non-secret process configuration for one LLM backend.
 // APITokenEnv stores only the environment variable name, never its value.
 type LLMConfig struct {
@@ -31,6 +37,9 @@ type LLMConfig struct {
 	APITokenEnv     string
 	Timeout         time.Duration
 	MaxOutputTokens int
+	// ReasoningEffort is the reasoning effort the requests ask the model
+	// for; empty, the requests ask none, and the model applies its own.
+	ReasoningEffort string
 }
 
 // LoadLLM loads the LLM backend independently from the HTTP API configuration.
@@ -89,6 +98,15 @@ func loadLLM(getenv func(string) string) (LLMConfig, error) {
 			return LLMConfig{}, fmt.Errorf("parse OPENSVC_AI_LLM_MAX_OUTPUT_TOKENS %q: expected an integer between 1 and %d", value, maximumMaxOutputTokens)
 		}
 		config.MaxOutputTokens = maxOutputTokens
+	}
+	if value := strings.TrimSpace(getenv("OPENSVC_AI_LLM_REASONING_EFFORT")); value != "" {
+		if !slices.Contains(LLMReasoningEfforts, value) {
+			return LLMConfig{}, fmt.Errorf("OPENSVC_AI_LLM_REASONING_EFFORT %q must be one of %s", value, strings.Join(LLMReasoningEfforts, ", "))
+		}
+		if config.Protocol == LLMProtocolMessages {
+			return LLMConfig{}, fmt.Errorf("OPENSVC_AI_LLM_REASONING_EFFORT requires the responses or chat_completions protocol")
+		}
+		config.ReasoningEffort = value
 	}
 	return config, nil
 }
