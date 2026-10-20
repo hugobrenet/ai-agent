@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opensvc/ai-agent/internal/agent"
@@ -20,7 +21,16 @@ const (
 	maxAskRequestBytes = 64 << 10
 	maxPromptBytes     = 32 << 10
 	maxAskStreamBytes  = 16 << 20
-	askWriteTimeout    = 15 * time.Second
+)
+
+var (
+	// askWriteTimeout bounds each write of the stream, so that a client
+	// reading it slowly is cut off; it is cleared between writes, a tool or
+	// a model request may run longer without any.
+	askWriteTimeout = 15 * time.Second
+	// askKeepAliveInterval is how often the stream sends a comment while
+	// nothing else is written, which keeps idle proxies from closing it.
+	askKeepAliveInterval = 10 * time.Second
 )
 
 type AskRequest struct {
@@ -111,6 +121,7 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	response.WriteHeader(http.StatusOK)
 	flusher.Flush()
+	clearAskWriteDeadline(response)
 	startedAt := time.Now()
 	audit.event(request.Context(), prefix+"_started", appendAttributes(baseAttributes, slog.Int("status", http.StatusOK))...)
 
@@ -123,6 +134,39 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 	var activeToolName string
 	var activeToolStartedAt time.Time
 	var streamBytes int64
+	// The writes of the events and of the keep-alive comments are
+	// serialized, each under its own deadline: an HTTP/2 stream whose write
+	// deadline passes is reset, however long ago it was written.
+	var writeLock sync.Mutex
+	write := func(frame func() error) error {
+		writeLock.Lock()
+		defer writeLock.Unlock()
+		if err := setAskWriteDeadline(response); err != nil {
+			return err
+		}
+		defer clearAskWriteDeadline(response)
+		return frame()
+	}
+	stopKeepAlive := make(chan struct{})
+	var keepAlive sync.WaitGroup
+	keepAlive.Add(1)
+	go func() {
+		defer keepAlive.Done()
+		ticker := time.NewTicker(askKeepAliveInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopKeepAlive:
+				return
+			case <-request.Context().Done():
+				return
+			case <-ticker.C:
+				if err := write(func() error { return writeSSEComment(response, flusher, &streamBytes) }); err != nil {
+					return
+				}
+			}
+		}
+	}()
 	recordEvent := func(event agent.Event) {
 		switch event.Type {
 		case agent.EventToolStarted:
@@ -180,11 +224,7 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 			recordEvent(event)
 		}
 		streamEvent := newAskEvent(event)
-		if err := setAskWriteDeadline(response); err != nil {
-			writeFailed = true
-			return err
-		}
-		if err := writeSSE(response, flusher, &streamBytes, streamEvent); err != nil {
+		if err := write(func() error { return writeSSE(response, flusher, &streamBytes, streamEvent) }); err != nil {
 			writeFailed = true
 			return err
 		}
@@ -193,6 +233,8 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 		}
 		return nil
 	})
+	close(stopKeepAlive)
+	keepAlive.Wait()
 	failureCode := askFailureCode(err, completed, writeFailed, request.Context().Err())
 	if activeToolName != "" && failureCode == "" {
 		failureCode = "agent_incomplete"
@@ -231,13 +273,12 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 			code = "tool_call_limit"
 			message = "the question needs more tool calls than the agent runs in one answer; ask a narrower question"
 		}
-		if deadlineErr := setAskWriteDeadline(response); deadlineErr != nil {
-			return true
-		}
-		_ = writeSSE(response, flusher, &streamBytes, AskEvent{
-			Type:    "error",
-			Code:    code,
-			Message: message,
+		_ = write(func() error {
+			return writeSSE(response, flusher, &streamBytes, AskEvent{
+				Type:    "error",
+				Code:    code,
+				Message: message,
+			})
 		})
 	}
 	return true
@@ -355,6 +396,21 @@ func newAskEvent(event agent.Event) AskEvent {
 		}
 	}
 	return streamEvent
+}
+
+// writeSSEComment writes a comment line, which SSE clients ignore.
+func writeSSEComment(response io.Writer, flusher http.Flusher, streamBytes *int64) error {
+	frame := []byte(": keepalive\n\n")
+	if *streamBytes+int64(len(frame)) > maxAskStreamBytes {
+		return fmt.Errorf("API stream exceeds %d bytes", maxAskStreamBytes)
+	}
+	written, err := response.Write(frame)
+	*streamBytes += int64(written)
+	if err != nil {
+		return fmt.Errorf("write API stream comment: %w", err)
+	}
+	flusher.Flush()
+	return nil
 }
 
 func writeSSE(response io.Writer, flusher http.Flusher, streamBytes *int64, event AskEvent) error {

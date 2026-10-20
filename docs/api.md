@@ -115,6 +115,12 @@ server-sent events. Only one turn runs at a time in a conversation.
 - **Tool calls.** A turn runs at most 8 tool calls per model answer and 16 in
   all. Beyond, it fails with the stream `error` event `tool_call_limit`: ask a
   narrower question.
+- **Idle stream.** Each write of the stream must end within 15 s, or the
+  client is cut off; between writes, a tool or a model request runs as long
+  as the turn may, such as an MCP tool waiting for an action to end. While
+  nothing else is written, the stream sends an SSE comment, `: keepalive`,
+  every 10 s, which clients ignore and which keeps idle proxies from closing
+  it.
 - **Busy.** A second turn while one runs, or while an action waits for a
   decision, returns 409 `conversation_busy`.
 - **Expiry.** A conversation expires after its configured lifetime, counted
