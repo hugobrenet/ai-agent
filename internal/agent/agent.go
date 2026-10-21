@@ -281,7 +281,9 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			finishReason llm.FinishReason
 			completion   bool
 		)
-		request := llm.Request{Messages: messages, Tools: selection.tools()}
+		// The last iteration asks for the answer: a turn that would need
+		// more calls tells what it has and what is left, rather than fail.
+		request := llm.Request{Messages: messages, Tools: selection.tools(), NoToolCall: iteration == a.config.MaxIterations}
 		if err := a.llm.Stream(llmContext, request, func(event llm.Event) error {
 			if err := event.Validate(); err != nil {
 				return fmt.Errorf("validate LLM event: %w", err)
