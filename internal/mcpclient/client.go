@@ -125,6 +125,38 @@ func (s *Session) ListTools(ctx context.Context) ([]*mcp.Tool, error) {
 	return catalog.tools, nil
 }
 
+// maxMCPResources bounds the resources read from a server.
+const maxMCPResources = 64
+
+// ListResources returns the resources of the MCP server, at most
+// maxMCPResources, following pagination: none when the server declares no
+// resource capability.
+func (s *Session) ListResources(ctx context.Context) ([]*mcp.Resource, error) {
+	if result := s.session.InitializeResult(); result == nil || result.Capabilities == nil || result.Capabilities.Resources == nil {
+		return nil, nil
+	}
+	var resources []*mcp.Resource
+	for resource, err := range s.session.Resources(ctx, nil) {
+		if err != nil {
+			return nil, fmt.Errorf("list MCP resources: %w", err)
+		}
+		if len(resources) == maxMCPResources {
+			break
+		}
+		resources = append(resources, resource)
+	}
+	return resources, nil
+}
+
+// ReadResource reads one resource of the MCP server.
+func (s *Session) ReadResource(ctx context.Context, uri string) (*mcp.ReadResourceResult, error) {
+	result, err := s.session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	if err != nil {
+		return nil, fmt.Errorf("read MCP resource %q: %w", uri, err)
+	}
+	return result, nil
+}
+
 // CallTool invokes a named MCP tool with JSON-compatible arguments.
 func (s *Session) CallTool(ctx context.Context, name string, arguments map[string]any) (*mcp.CallToolResult, error) {
 	if name == "" {

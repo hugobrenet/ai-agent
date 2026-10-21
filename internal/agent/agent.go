@@ -21,6 +21,10 @@ type MCPSession interface {
 	ServerInfo() (string, string)
 	ListTools(context.Context) ([]*mcp.Tool, error)
 	CallTool(context.Context, string, map[string]any) (*mcp.CallToolResult, error)
+	// ListResources and ReadResource give the reference texts of the
+	// server, which the model reads with read_resource.
+	ListResources(context.Context) ([]*mcp.Resource, error)
+	ReadResource(context.Context, string) (*mcp.ReadResourceResult, error)
 	Close() error
 }
 
@@ -180,6 +184,12 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	if err != nil {
 		return result, err
 	}
+	// The resources of the MCP are read with read_resource, offered in every
+	// request of the turn when the server has some.
+	shelf, err := newResourceShelf(ctx, session, selection.catalog)
+	if err != nil {
+		return result, err
+	}
 	systemPrompt := a.config.SystemPrompt
 	if selection.search {
 		systemPrompt += "\n" + searchInstruction
@@ -205,6 +215,17 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	executeCalls := func() (bool, error) {
 		for len(state.Results) < len(state.Calls) {
 			call := state.Calls[len(state.Results)]
+			if shelf.known(call.Name) {
+				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, Iteration: state.Iteration}); err != nil {
+					return false, err
+				}
+				readResult := shelf.read(ctx, session, call)
+				if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: readResult.IsError, Iteration: state.Iteration}); err != nil {
+					return false, err
+				}
+				state.Results = append(state.Results, readResult)
+				continue
+			}
 			if selection.search && call.Name == SearchToolName {
 				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, Iteration: state.Iteration}); err != nil {
 					return false, err
@@ -283,7 +304,14 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		)
 		// The last iteration asks for the answer: a turn that would need
 		// more calls tells what it has and what is left, rather than fail.
-		request := llm.Request{Messages: messages, Tools: selection.tools(), NoToolCall: iteration == a.config.MaxIterations}
+		requestTools := selection.tools()
+		if shelf.tool != nil {
+			requestTools = append(requestTools, *shelf.tool)
+			if !slices.Contains(selection.shown, ReadResourceToolName) {
+				selection.shown = append(selection.shown, ReadResourceToolName)
+			}
+		}
+		request := llm.Request{Messages: messages, Tools: requestTools, NoToolCall: iteration == a.config.MaxIterations}
 		if err := a.llm.Stream(llmContext, request, func(event llm.Event) error {
 			if err := event.Validate(); err != nil {
 				return fmt.Errorf("validate LLM event: %w", err)
@@ -342,7 +370,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			return result, fmt.Errorf("agent reached maximum of %d iterations before a final answer", a.config.MaxIterations)
 		}
 		for _, call := range calls {
-			if !selection.known(call.Name) {
+			if !selection.known(call.Name) && !shelf.known(call.Name) {
 				return result, fmt.Errorf("LLM requested unknown MCP tool %q", call.Name)
 			}
 			// The bound of the arguments a turn stores, for every call, the
