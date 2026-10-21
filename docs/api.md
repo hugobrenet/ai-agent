@@ -133,6 +133,28 @@ server-sent events. Only one turn runs at a time in a conversation.
   from its creation and then from its last completed turn; an expired
   conversation returns 410.
 
+## Resources
+
+When the MCP of a backend declares the resource capability, the agent lists
+its resources at the start of each turn, and offers the model a tool of its
+own, `read_resource`, in every request of the turn: it reads one text
+resource of the MCP, such as `oc3://docs/form-definition`, the reference of
+the YAML of an oc3 form. Its description lists the text resources, at most
+10, each with its description cut to 240 bytes, and its `uri` input takes
+one of them only; a read gives the text, cut to 64 KiB, and a refused read
+is a tool error for the model, not a failed turn. The name is the agent's:
+an MCP tool named `read_resource` fails the turn, as one named
+`search_tools` does. A listing that fails leaves the turn without the tool,
+and a call of it, such as one waiting behind a confirmed call when the
+turn resumes, is answered with a tool error. The listing is one more MCP
+request per turn, resumptions included: the session is opened per turn,
+and nothing caches it.
+
+A text read is a tool result: in the next turns, the history keeps no
+string longer than 256 bytes, so that a reference is read again in the
+turn that needs it. The tool descriptions of the MCP tell when to read
+one.
+
 ## Tool search
 
 When the MCP of a backend lists more tools than

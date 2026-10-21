@@ -343,6 +343,24 @@ type fakeSession struct {
 	calls            []recordedCall
 	closed           bool
 	connectedWithJWT bool
+	// resources are the resources of the server, and texts their text by
+	// URI.
+	resources []*mcp.Resource
+	texts     map[string]string
+	reads     []string
+}
+
+func (s *fakeSession) ListResources(context.Context) ([]*mcp.Resource, error) {
+	return s.resources, nil
+}
+
+func (s *fakeSession) ReadResource(_ context.Context, uri string) (*mcp.ReadResourceResult, error) {
+	s.reads = append(s.reads, uri)
+	text, ok := s.texts[uri]
+	if !ok {
+		return nil, fmt.Errorf("resource %s not found", uri)
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: uri, MIMEType: "text/markdown", Text: text}}}, nil
 }
 
 // ListTools announces a tool declared without annotations as read-only, as a

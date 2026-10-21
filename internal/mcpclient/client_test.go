@@ -327,3 +327,52 @@ func TestClientForwardsTheRequestIDOfTheAgent(t *testing.T) {
 		t.Fatalf("forwarded request IDs = %q", got)
 	}
 }
+
+// A session lists and reads the resources of a server that declares them,
+// and lists none of a server without the resource capability.
+func TestSessionListsAndReadsResources(t *testing.T) {
+	const token = "delegated-test-token"
+	for _, withResources := range []bool{true, false} {
+		server := mcp.NewServer(&mcp.Implementation{Name: "test-mcp", Version: "v0.1.0"}, nil)
+		mcp.AddTool(server, &mcp.Tool{Name: "get_form", Description: "Get a form"},
+			func(context.Context, *mcp.CallToolRequest, map[string]any) (*mcp.CallToolResult, map[string]string, error) {
+				return nil, map[string]string{}, nil
+			})
+		if withResources {
+			server.AddResource(&mcp.Resource{URI: "oc3://docs/form-definition", Name: "form-definition", MIMEType: "text/markdown"},
+				func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+					return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "oc3://docs/form-definition", MIMEType: "text/markdown", Text: "# Form definition"}}}, nil
+				})
+		}
+		streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+		endpoint := serveUnix(t, streamHandler)
+		client, err := New(endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := auth.WithBearerToken(t.Context(), token)
+		session, err := client.Connect(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resources, err := session.ListResources(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !withResources {
+			if len(resources) != 0 {
+				t.Fatalf("resources of a server without them = %+v", resources)
+			}
+			_ = session.Close()
+			continue
+		}
+		if len(resources) != 1 || resources[0].URI != "oc3://docs/form-definition" {
+			t.Fatalf("resources = %+v", resources)
+		}
+		read, err := session.ReadResource(ctx, "oc3://docs/form-definition")
+		if err != nil || len(read.Contents) != 1 || read.Contents[0].Text != "# Form definition" {
+			t.Fatalf("read = %+v, %v", read, err)
+		}
+		_ = session.Close()
+	}
+}

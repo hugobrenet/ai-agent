@@ -20,6 +20,12 @@ type flowSession struct{ calls []string }
 
 func (s *flowSession) ServerInfo() (string, string) { return "flow-mcp", "v2" }
 
+func (s *flowSession) ListResources(context.Context) ([]*mcp.Resource, error) { return nil, nil }
+
+func (s *flowSession) ReadResource(context.Context, string) (*mcp.ReadResourceResult, error) {
+	return nil, nil
+}
+
 func (s *flowSession) ListTools(context.Context) ([]*mcp.Tool, error) {
 	destructive := true
 	return []*mcp.Tool{{
