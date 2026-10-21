@@ -115,6 +115,12 @@ server-sent events. Only one turn runs at a time in a conversation.
 - **Tool calls.** A turn runs at most 8 tool calls per model answer and 16 in
   all. Beyond, it fails with the stream `error` event `tool_call_limit`: ask a
   narrower question.
+- **Last iteration.** The last model request of a turn, the
+  `OPENSVC_AI_AGENT_MAX_ITERATIONS`th, declares the tools but takes no call of
+  them (`tool_choice` none): the model answers with what the turn read,
+  rather than the turn failing. On dev5, a form submitted
+  then its request approved took 7 iterations of 8, and failed for want of
+  the eighth before this.
 - **Idle stream.** Each write of the stream must end within 15 s, or the
   client is cut off; between writes, a tool or a model request runs as long
   as the turn may, such as an MCP tool waiting for an action to end. While

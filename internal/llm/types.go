@@ -7,6 +7,9 @@ import "encoding/json"
 type Request struct {
 	Messages []Message
 	Tools    []Tool
+	// NoToolCall asks for an answer in text: the tools stay declared, as
+	// the history may hold calls of them, and none may be called.
+	NoToolCall bool
 }
 
 type Role string

@@ -15,6 +15,12 @@ type createRequest struct {
 	System    string        `json:"system,omitempty"`
 	Messages  []wireMessage `json:"messages"`
 	Tools     []wireTool    `json:"tools,omitempty"`
+	// ToolChoice is set to none only: auto is the default.
+	ToolChoice *wireToolChoice `json:"tool_choice,omitempty"`
+}
+
+type wireToolChoice struct {
+	Type string `json:"type"`
 }
 
 type wireMessage struct {
@@ -100,6 +106,9 @@ func newCreateRequest(model string, maxTokens int, request llm.Request) (createR
 	result.System = strings.Join(system, "\n\n")
 	for _, tool := range request.Tools {
 		result.Tools = append(result.Tools, wireTool{Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema})
+	}
+	if request.NoToolCall && len(result.Tools) != 0 {
+		result.ToolChoice = &wireToolChoice{Type: "none"}
 	}
 	return result, nil
 }

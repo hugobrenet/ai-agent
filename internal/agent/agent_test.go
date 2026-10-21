@@ -432,3 +432,24 @@ func TestNewRequiresASystemPrompt(t *testing.T) {
 		t.Fatal("New() accepted an empty system prompt")
 	}
 }
+
+// The last iteration asks for an answer without tool call: a turn that
+// needs more calls answers with what it has rather than fail.
+func TestTheLastIterationAsksForAnAnswer(t *testing.T) {
+	session := &fakeSession{tools: []*mcp.Tool{{Name: "get_cluster_health", InputSchema: objectSchema()}}}
+	var last llm.Request
+	model := &scriptedLLM{t: t, steps: []llmStep{
+		func(request llm.Request, emit llm.EmitFunc) error {
+			if request.NoToolCall {
+				t.Fatal("the first iteration forbade tool calls")
+			}
+			return toolCallStep("get_cluster_health", "call-1")(request, emit)
+		},
+		answerStep(t, func(request llm.Request) { last = request }),
+	}}
+	agent := newTestAgent(t, model, session, 2)
+	result, err := agent.RunTurn(t.Context(), nil, "health", func(Event) error { return nil })
+	if err != nil || result.FinishReason != llm.FinishReasonCompleted || !last.NoToolCall || len(last.Tools) == 0 || len(session.calls) != 1 {
+		t.Fatalf("result = %+v, %v, last request no tool call %v with %d tools", result, err, last.NoToolCall, len(last.Tools))
+	}
+}

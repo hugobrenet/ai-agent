@@ -108,6 +108,9 @@ func newCreateRequest(model string, maxOutputTokens int, request llm.Request) (c
 	}
 	if len(wire.Tools) != 0 {
 		wire.ToolChoice = "auto"
+		if request.NoToolCall {
+			wire.ToolChoice = "none"
+		}
 	}
 	return wire, nil
 }
