@@ -132,6 +132,12 @@ func serveGetConversation(service ConversationService, audit auditLogger) http.H
 				ID: pending.ConfirmationID, TurnID: pending.TurnID, Arguments: pending.Arguments, ExpiresAt: pending.ExpiresAt,
 				Tool: AskConfirmationTool{Name: pending.ToolName, Title: pending.ToolTitle, Destructive: true},
 			}
+			// The suspended turn holds the argument types; one that does not
+			// decode gives none, the confirmation staying valid.
+			var state agent.SuspendedTurn
+			if json.Unmarshal(pending.State, &state) == nil {
+				envelope.PendingConfirmation.ArgumentTypes = state.ArgumentTypes
+			}
 		}
 		audit.event(request.Context(), "conversation_read", slog.String("conversation_id", boundedAuditID(id)))
 		writeJSON(response, http.StatusOK, envelope)

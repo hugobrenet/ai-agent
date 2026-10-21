@@ -46,6 +46,9 @@ type SuspendedTurn struct {
 	// searching when it resumes, so that its planned search calls run.
 	ToolSearch bool   `json:"tool_search,omitempty"`
 	ToolTitle  string `json:"tool_title"`
+	// ArgumentTypes are the media types the input schema of the pending
+	// tool gives its text arguments, for the client to show them.
+	ArgumentTypes map[string]string `json:"argument_types,omitempty"`
 }
 
 // PendingCall returns the call waiting for confirmation.
@@ -68,6 +71,9 @@ func (s SuspendedTurn) validate(maxIterations int) error {
 	}
 	if s.Searches < 0 || s.Searches > maxSearchesPerTurn || len(s.ActiveTools) > maxModelTools {
 		return fmt.Errorf("suspended turn tool search state is out of range")
+	}
+	if len(s.ArgumentTypes) > maxArgumentTypes {
+		return fmt.Errorf("suspended turn has more than %d argument types", maxArgumentTypes)
 	}
 	if s.TotalToolCalls < len(s.Calls) || s.TotalToolCalls > maxToolCallsPerAsk {
 		return fmt.Errorf("suspended turn tool call count %d is out of range", s.TotalToolCalls)
@@ -94,7 +100,10 @@ type Confirmation struct {
 	ToolTitle   string
 	Destructive bool
 	Arguments   json.RawMessage
-	ExpiresAt   time.Time
+	// ArgumentTypes are the media types of the text arguments, such as
+	// application/yaml, as the input schema of the tool declares them.
+	ArgumentTypes map[string]string
+	ExpiresAt     time.Time
 }
 
 // requiresConfirmation tells whether a tool call must be confirmed by the
@@ -113,6 +122,44 @@ func requiresConfirmation(tool *mcp.Tool) bool {
 }
 
 // toolTitle is the human title of a tool, its name when it declares none.
+// maxArgumentTypes bounds the argument types a confirmation gives, and
+// maxArgumentType the length of an argument name and of a media type.
+const (
+	maxArgumentTypes = 32
+	maxArgumentType  = 128
+)
+
+// argumentTypes reads the media types the input schema of a tool gives its
+// properties, in contentMediaType as JSON Schema writes it: the format of a
+// text argument the client cannot tell from the text, such as a YAML
+// definition. A schema the agent cannot read gives none.
+func argumentTypes(tool *mcp.Tool) map[string]string {
+	data, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		return nil
+	}
+	var schema struct {
+		Properties map[string]struct {
+			ContentMediaType string `json:"contentMediaType"`
+		} `json:"properties"`
+	}
+	if json.Unmarshal(data, &schema) != nil {
+		return nil
+	}
+	var types map[string]string
+	for name, property := range schema.Properties {
+		mediaType := property.ContentMediaType
+		if mediaType == "" || len(name) > maxArgumentType || len(mediaType) > maxArgumentType || len(types) == maxArgumentTypes {
+			continue
+		}
+		if types == nil {
+			types = map[string]string{}
+		}
+		types[name] = mediaType
+	}
+	return types
+}
+
 func toolTitle(tool *mcp.Tool) string {
 	if tool.Title != "" {
 		return tool.Title

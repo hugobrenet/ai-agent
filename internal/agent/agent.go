@@ -232,7 +232,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				continue
 			}
 			if callDecision != DecisionApprove && requiresConfirmation(tool) {
-				state.ToolTitle = toolTitle(tool)
+				state.ToolTitle, state.ArgumentTypes = toolTitle(tool), argumentTypes(tool)
 				return true, nil
 			}
 			if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, Iteration: state.Iteration}); err != nil {
@@ -268,7 +268,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			toolMessage := llm.Message{Role: llm.RoleTool, ToolResults: state.Results}
 			messages = append(messages, assistantMessage, toolMessage)
 			state.Messages = append(state.Messages, assistantMessage, toolMessage)
-			state.Calls, state.Results, state.Text, state.ToolTitle = nil, nil, "", ""
+			state.Calls, state.Results, state.Text, state.ToolTitle, state.ArgumentTypes = nil, nil, "", "", nil
 		}
 		if state.Iteration >= a.config.MaxIterations {
 			return result, fmt.Errorf("agent reached maximum of %d iterations", a.config.MaxIterations)
