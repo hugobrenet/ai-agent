@@ -225,3 +225,21 @@ func TestResumeTurnRejectsAnInvalidDecisionOrStateBeforeMCP(t *testing.T) {
 		t.Fatal("an invalid resume reached MCP")
 	}
 }
+
+// The suspended turn holds the media types the input schema of the pending
+// tool gives its text arguments, for the client to show them.
+func TestRunTurnSuspendsWithTheArgumentTypes(t *testing.T) {
+	tool := destructiveTool("create_form")
+	tool.InputSchema = json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"yaml":{"type":"string","contentMediaType":"application/yaml"}}}`)
+	session := &fakeSession{tools: []*mcp.Tool{tool}}
+	model := &scriptedLLM{t: t, steps: []llmStep{callsStep(
+		llm.ToolCall{ID: "call-1", Name: "create_form", Arguments: json.RawMessage(`{"name":"lab","yaml":"Label: lab\nInputs: []\n"}`)},
+	)}}
+	result, err := newTestAgent(t, model, session, 4).RunTurn(auth.WithBearerToken(t.Context(), "jwt-marker"), nil, "create lab", func(Event) error { return nil })
+	if err != nil || result.Suspended == nil || len(result.Suspended.ArgumentTypes) != 1 || result.Suspended.ArgumentTypes["yaml"] != "application/yaml" {
+		t.Fatalf("result = %+v, %v", result.Suspended, err)
+	}
+	if argumentTypes(destructiveTool("stop_object")) != nil {
+		t.Fatal("a schema without media types gave argument types")
+	}
+}

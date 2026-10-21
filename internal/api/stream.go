@@ -64,7 +64,11 @@ type AskConfirmation struct {
 	TurnID    string              `json:"turn_id"`
 	Tool      AskConfirmationTool `json:"tool"`
 	Arguments json.RawMessage     `json:"arguments"`
-	ExpiresAt time.Time           `json:"expires_at"`
+	// ArgumentTypes are the media types of text arguments, such as
+	// {"yaml": "application/yaml"}, as the input schema of the tool
+	// declares them: the client shows them by it, not by guessing.
+	ArgumentTypes map[string]string `json:"argument_types,omitempty"`
+	ExpiresAt     time.Time         `json:"expires_at"`
 }
 
 type AskConfirmationTool struct {
@@ -391,7 +395,7 @@ func newAskEvent(event agent.Event) AskEvent {
 	case agent.EventConfirmationRequired:
 		c := event.Confirmation
 		streamEvent.Confirmation = &AskConfirmation{
-			ID: c.ID, TurnID: c.TurnID, Arguments: c.Arguments, ExpiresAt: c.ExpiresAt,
+			ID: c.ID, TurnID: c.TurnID, Arguments: c.Arguments, ArgumentTypes: c.ArgumentTypes, ExpiresAt: c.ExpiresAt,
 			Tool: AskConfirmationTool{Name: c.ToolName, Title: c.ToolTitle, Destructive: c.Destructive},
 		}
 	}

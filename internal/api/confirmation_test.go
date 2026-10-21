@@ -21,7 +21,7 @@ func TestConversationTurnStreamsAConfirmationRequest(t *testing.T) {
 	execution := &testTurnExecution{run: func(_ context.Context, emit agent.EmitFunc) error {
 		return emit(agent.Event{Type: agent.EventConfirmationRequired, Iteration: 1, Confirmation: &agent.Confirmation{
 			ID: "confirmation-id", TurnID: "turn-id", ToolName: "stop_object", ToolTitle: "Stop object", Destructive: true,
-			Arguments: json.RawMessage(`{"path": "prod/svc/web"}`), ExpiresAt: confirmationExpiry,
+			Arguments: json.RawMessage(`{"path": "prod/svc/web", "yaml": "Label: web\n"}`), ArgumentTypes: map[string]string{"yaml": "application/yaml"}, ExpiresAt: confirmationExpiry,
 		}})
 	}}
 	service := conversationServiceFuncs{prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
@@ -33,7 +33,7 @@ func TestConversationTurnStreamsAConfirmationRequest(t *testing.T) {
 	newConversationTestHandler(t, service).ServeHTTP(response, request)
 	body := response.Body.String()
 	want := `event: confirmation_required` + "\n" +
-		`data: {"type":"confirmation_required","iteration":1,"confirmation":{"id":"confirmation-id","turn_id":"turn-id","tool":{"name":"stop_object","title":"Stop object","destructive":true},"arguments":{"path":"prod/svc/web"},"expires_at":"2026-10-09T17:45:00Z"}}`
+		`data: {"type":"confirmation_required","iteration":1,"confirmation":{"id":"confirmation-id","turn_id":"turn-id","tool":{"name":"stop_object","title":"Stop object","destructive":true},"arguments":{"path":"prod/svc/web","yaml":"Label: web\n"},"argument_types":{"yaml":"application/yaml"},"expires_at":"2026-10-09T17:45:00Z"}}`
 	if response.Code != http.StatusOK || !strings.Contains(body, want) || strings.Contains(body, "event: error") {
 		t.Fatalf("got %d %s", response.Code, body)
 	}
@@ -117,12 +117,13 @@ func TestConversationReadReturnsThePendingConfirmation(t *testing.T) {
 			return &conversation.PendingConfirmation{
 				TurnID: "turn-id", ConfirmationID: "confirmation-id", ToolName: "stop_object", ToolTitle: "Stop object",
 				Arguments: json.RawMessage(`{"path":"prod/svc/web"}`), ExpiresAt: confirmationExpiry,
+				State: []byte(`{"argument_types":{"yaml":"application/yaml"}}`),
 			}, nil
 		},
 	}
 	response := httptest.NewRecorder()
 	newConversationTestHandler(t, service).ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/om3/conversations/conversation-id", ""))
-	want := `"pending_confirmation":{"id":"confirmation-id","turn_id":"turn-id","tool":{"name":"stop_object","title":"Stop object","destructive":true},"arguments":{"path":"prod/svc/web"},"expires_at":"2026-10-09T17:45:00Z"}`
+	want := `"pending_confirmation":{"id":"confirmation-id","turn_id":"turn-id","tool":{"name":"stop_object","title":"Stop object","destructive":true},"arguments":{"path":"prod/svc/web"},"argument_types":{"yaml":"application/yaml"},"expires_at":"2026-10-09T17:45:00Z"}`
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), want) {
 		t.Fatalf("got %d %s", response.Code, response.Body.String())
 	}

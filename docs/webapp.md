@@ -162,6 +162,15 @@ exact arguments, which are the call that runs if the user approves: take them
 from this event, not from the model text, which can describe the action
 differently. The confirmation expires after 10 minutes.
 
+`argument_types`, when present, gives the media type of text arguments, as
+the input schema of the tool declares them in `contentMediaType`, such as
+`{"yaml":"application/yaml"}` for the definition of a form: show such an
+argument by its type, its lines and indentation kept, highlighted for a
+type the client knows, rather than guess the format of a text. Show any
+text holding line breaks with its whitespace kept, typed or not
+(`white-space: pre-wrap`). The pending confirmation a conversation read
+gives (`pending_confirmation`) carries it too.
+
 ### Decision
 
 ```http
