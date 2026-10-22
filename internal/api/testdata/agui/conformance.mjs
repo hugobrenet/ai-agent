@@ -32,6 +32,9 @@ const resumed = await agent.runAgent({ runId: "run-2", resume: [{ interruptId: i
 if (resumed.result?.turnId !== "turn-id") fail("the resumed run gives no turnId: " + JSON.stringify(resumed.result));
 if (events.some((event) => event.type === "TOOL_CALL_START" && event.toolCallId === "call-7")) fail("the resumed run starts the confirmed call again");
 
+// The messages of the stream are named as the conversation stores them.
+const assistantIds = agent.messages.filter((message) => message.role === "assistant").map((message) => message.id).join(",");
+if (assistantIds !== "turn-id:2,turn-id:4,turn-id:6") fail("assistant messages " + assistantIds + ", want the stored IDs turn-id:2,turn-id:4,turn-id:6");
 const shape = agent.messages.map((message) => message.role + (message.toolCalls ? "[" + message.toolCalls.map((call) => call.function.name).join("+") + "]" : "") + (message.toolCallId ? "(" + message.toolCallId + ")" : ""));
 const want = "user,assistant[get_object],tool(call-1),assistant[stop_object],tool(call-7),assistant";
 if (shape.join(",") !== want) fail("messages " + shape.join(",") + ", want " + want);
@@ -56,4 +59,32 @@ const answered = await page.runAgent({ runId: "run-ui-2", tools }, subscriber);
 if (answered.result?.turnId !== "turn-ui") fail("the run answering the tool of the client gives no turnId: " + JSON.stringify(answered.result));
 const pageShape = page.messages.map((message) => message.role + (message.toolCalls ? "[" + message.toolCalls.map((call) => call.function.name).join("+") + "]" : "") + (message.toolCallId ? "(" + message.toolCallId + ")" : ""));
 if (pageShape.join(",") !== "user,assistant[open_page],tool(ui-1),assistant") fail("messages " + pageShape.join(","));
+// Another tab: a client that lacks the last stored turn receives the thread
+// and ends with the messages of a client in phase.
+const thread = (initialMessages) => new HttpAgent({
+  url: process.argv[2] + "/v1/om3/conversations/conversation-id/runs",
+  headers: { Authorization: "Bearer token", "X-Test-Backend": "cluster-id" },
+  threadId: "conversation-id",
+  initialMessages,
+});
+const prompt = { id: "u-status", role: "user", content: "status" };
+const inPhase = thread([
+  { id: "u-nodes", role: "user", content: "nodes?" },
+  { id: "turn-1:2", role: "assistant", content: "Looking.", toolCalls: [{ id: "call-h1", type: "function", function: { name: "list_nodes", arguments: "{}" } }] },
+  { id: "call-h1-result", role: "tool", toolCallId: "call-h1", content: '{"nodes":["n1","n2"]}' },
+  { id: "turn-1:4", role: "assistant", content: "Two nodes." },
+  prompt,
+]);
+// The client gives its prompts its own IDs, which the conversation keeps.
+const behind = thread([{ id: "u-nodes", role: "user", content: "nodes?" }, prompt]);
+events.length = 0;
+await inPhase.runAgent({ runId: "run-tab-1" }, subscriber);
+if (events.some((event) => event.type === "MESSAGES_SNAPSHOT")) fail("a client in phase received a snapshot");
+events.length = 0;
+await behind.runAgent({ runId: "run-tab-2" }, subscriber);
+if (!events.some((event) => event.type === "MESSAGES_SNAPSHOT")) fail("a client behind received no snapshot");
+// The client behind gets its prompt back under its stored ID, turn-2:1, the
+// client in phase keeps its own.
+const view = (agent) => JSON.stringify(agent.messages.map((message) => [message.id === "turn-2:1" ? "u-status" : message.id, message.role, message.content ?? null, (message.toolCalls ?? []).map((call) => call.id + ":" + call.function.name), message.toolCallId ?? null]));
+if (view(behind) !== view(inPhase)) fail("the client behind holds " + view(behind) + ", the client in phase " + view(inPhase));
 console.log("conformance: ok");

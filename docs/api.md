@@ -2,7 +2,8 @@
 
 `opensvc-ai-agentd` serves its clients over HTTPS. The OpenSVC webapp is its
 client; see the [browser client guide](webapp.md) for the headers, message
-history, action confirmation and CORS.
+history, action confirmation and CORS, and the
+[integration guide](integration.md) for an interface speaking AG-UI.
 
 ## Backends
 
@@ -150,6 +151,14 @@ authentication headers of the backend:
 - `threadId` is the ID of the conversation of the route, or 400
   `thread_mismatch`; `runId`, which the client gives, at most 128 printable
   bytes without spaces, or 400 `invalid_run_id`.
+- `protocolVersion`, the version of AG-UI the client speaks, `MAJOR.MINOR`
+  compared numerically, or 400 `invalid_protocol_version`: absent, a client
+  from before the protocol carried one, is served; a newer minor of the line
+  1 is served in 1.0 with a `CUSTOM` `opensvc.warning` after `RUN_STARTED`,
+  as the versioning of AG-UI has a producer warn; another major line is
+  refused, 400 `unsupported_protocol_version`. `RUN_STARTED` declares the
+  version of the agent, never that of the client, and the audit of the run
+  records the version the client declared, `protocol_version`.
 - The prompt is the last message, which must be a message of the user, a
   text or text parts joined by line breaks, at most 32 KiB, or 400
   `invalid_prompt`. The other content parts, such as images, are skipped, as
@@ -178,7 +187,8 @@ names, and the `: keepalive` comments of `/turns`. Each event carries its
 | Agent | AG-UI events |
 |---|---|
 | start | `RUN_STARTED` with `threadId`, `runId` and `protocolVersion` `1.0` |
-| text of one model answer | `TEXT_MESSAGE_START` (`messageId` `<runId>-<iteration>`, role `assistant`), `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` before a tool call or the end |
+| a client out of phase | `MESSAGES_SNAPSHOT` after `RUN_STARTED`; see below |
+| text of one model answer | `TEXT_MESSAGE_START` (`messageId` `<turn ID>:<2 × iteration>`, the ID the turn stores the answer with, role `assistant`), `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` before a tool call or the end |
 | tool call, of the MCP or of the agent | `TOOL_CALL_START` (`toolCallId`, `toolCallName`, `parentMessageId` the message of its answer), `TOOL_CALL_ARGS` with the JSON arguments whole, `TOOL_CALL_END` |
 | tool result | `TOOL_CALL_RESULT` with the JSON result the model read, or a note of its size beyond 64 KiB |
 | completion | `RUN_FINISHED`, `outcome` `{"type":"success"}`, `result` `{"turnId": …}` for the feedback |
@@ -200,6 +210,35 @@ expiry of the confirmation, and `metadata` gives `turnId`, `tool` (`name`,
 arguments, as `confirmation_required` does. A resumed run gives the result
 of the confirmed call against its `toolCallId`, without its start again;
 a rejected one, a result telling the call did not run.
+
+### Messages snapshot
+
+The messages of the stream carry the IDs the conversation stores them
+with, those of `GET …/messages`: `<turn ID>:<sequence>`, the message of the
+user being message 1 of its turn, then each iteration adding the message of
+the assistant, `2 × iteration`, and the message of its tools, `2 × iteration
++ 1`; a tool result is the message `<toolCallId>-result`. The message of the
+user goes by the ID the client gave it, at most 128 printable bytes without
+spaces, or 400 `invalid_message_id`, when the client is in phase and no other
+message of the conversation holds it: the conversation stores it with the
+turn, and serves it in its history, its display messages and its
+snapshots.
+
+A client that holds the last stored message of the conversation, by its ID,
+and, for a resumed turn, the answer of the model it waits in, is in phase.
+One that does not, such as another tab, or one sending its prompt alone on
+a conversation with turns, receives a `MESSAGES_SNAPSHOT` right after
+`RUN_STARTED`: the thread as the model reads it, the history compacted as
+for the model, with the tool calls and their results, the turns failed or
+canceled left out, then the messages of a resumed turn so far, the
+iteration it waits in included, and the prompt of the run. `@ag-ui/client`
+keeps the messages it knows in their place and adds the others after them:
+the prompt it holds would stay before the turns it lacked. Out of phase,
+the prompt therefore goes, and is stored, under `<turn ID>:1`, which the
+client does not hold: the client drops its copy and adds the snapshot's
+after the turns it lacked. Beyond 1 MiB, the oldest turns are left out, and `metadata`
+`{"opensvc.truncated": {"omittedTurns": n}}` counts them with the turns
+the bound of the history leaves out.
 
 ### Client tools
 

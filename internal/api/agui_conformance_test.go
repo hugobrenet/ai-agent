@@ -39,6 +39,21 @@ func TestAGUIClientConformance(t *testing.T) {
 	state := `{"messages":[],"iteration":2,"calls":[{"ID":"call-7","Name":"stop_object","Arguments":{"path":"web"}}],"results":[]}`
 	service := conversationServiceFuncs{
 		prepare: func(_ context.Context, _ auth.Identity, _ string, prompt string) (conversation.TurnExecution, error) {
+			if prompt == "status" {
+				// The conversation stored a turn: a client that lacks it
+				// receives the thread.
+				return &testTurnExecution{turnID: "turn-2", history: []llm.Message{
+					{Role: llm.RoleUser, Text: "nodes?"},
+					{Role: llm.RoleAssistant, Text: "Looking.", ToolCalls: []llm.ToolCall{{ID: "call-h1", Name: "list_nodes", Arguments: json.RawMessage(`{}`)}}},
+					{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "call-h1", Content: json.RawMessage(`{"nodes":["n1","n2"]}`)}}},
+					{Role: llm.RoleAssistant, Text: "Two nodes."},
+				}, historyIDs: []string{"u-nodes", "turn-1:2", "turn-1:3", "turn-1:4"}, run: func(_ context.Context, emit agent.EmitFunc) error {
+					return emitAll(emit, []agent.Event{
+						{Type: agent.EventTextDelta, TextDelta: "All up.", Iteration: 1},
+						{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-2", Iteration: 1},
+					})
+				}}, nil
+			}
 			if prompt == "show web" {
 				// The model calls a tool the client offers: the run leaves
 				// the call to the client.

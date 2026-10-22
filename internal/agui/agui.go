@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 // The event types of AG-UI the agent emits.
@@ -27,7 +28,12 @@ const (
 	ToolCallEnd        = "TOOL_CALL_END"
 	ToolCallResult     = "TOOL_CALL_RESULT"
 	Custom             = "CUSTOM"
+	MessagesSnapshot   = "MESSAGES_SNAPSHOT"
 )
+
+// maxSnapshotBytes bounds a messages snapshot, as a page of the display
+// messages is bounded: the oldest turns are left out first.
+const maxSnapshotBytes = 1 << 20
 
 // ProtocolVersion is the version of AG-UI the agent speaks, which it
 // declares on RUN_STARTED.
@@ -58,6 +64,30 @@ type Event struct {
 	Name            string   `json:"name,omitempty"`
 	Value           any      `json:"value,omitempty"`
 	Usage           []Usage  `json:"usage,omitempty"`
+	// Messages is the thread of a MESSAGES_SNAPSHOT.
+	Messages *[]SnapshotMessage `json:"messages,omitempty"`
+	Metadata map[string]any     `json:"metadata,omitempty"`
+}
+
+// SnapshotMessage is an AG-UI message of a snapshot: a message of the user,
+// of the assistant with its tool calls, or of a tool.
+type SnapshotMessage struct {
+	ID         string             `json:"id"`
+	Role       string             `json:"role"`
+	Content    *string            `json:"content,omitempty"`
+	ToolCalls  []SnapshotToolCall `json:"toolCalls,omitempty"`
+	ToolCallID string             `json:"toolCallId,omitempty"`
+}
+
+type SnapshotToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function SnapshotFunction `json:"function"`
+}
+
+type SnapshotFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // Usage is the AG-UI TokenUsage of a run: the tokens of its model calls.
@@ -111,6 +141,9 @@ type Encoder struct {
 	// client saw its call in the run that asked for its confirmation.
 	resumed string
 	ended   bool
+	// turnID names the messages of the run as the conversation stores
+	// them, <turn ID>:<sequence>.
+	turnID string
 	// usage sums the tokens of the model calls of the run, reported on its
 	// terminal event; seen tells whether any call reported some.
 	usage Usage
@@ -148,7 +181,11 @@ func (e *Encoder) Start() []Event {
 // content parts the agent cannot read, which the protocol has the agent skip
 // and say.
 func (e *Encoder) Warning(message string, skipped []string) []Event {
-	return []Event{e.stamp(Event{Type: Custom, Name: "opensvc.warning", Value: map[string]any{"message": message, "skippedContentParts": skipped}})}
+	value := map[string]any{"message": message}
+	if len(skipped) > 0 {
+		value["skippedContentParts"] = skipped
+	}
+	return []Event{e.stamp(Event{Type: Custom, Name: "opensvc.warning", Value: value})}
 }
 
 // Rejected reports the result of a tool call the user rejected, which the
@@ -158,8 +195,85 @@ func (e *Encoder) Rejected(toolCallID string) []Event {
 	return []Event{e.stamp(Event{Type: ToolCallResult, MessageID: toolCallID + "-result", ToolCallID: toolCallID, Role: "tool", Content: &content})}
 }
 
+// SetTurn names the messages of the run after the turn it runs.
+func (e *Encoder) SetTurn(turnID string) { e.turnID = turnID }
+
+// messageID names the message of the assistant of an iteration as the
+// conversation stores it: the user is message 1 of the turn, then each
+// iteration adds its message of the assistant and the one of its tools.
 func (e *Encoder) messageID(iteration int) string {
+	if e.turnID != "" {
+		return e.turnID + ":" + strconv.Itoa(2*iteration)
+	}
 	return e.runID + "-" + strconv.Itoa(iteration)
+}
+
+// Snapshot gives the thread as the agent holds it: the messages with their
+// IDs, then current, the message of the user the run starts from, unless
+// nil. Beyond 1 MiB the oldest turns are left out, which its metadata
+// counts with the turns the bound of the history left out.
+func (e *Encoder) Snapshot(messages []llm.Message, ids []string, current *SnapshotMessage, omitted int) ([]Event, error) {
+	if len(messages) != len(ids) {
+		return nil, fmt.Errorf("AG-UI snapshot messages and IDs differ in number")
+	}
+	var turns [][]SnapshotMessage
+	for index, message := range messages {
+		if message.Role == llm.RoleUser || len(turns) == 0 {
+			turns = append(turns, nil)
+		}
+		turns[len(turns)-1] = append(turns[len(turns)-1], snapshotMessages(message, ids[index])...)
+	}
+	for {
+		thread := make([]SnapshotMessage, 0)
+		for _, turn := range turns {
+			thread = append(thread, turn...)
+		}
+		if current != nil {
+			thread = append(thread, *current)
+		}
+		event := Event{Type: MessagesSnapshot, Messages: &thread}
+		if omitted > 0 {
+			event.Metadata = map[string]any{"opensvc.truncated": map[string]int{"omittedTurns": omitted}}
+		}
+		data, err := json.Marshal(event)
+		if err != nil {
+			return nil, fmt.Errorf("encode AG-UI snapshot: %w", err)
+		}
+		if len(data) <= maxSnapshotBytes || len(turns) == 0 {
+			return []Event{e.stamp(event)}, nil
+		}
+		turns, omitted = turns[1:], omitted+1
+	}
+}
+
+// snapshotMessages gives a message of the history as AG-UI messages: a
+// message of tools is one message per result, as the stream gives them.
+func snapshotMessages(message llm.Message, id string) []SnapshotMessage {
+	switch message.Role {
+	case llm.RoleTool:
+		results := make([]SnapshotMessage, 0, len(message.ToolResults))
+		for _, result := range message.ToolResults {
+			content := toolResult(result.Content)
+			results = append(results, SnapshotMessage{ID: result.CallID + "-result", Role: "tool", Content: &content, ToolCallID: result.CallID})
+		}
+		return results
+	case llm.RoleAssistant:
+		item := SnapshotMessage{ID: id, Role: "assistant"}
+		if message.Text != "" {
+			text := message.Text
+			item.Content = &text
+		}
+		for _, call := range message.ToolCalls {
+			arguments := string(call.Arguments)
+			if arguments == "" {
+				arguments = "{}"
+			}
+			item.ToolCalls = append(item.ToolCalls, SnapshotToolCall{ID: call.ID, Type: "function", Function: SnapshotFunction{Name: call.Name, Arguments: arguments}})
+		}
+		return []SnapshotMessage{item}
+	}
+	text := message.Text
+	return []SnapshotMessage{{ID: id, Role: "user", Content: &text}}
 }
 
 func (e *Encoder) closeText() []Event {

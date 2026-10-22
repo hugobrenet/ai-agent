@@ -1,5 +1,10 @@
 # OpenID client headers
 
+The [integration guide](integration.md) tells how an interface speaks to the
+agent with AG-UI, the protocol the turns of this guide are to be replaced
+with.
+
+
 Each protected HTTPS request under `/v1/om3` supplies the user's access token
 and cluster ID, and may name a daemon node:
 

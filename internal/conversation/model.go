@@ -3,7 +3,9 @@ package conversation
 import (
 	"encoding/json"
 	"slices"
+	"strconv"
 	"time"
+	"unicode"
 
 	"github.com/opensvc/ai-agent/internal/agent"
 )
@@ -66,6 +68,9 @@ type Turn struct {
 	ErrorCode      string
 	StartedAt      time.Time
 	CompletedAt    *time.Time
+	// PromptID is the ID the client gave the message of the user, empty
+	// when it gave none.
+	PromptID string
 	// Runs are the executions of the turn: one, plus one per resumption
 	// after a confirmation that ran on a different agent or MCP server.
 	Runs []TurnRun
@@ -142,4 +147,31 @@ type PendingConfirmation struct {
 	// Run describes the execution that suspended the turn; it is added to
 	// the runs of the turn.
 	Run TurnRun
+}
+
+// maxPromptIDBytes bounds the ID a client gives the message of the user.
+const maxPromptIDBytes = 128
+
+// ValidPromptID tells whether a client gave the message of the user an ID
+// the conversation keeps: at most 128 printable bytes without spaces. It is
+// a key of display, which nothing else trusts.
+func ValidPromptID(id string) bool {
+	if id == "" || len(id) > maxPromptIDBytes {
+		return false
+	}
+	for _, r := range id {
+		if !unicode.IsPrint(r) || unicode.IsSpace(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// MessageID names a stored message: <turn ID>:<sequence>, or, for the
+// message of the user, the ID the client gave it.
+func MessageID(turnID, promptID string, sequence int64) string {
+	if sequence == 1 && promptID != "" {
+		return promptID
+	}
+	return turnID + ":" + strconv.FormatInt(sequence, 10)
 }

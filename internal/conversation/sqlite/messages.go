@@ -29,7 +29,7 @@ func (s *Store) ListMessages(ctx context.Context, owner conversation.Owner, id s
 		return conversation.MessagePage{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `
-SELECT t.sequence, t.id, m.sequence, m.role,
+SELECT t.sequence, t.id, t.prompt_id, m.sequence, m.role,
        CASE WHEN length(CAST(m.text AS BLOB)) <= ? THEN m.text ELSE NULL END,
        t.started_at, t.completed_at, f.rating, f.reasons_json, f.expected
 FROM messages AS m
@@ -59,7 +59,8 @@ LIMIT ?`, conversation.MaxMessagePageBytes, id, beforeTurn, beforeTurn, beforeMe
 		var text, rating, expected sql.NullString
 		var reasons []byte
 		var item conversation.DisplayMessage
-		if err := rows.Scan(&turnSequence, &item.TurnID, &messageSequence, &item.Role, &text, &startedAt, &completedAt, &rating, &reasons, &expected); err != nil {
+		var promptID string
+		if err := rows.Scan(&turnSequence, &item.TurnID, &promptID, &messageSequence, &item.Role, &text, &startedAt, &completedAt, &rating, &reasons, &expected); err != nil {
 			return conversation.MessagePage{}, fmt.Errorf("scan display message: %w", err)
 		}
 		if rating.Valid {
@@ -75,7 +76,7 @@ LIMIT ?`, conversation.MaxMessagePageBytes, id, beforeTurn, beforeTurn, beforeMe
 		if turnSequence < 1 || messageSequence < 1 || !completedAt.Valid {
 			return conversation.MessagePage{}, fmt.Errorf("invalid stored display message")
 		}
-		item.ID = fmt.Sprintf("%s:%d", item.TurnID, messageSequence)
+		item.ID = conversation.MessageID(item.TurnID, promptID, messageSequence)
 		item.Text = text.String
 		item.CreatedAt = fromUnixNano(startedAt)
 		if item.Role == "assistant" {

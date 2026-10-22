@@ -378,71 +378,82 @@ WHERE id = ? AND conversation_id = ? AND status = 'running'`, status, errorCode,
 }
 
 func (s *Store) LoadHistory(ctx context.Context, owner conversation.Owner, conversationID string) ([]llm.Message, error) {
+	messages, _, err := s.LoadHistoryIDs(ctx, owner, conversationID)
+	return messages, err
+}
+
+// LoadHistoryIDs loads the history of a conversation, as LoadHistory does,
+// with the ID of each message, <turn ID>:<sequence>, as the display
+// messages and the AG-UI stream name them.
+func (s *Store) LoadHistoryIDs(ctx context.Context, owner conversation.Owner, conversationID string) ([]llm.Message, []string, error) {
 	if err := validateOwnerAndID(owner, conversationID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("begin load history transaction: %w", err)
+		return nil, nil, fmt.Errorf("begin load history transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if err := requireConversation(ctx, tx, owner, conversationID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err := tx.QueryContext(ctx, `
-SELECT m.role, m.text, m.tool_calls_json, m.tool_results_json, m.stored_bytes
+SELECT t.id, t.prompt_id, m.sequence, m.role, m.text, m.tool_calls_json, m.tool_results_json, m.stored_bytes
 FROM messages AS m
 JOIN turns AS t ON t.id = m.turn_id
 WHERE t.conversation_id = ? AND t.status = 'completed'
 ORDER BY t.sequence, m.sequence`, conversationID)
 	if err != nil {
-		return nil, fmt.Errorf("load conversation history: %w", err)
+		return nil, nil, fmt.Errorf("load conversation history: %w", err)
 	}
 	defer rows.Close()
 	messages := make([]llm.Message, 0)
+	ids := make([]string, 0)
 	var total int64
 	for rows.Next() {
-		var role, text string
+		var turnID, promptID, role, text string
+		var sequence int64
 		var callData, resultData []byte
 		var storedBytes int64
-		if err := rows.Scan(&role, &text, &callData, &resultData, &storedBytes); err != nil {
-			return nil, fmt.Errorf("scan conversation history: %w", err)
+		if err := rows.Scan(&turnID, &promptID, &sequence, &role, &text, &callData, &resultData, &storedBytes); err != nil {
+			return nil, nil, fmt.Errorf("scan conversation history: %w", err)
 		}
 		actualBytes := int64(len(role) + len(text) + len(callData) + len(resultData))
 		if storedBytes != actualBytes || storedBytes < 0 {
-			return nil, fmt.Errorf("conversation history stored byte count is invalid")
+			return nil, nil, fmt.Errorf("conversation history stored byte count is invalid")
 		}
 		if exceedsLimit(total, storedBytes, s.config.MaxConversationBytes) {
-			return nil, fmt.Errorf("conversation history exceeds %d bytes", s.config.MaxConversationBytes)
+			return nil, nil, fmt.Errorf("conversation history exceeds %d bytes", s.config.MaxConversationBytes)
 		}
 		message, err := decodeMessage(role, text, callData, resultData)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		messages = append(messages, message)
+		ids = append(ids, conversation.MessageID(turnID, promptID, sequence))
 		total += storedBytes
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate conversation history: %w", err)
+		return nil, nil, fmt.Errorf("iterate conversation history: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close conversation history rows: %w", err)
+		return nil, nil, fmt.Errorf("close conversation history rows: %w", err)
 	}
 	if len(messages) > s.config.MaxMessages {
-		return nil, fmt.Errorf("conversation history exceeds %d messages", s.config.MaxMessages)
+		return nil, nil, fmt.Errorf("conversation history exceeds %d messages", s.config.MaxMessages)
 	}
 	if len(messages) > 0 {
 		if err := (llm.Request{Messages: messages}).Validate(); err != nil {
-			return nil, fmt.Errorf("validate loaded conversation history: %w", err)
+			return nil, nil, fmt.Errorf("validate loaded conversation history: %w", err)
 		}
 		if err := validateMessageSequence(messages); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit load conversation history: %w", err)
+		return nil, nil, fmt.Errorf("commit load conversation history: %w", err)
 	}
-	return messages, nil
+	return messages, ids, nil
 }
 
 func (s *Store) RecoverInterrupted(ctx context.Context, at time.Time) (int64, error) {
@@ -569,7 +580,7 @@ func getTurn(ctx context.Context, tx *sql.Tx, conversationID string, turnID stri
 	var startedAt int64
 	var completedAt sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
-SELECT id, conversation_id, sequence, status, error_code, started_at, completed_at, runs_json
+SELECT id, conversation_id, sequence, status, error_code, started_at, completed_at, runs_json, prompt_id
 FROM turns
 WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 		&item.ID,
@@ -580,6 +591,7 @@ WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 		&startedAt,
 		&completedAt,
 		&runs,
+		&item.PromptID,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.Turn{}, conversation.ErrNotFound

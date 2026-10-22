@@ -2,6 +2,7 @@ package agui
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -209,5 +210,67 @@ func TestRunAgentInputToolAnswers(t *testing.T) {
 	}
 	if _, _, err := input.ToolAnswers(); err == nil {
 		t.Fatal("a tool message without toolCallId was accepted")
+	}
+}
+
+// The messages of the stream are named as the conversation stores them.
+func TestEncoderNamesTheMessagesAsStored(t *testing.T) {
+	encoder := NewEncoder("c-1", "r-1")
+	encoder.SetTurn("t-1")
+	events := encodeAll(t, encoder,
+		agent.Event{Type: agent.EventTextDelta, TextDelta: "Looking.", Iteration: 1},
+		agent.Event{Type: agent.EventToolStarted, ToolName: "list_nodes", ToolCallID: "call-1", ToolArguments: json.RawMessage(`{}`), Iteration: 1},
+		agent.Event{Type: agent.EventTextDelta, TextDelta: "Done.", Iteration: 2},
+	)
+	if events[1].MessageID != "t-1:2" || events[4].ParentMessageID != "t-1:2" || events[8].MessageID != "t-1:4" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestEncoderSnapshotsTheThread(t *testing.T) {
+	history := []llm.Message{
+		{Role: llm.RoleUser, Text: "nodes?"},
+		{Role: llm.RoleAssistant, Text: "Looking.", ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "list_nodes", Arguments: json.RawMessage(`{"limit":5}`)}, {ID: "call-2", Name: "count_nodes"}}},
+		{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "call-1", Content: json.RawMessage(`{"nodes":[]}`)}, {CallID: "call-2", Content: json.RawMessage(`{"count":0}`)}}},
+		{Role: llm.RoleAssistant, Text: "No node."},
+	}
+	ids := []string{"t-1:1", "t-1:2", "t-1:3", "t-1:4"}
+	prompt := "and services?"
+	events, err := NewEncoder("c-1", "r-2").Snapshot(history, ids, &SnapshotMessage{ID: "client-7", Role: "user", Content: &prompt}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := *events[0].Messages
+	shape := make([]string, 0, len(thread))
+	for _, message := range thread {
+		shape = append(shape, message.ID+"/"+message.Role)
+	}
+	if events[0].Type != MessagesSnapshot || strings.Join(shape, ",") != "t-1:1/user,t-1:2/assistant,call-1-result/tool,call-2-result/tool,t-1:4/assistant,client-7/user" ||
+		thread[1].ToolCalls[1].Function.Arguments != "{}" || thread[1].ToolCalls[0].Function.Arguments != `{"limit":5}` || *thread[2].Content != `{"nodes":[]}` ||
+		thread[2].ToolCallID != "call-1" || events[0].Metadata != nil {
+		t.Fatalf("snapshot = %+v", thread)
+	}
+	// Beyond 1 MiB the oldest turns are left out, and counted.
+	large := strings.Repeat("a", maxSnapshotBytes)
+	events, err = NewEncoder("c-1", "r-2").Snapshot([]llm.Message{{Role: llm.RoleUser, Text: large}, {Role: llm.RoleAssistant, Text: "ok"}, {Role: llm.RoleUser, Text: "next"}, {Role: llm.RoleAssistant, Text: "fine"}},
+		[]string{"t-0:1", "t-0:2", "t-1:1", "t-1:2"}, nil, 2)
+	if err != nil || len(*events[0].Messages) != 2 || (*events[0].Messages)[0].ID != "t-1:1" || events[0].Metadata["opensvc.truncated"].(map[string]int)["omittedTurns"] != 3 {
+		t.Fatalf("truncated snapshot = %+v, %v", events, err)
+	}
+}
+
+func TestRunAgentInputVersion(t *testing.T) {
+	for version, want := range map[string]string{"": "served", "1.0": "served", "1.10": "newer", "1.1": "newer", "2.0": "unsupported", "0.9": "unsupported", "1": "invalid", "1.x": "invalid", "v1.0": "invalid", "1.0.1": "invalid"} {
+		newer, err := RunAgentInput{ProtocolVersion: version}.Version()
+		got := map[bool]string{false: "served", true: "newer"}[newer]
+		switch {
+		case errors.Is(err, ErrInvalidVersion):
+			got = "invalid"
+		case errors.Is(err, ErrUnsupportedVersion):
+			got = "unsupported"
+		}
+		if got != want {
+			t.Errorf("%q: %s", version, got)
+		}
 	}
 }

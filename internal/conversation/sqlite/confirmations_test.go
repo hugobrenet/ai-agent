@@ -3,6 +3,7 @@ package sqlite
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,5 +177,72 @@ func TestStoreCancelsASuspendedTurn(t *testing.T) {
 	}
 	if err := store.CancelSuspendedTurn(t.Context(), testOwner, item.ID, "turn-1", "client_tools_abandoned", testNow.Add(5*time.Second)); !errors.Is(err, conversation.ErrNotPending) {
 		t.Fatalf("second cancellation: %v", err)
+	}
+}
+
+// A database of the version 5 is converted, its conversations kept.
+func TestOpenConvertsTheVersion5(t *testing.T) {
+	store, path := openTestStore(t, Config{})
+	item := testConversation("conversation-1", testOwner, testNow)
+	if err := store.CreateConversation(t.Context(), item); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{"ALTER TABLE turns DROP COLUMN prompt_id", "PRAGMA user_version = 5"} {
+		if _, err := store.db.ExecContext(t.Context(), statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(t.Context(), Config{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var version, conversations int
+	if err := reopened.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("version = %d, %v", version, err)
+	}
+	if err := reopened.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM conversations WHERE id = ?", item.ID).Scan(&conversations); err != nil || conversations != 1 {
+		t.Fatalf("conversations = %d, %v", conversations, err)
+	}
+	if _, err := reopened.db.ExecContext(t.Context(), "SELECT prompt_id FROM turns"); err != nil {
+		t.Fatalf("no prompt_id: %v", err)
+	}
+}
+
+// The ID the client gave its prompt names the message of the user of the
+// turn in the history and in the display messages, once per conversation.
+func TestStoreNamesThePromptWithTheIDOfTheClient(t *testing.T) {
+	store, _ := openTestStore(t, Config{})
+	item := testConversation("conversation-1", testOwner, testNow)
+	if err := store.CreateConversation(t.Context(), item); err != nil {
+		t.Fatal(err)
+	}
+	for index, turnID := range []string{"turn-1", "turn-2"} {
+		at := testNow.Add(time.Duration(index+1) * time.Minute)
+		if _, err := store.BeginTurn(t.Context(), testOwner, item.ID, turnID, at); err != nil {
+			t.Fatal(err)
+		}
+		recorded, err := store.SetTurnPromptID(t.Context(), testOwner, item.ID, turnID, "client-u1")
+		if err != nil || recorded != (index == 0) {
+			t.Fatalf("%s: recorded %v, %v", turnID, recorded, err)
+		}
+		messages := []llm.Message{{Role: llm.RoleUser, Text: "question"}, {Role: llm.RoleAssistant, Text: "answer"}}
+		if err := store.CompleteTurn(t.Context(), testOwner, item.ID, turnID, at.Add(time.Second), at.Add(time.Hour), messages, conversation.TurnRun{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, ids, err := store.LoadHistoryIDs(t.Context(), testOwner, item.ID)
+	if err != nil || strings.Join(ids, ",") != "client-u1,turn-1:2,turn-2:1,turn-2:2" {
+		t.Fatalf("ids = %v, %v", ids, err)
+	}
+	page, err := store.ListMessages(t.Context(), testOwner, item.ID, conversation.MessageQuery{})
+	if err != nil || len(page.Messages) != 4 || page.Messages[0].ID != "client-u1" || page.Messages[2].ID != "turn-2:1" {
+		t.Fatalf("page = %+v, %v", page, err)
+	}
+	if _, err := store.SetTurnPromptID(t.Context(), testOwner, item.ID, "turn-1", "has space"); err == nil {
+		t.Fatal("an invalid prompt ID was recorded")
 	}
 }

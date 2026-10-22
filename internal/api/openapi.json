@@ -1024,7 +1024,7 @@
             "$ref": "#/components/responses/AuthenticationUnavailable"
           },
           "400": {
-            "description": "The body is not a RunAgentInput, its threadId is not the conversation, its runId is invalid, the tools of the client are invalid, the tool messages do not answer the calls waiting, the last message is not a text of the user, or the resume is invalid. Codes: `invalid_request`, `thread_mismatch`, `invalid_run_id`, `invalid_tools`, `invalid_tool_results`, `invalid_prompt`, `invalid_decision`.",
+            "description": "The body is not a RunAgentInput, its threadId is not the conversation, its runId is invalid, the tools of the client are invalid, the tool messages do not answer the calls waiting, the last message is not a text of the user, or the resume is invalid. Codes: `invalid_request`, `invalid_protocol_version`, `unsupported_protocol_version`, `thread_mismatch`, `invalid_run_id`, `invalid_tools`, `invalid_tool_results`, `invalid_prompt`, `invalid_decision`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1783,6 +1783,10 @@
                 }
               }
             }
+          },
+          "protocolVersion": {
+            "type": "string",
+            "description": "The version of AG-UI the client speaks, MAJOR.MINOR: a newer minor of the line 1 is served with a warning, another major line refused."
           }
         },
         "additionalProperties": true

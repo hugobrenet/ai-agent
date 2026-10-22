@@ -283,3 +283,45 @@ WHERE id = ? AND conversation_id = ? AND status = 'awaiting_confirmation'`,
 	}
 	return nil
 }
+
+// SetTurnPromptID records the ID the client gave the message of the user of
+// a running turn, unless a turn of the conversation holds it already: an ID
+// names one message of a conversation.
+func (s *Store) SetTurnPromptID(ctx context.Context, owner conversation.Owner, conversationID string, turnID string, promptID string) (bool, error) {
+	if err := validateOwnerAndID(owner, conversationID); err != nil {
+		return false, err
+	}
+	if err := validateIdentifier("turn", turnID); err != nil {
+		return false, err
+	}
+	if !conversation.ValidPromptID(promptID) {
+		return false, fmt.Errorf("%w: invalid prompt ID", conversation.ErrInvalid)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin set prompt ID transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := requireConversation(ctx, tx, owner, conversationID); err != nil {
+		return false, err
+	}
+	var taken int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM turns WHERE conversation_id = ? AND prompt_id = ?", conversationID, promptID).Scan(&taken); err != nil {
+		return false, fmt.Errorf("read prompt IDs: %w", err)
+	}
+	if taken > 0 {
+		return false, nil
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE turns SET prompt_id = ? WHERE id = ? AND conversation_id = ? AND status = 'running'`, promptID, turnID, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("set prompt ID: %w", err)
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		return false, fmt.Errorf("%w: turn %q is not running", conversation.ErrConflict, turnID)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit prompt ID: %w", err)
+	}
+	return true, nil
+}
