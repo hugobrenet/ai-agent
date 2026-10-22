@@ -14,6 +14,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os/exec"
 	"testing"
@@ -37,7 +38,21 @@ func emitAll(emit agent.EmitFunc, events []agent.Event) error {
 func TestAGUIClientConformance(t *testing.T) {
 	state := `{"messages":[],"iteration":2,"calls":[{"ID":"call-7","Name":"stop_object","Arguments":{"path":"web"}}],"results":[]}`
 	service := conversationServiceFuncs{
-		prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
+		prepare: func(_ context.Context, _ auth.Identity, _ string, prompt string) (conversation.TurnExecution, error) {
+			if prompt == "show web" {
+				// The model calls a tool the client offers: the run leaves
+				// the call to the client.
+				return &testTurnExecution{run: func(ctx context.Context, emit agent.EmitFunc) error {
+					if tools := agent.ClientToolsForTest(ctx); len(tools) != 1 || tools[0].Name != "open_page" {
+						return errors.New("the tools of the client did not reach the turn")
+					}
+					return emitAll(emit, []agent.Event{
+						{Type: agent.EventTextDelta, TextDelta: "Opening web.", Iteration: 1},
+						{Type: agent.EventToolStarted, ToolName: "open_page", ToolCallID: "ui-1", ToolArguments: json.RawMessage(`{"path":"/web"}`), Iteration: 1},
+						{Type: agent.EventClientToolsPending, PendingCalls: []string{"ui-1"}, Iteration: 1},
+					})
+				}}, nil
+			}
 			return &testTurnExecution{run: func(_ context.Context, emit agent.EmitFunc) error {
 				return emitAll(emit, []agent.Event{
 					{Type: agent.EventTextDelta, TextDelta: "Let me check.", Iteration: 1},
@@ -63,6 +78,18 @@ func TestAGUIClientConformance(t *testing.T) {
 				})
 			}}, nil
 		},
+	}
+	service.clientCalls = func(context.Context, auth.Identity, string) ([]string, error) { return []string{"ui-1"}, nil }
+	service.answer = func(_ context.Context, _ auth.Identity, _ string, results []llm.ToolResult) (conversation.TurnExecution, error) {
+		if len(results) != 1 || results[0].CallID != "ui-1" {
+			return nil, conversation.ErrInvalidToolResults
+		}
+		return &testTurnExecution{run: func(_ context.Context, emit agent.EmitFunc) error {
+			return emitAll(emit, []agent.Event{
+				{Type: agent.EventTextDelta, TextDelta: "web is shown.", Iteration: 2},
+				{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-ui", Iteration: 2},
+			})
+		}}, nil
 	}
 	server := httptest.NewServer(newConversationTestHandler(t, service))
 	defer server.Close()

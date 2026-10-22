@@ -167,3 +167,47 @@ func TestRunAgentInputPromptAndApproval(t *testing.T) {
 		}
 	}
 }
+
+// A run that calls tools of the client is complete: it ends in success with
+// the calls left for the client, which it never answers.
+func TestEncoderLeavesTheCallsOfTheClientPending(t *testing.T) {
+	encoder := NewEncoder("c-1", "r-1")
+	events := encodeAll(t, encoder,
+		agent.Event{Type: agent.EventToolStarted, ToolName: "open_page", ToolCallID: "ui-1", ToolArguments: json.RawMessage(`{"path":"/web"}`), Iteration: 1},
+		agent.Event{Type: agent.EventToolStarted, ToolName: "highlight", ToolCallID: "ui-2", ToolArguments: json.RawMessage(`{}`), Iteration: 1},
+		agent.Event{Type: agent.EventClientToolsPending, PendingCalls: []string{"ui-1", "ui-2"}, Iteration: 1},
+	)
+	if got := types(events); got != "RUN_STARTED,TOOL_CALL_START,TOOL_CALL_ARGS,TOOL_CALL_END,TOOL_CALL_START,TOOL_CALL_ARGS,TOOL_CALL_END,RUN_FINISHED" {
+		t.Fatalf("events = %s", got)
+	}
+	finished := events[len(events)-1]
+	if finished.Outcome.Type != "success" || strings.Join(finished.Outcome.PendingToolCallIDs, ",") != "ui-1,ui-2" || finished.Result != nil {
+		t.Fatalf("finished = %+v", finished)
+	}
+}
+
+func TestRunAgentInputToolAnswers(t *testing.T) {
+	var input RunAgentInput
+	if err := json.Unmarshal([]byte(`{"messages":[{"role":"user","content":"show"},{"role":"assistant","content":""},
+		{"role":"tool","toolCallId":"mcp-1","content":"{}"},
+		{"role":"tool","toolCallId":"ui-1","content":[{"type":"text","text":"opened"},{"type":"image","source":{"type":"url","value":"https://x"}}]},
+		{"role":"tool","toolCallId":"ui-2","content":"","error":"the page does not exist"}]}`), &input); err != nil {
+		t.Fatal(err)
+	}
+	answers, skipped, err := input.ToolAnswers()
+	if err != nil || len(answers) != 3 || answers[1] != (ToolAnswer{CallID: "ui-1", Text: "opened"}) ||
+		answers[2] != (ToolAnswer{CallID: "ui-2", Text: "the page does not exist", IsError: true}) || len(skipped) != 1 || skipped[0] != "image" {
+		t.Fatalf("answers = %+v, %v, %v", answers, skipped, err)
+	}
+	// An input ending with a message of the user has no answers.
+	input.Messages = append(input.Messages, Message{Role: "user", Content: json.RawMessage(`"next"`)})
+	if answers, _, err := input.ToolAnswers(); err != nil || len(answers) != 0 {
+		t.Fatalf("answers = %+v, %v", answers, err)
+	}
+	if err := json.Unmarshal([]byte(`{"messages":[{"role":"tool","content":"x"}]}`), &input); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := input.ToolAnswers(); err == nil {
+		t.Fatal("a tool message without toolCallId was accepted")
+	}
+}

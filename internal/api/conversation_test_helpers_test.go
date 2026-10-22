@@ -6,6 +6,7 @@ import (
 	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/auth"
 	"github.com/opensvc/ai-agent/internal/conversation"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 type noopConversationService struct{}
@@ -44,6 +45,18 @@ func (noopConversationService) PrepareConfirmation(context.Context, auth.Identit
 
 func (noopConversationService) PendingConfirmation(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error) {
 	return nil, conversation.ErrNotFound
+}
+
+func (noopConversationService) PendingClientCalls(context.Context, auth.Identity, string) ([]string, error) {
+	return nil, nil
+}
+
+func (noopConversationService) AbandonClientCalls(context.Context, auth.Identity, string) error {
+	return nil
+}
+
+func (noopConversationService) PrepareClientResults(context.Context, auth.Identity, string, []llm.ToolResult) (conversation.TurnExecution, error) {
+	return nil, conversation.ErrNotPending
 }
 
 // testConversationID is the conversation whose turns turnService runs.

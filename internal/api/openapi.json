@@ -994,7 +994,7 @@
         "tags": [
           "turns"
         ],
-        "summary": "Run the agent on the conversation for an AG-UI client (https://docs.ag-ui.com): the last message of the user is the prompt, or resume answers the confirmation the conversation waits on. The stream speaks AG-UI.",
+        "summary": "Run the agent on the conversation for an AG-UI client (https://docs.ag-ui.com): the last message of the user is the prompt, the tool messages the input ends with answer the calls of the tools of the client the conversation waits on, or resume answers its confirmation. The stream speaks AG-UI.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1024,7 +1024,7 @@
             "$ref": "#/components/responses/AuthenticationUnavailable"
           },
           "400": {
-            "description": "The body is not a RunAgentInput, its threadId is not the conversation, its runId is invalid, the last message is not a text of the user, or the resume is invalid. Codes: `invalid_request`, `thread_mismatch`, `invalid_run_id`, `invalid_prompt`, `invalid_decision`.",
+            "description": "The body is not a RunAgentInput, its threadId is not the conversation, its runId is invalid, the tools of the client are invalid, the tool messages do not answer the calls waiting, the last message is not a text of the user, or the resume is invalid. Codes: `invalid_request`, `thread_mismatch`, `invalid_run_id`, `invalid_tools`, `invalid_tool_results`, `invalid_prompt`, `invalid_decision`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1064,7 +1064,7 @@
             }
           },
           "409": {
-            "description": "The conversation is busy, or waits on no such interrupt. Codes: `conversation_busy`, `confirmation_not_pending`.",
+            "description": "The conversation is busy, waits on no such interrupt, or on no call of a tool of the client. Codes: `conversation_busy`, `confirmation_not_pending`, `client_tools_not_pending`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1074,7 +1074,7 @@
             }
           },
           "410": {
-            "description": "The conversation expired, or the confirmation did. Codes: `conversation_expired`, `confirmation_expired`.",
+            "description": "The conversation expired, its confirmation did, or its wait on the answers of the client did. Codes: `conversation_expired`, `confirmation_expired`, `client_tools_expired`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1085,6 +1085,44 @@
           },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
+          }
+        }
+      }
+    },
+    "/v1/{backend}/capabilities": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        }
+      ],
+      "get": {
+        "operationId": "getCapabilities",
+        "tags": [
+          "turns"
+        ],
+        "summary": "What the runs route of the backend can do, as an AG-UI AgentCapabilities: SSE streaming, the tools of the MCP and of the client, and the interrupts of confirmations, without edits of the arguments.",
+        "responses": {
+          "200": {
+            "description": "The capabilities.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCapabilities"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
           }
         }
       }
@@ -1643,7 +1681,7 @@
       },
       "RunAgentInput": {
         "type": "object",
-        "description": "The AG-UI RunAgentInput. The agent reads threadId, runId, the last message, which must be a message of the user, and resume; it keeps its own history, and does not read the other messages, the state, the context, the forwarded properties or the tools.",
+        "description": "The AG-UI RunAgentInput. The agent reads threadId, runId, the tools of the client, the last message, which must be a message of the user unless the input ends with tool messages answering the calls of the tools of the client, and resume; it keeps its own history, and does not read the other messages, the state, the context or the forwarded properties.",
         "required": [
           "threadId",
           "runId",
@@ -1675,6 +1713,14 @@
                 },
                 "content": {
                   "description": "A text, or a list of text parts."
+                },
+                "toolCallId": {
+                  "type": "string",
+                  "description": "On a tool message, the call of a tool of the client it answers."
+                },
+                "error": {
+                  "type": "string",
+                  "description": "On a tool message, why the tool of the client failed."
                 }
               }
             }
@@ -1714,8 +1760,36 @@
                 }
               }
             }
+          },
+          "tools": {
+            "type": "array",
+            "maxItems": 16,
+            "description": "The tools of the client, offered to the model and run by the client: a name of 1 to 64 letters, digits, underscores or hyphens, not a tool of the MCP or of the agent, a description of at most 4 KiB, parameters of at most 64 KiB, 256 KiB in all.",
+            "items": {
+              "type": "object",
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "parameters": {
+                  "type": "object"
+                }
+              }
+            }
           }
         },
+        "additionalProperties": true
+      },
+      "AgentCapabilities": {
+        "type": "object",
+        "description": "The AG-UI AgentCapabilities of the agent: identity, transport, tools, humanInTheLoop and multimodal groups.",
         "additionalProperties": true
       }
     }

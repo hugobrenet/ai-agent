@@ -123,8 +123,10 @@ func (a *Agent) RunTurn(ctx context.Context, history []llm.Message, prompt strin
 // pending tool call: approved, the call runs as it was suspended; rejected,
 // the model is told it did not run.
 func (a *Agent) ResumeTurn(ctx context.Context, history []llm.Message, suspended SuspendedTurn, decision Decision, emit EmitFunc) (result TurnResult, err error) {
-	if !decision.Valid() {
-		return result, fmt.Errorf("agent confirmation decision %q is invalid", decision)
+	// A turn waiting on the client resumes with its answers, without a
+	// decision; one waiting on a confirmation, with the decision.
+	if suspended.WaitsOnClient() != (decision == "") || (decision != "" && !decision.Valid()) {
+		return result, fmt.Errorf("agent confirmation decision %q is invalid for the suspended turn", decision)
 	}
 	if err := suspended.validate(a.config.MaxIterations); err != nil {
 		return result, err
@@ -135,6 +137,8 @@ func (a *Agent) ResumeTurn(ctx context.Context, history []llm.Message, suspended
 	}
 	state.Calls = append([]llm.ToolCall(nil), suspended.Calls...)
 	state.Results = append([]llm.ToolResult(nil), suspended.Results...)
+	state.ClientCalls = append([]string(nil), suspended.ClientCalls...)
+	state.ClientResults = append([]llm.ToolResult(nil), suspended.ClientResults...)
 	return a.run(ctx, history, &state, decision, emit)
 }
 
@@ -190,6 +194,12 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	if err != nil {
 		return result, err
 	}
+	// The tools of the client are offered in every request of the turn,
+	// never searched; one named as a tool of the agent is refused.
+	offered, offeredNames, err := clientTools(clientToolsFrom(ctx), selection.known)
+	if err != nil {
+		return result, err
+	}
 	systemPrompt := a.config.SystemPrompt
 	if selection.search {
 		systemPrompt += "\n" + searchInstruction
@@ -215,6 +225,30 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	executeCalls := func() (bool, error) {
 		for len(state.Results) < len(state.Calls) {
 			call := state.Calls[len(state.Results)]
+			// A call of a tool of the client is answered by the client.
+			if slices.Contains(state.ClientCalls, call.ID) {
+				answer, ok := state.clientResult(call.ID)
+				if !ok {
+					return false, fmt.Errorf("the client did not answer the call %q of its tool %q", call.ID, call.Name)
+				}
+				state.Results = append(state.Results, answer)
+				continue
+			}
+			if offeredNames[call.Name] {
+				// The calls of tools of the client left in the answer go to
+				// the client at once; the calls of the MCP after them run
+				// once the client answered.
+				for _, pending := range state.Calls[len(state.Results):] {
+					if !offeredNames[pending.Name] {
+						continue
+					}
+					if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: pending.Name, ToolCallID: pending.ID, ToolArguments: pending.Arguments, Iteration: state.Iteration}); err != nil {
+						return false, err
+					}
+					state.ClientCalls = append(state.ClientCalls, pending.ID)
+				}
+				return true, nil
+			}
 			if shelf.known(call.Name) {
 				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: call.Arguments, Iteration: state.Iteration}); err != nil {
 					return false, err
@@ -240,7 +274,15 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			}
 			tool, ok := toolsByName[call.Name]
 			if !ok {
-				return false, fmt.Errorf("LLM requested unknown MCP tool %q", call.Name)
+				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: call.Arguments, Iteration: state.Iteration}); err != nil {
+					return false, err
+				}
+				unoffered := llm.ToolResult{CallID: call.ID, Content: textToolResult(unofferedToolResult), IsError: true}
+				if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: true, ToolCallID: call.ID, ToolResult: unoffered.Content, Iteration: state.Iteration}); err != nil {
+					return false, err
+				}
+				state.Results = append(state.Results, unoffered)
+				continue
 			}
 			arguments, err := decodeToolArguments(call)
 			if err != nil {
@@ -290,6 +332,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			messages = append(messages, assistantMessage, toolMessage)
 			state.Messages = append(state.Messages, assistantMessage, toolMessage)
 			state.Calls, state.Results, state.Text, state.ToolTitle, state.ArgumentTypes = nil, nil, "", "", nil
+			state.ClientCalls, state.ClientResults = nil, nil
 		}
 		if state.Iteration >= a.config.MaxIterations {
 			return result, fmt.Errorf("agent reached maximum of %d iterations", a.config.MaxIterations)
@@ -309,6 +352,12 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			requestTools = append(requestTools, *shelf.tool)
 			if !slices.Contains(selection.shown, ReadResourceToolName) {
 				selection.shown = append(selection.shown, ReadResourceToolName)
+			}
+		}
+		requestTools = append(requestTools, offered...)
+		for _, tool := range offered {
+			if !slices.Contains(selection.shown, tool.Name) {
+				selection.shown = append(selection.shown, tool.Name)
 			}
 		}
 		request := llm.Request{Messages: messages, Tools: requestTools, NoToolCall: iteration == a.config.MaxIterations}
@@ -370,10 +419,8 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			return result, fmt.Errorf("agent reached maximum of %d iterations before a final answer", a.config.MaxIterations)
 		}
 		for _, call := range calls {
-			if !selection.known(call.Name) && !shelf.known(call.Name) {
-				return result, fmt.Errorf("LLM requested unknown MCP tool %q", call.Name)
-			}
-			// The bound of the arguments a turn stores, for every call, the
+			// A tool the turn does not offer is answered with a tool error
+			// when its call runs. The bound of the arguments a turn stores, for every call, the
 			// calls of the agent included.
 			if len(call.Arguments) > maxToolArguments {
 				return result, fmt.Errorf("tool %q arguments exceed %d bytes", call.Name, maxToolArguments)

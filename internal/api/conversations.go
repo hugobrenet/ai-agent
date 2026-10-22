@@ -13,6 +13,7 @@ import (
 	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/auth"
 	"github.com/opensvc/ai-agent/internal/conversation"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 const maxConversationTitleRequestBytes = 4 << 10
@@ -27,6 +28,9 @@ type ConversationService interface {
 	PrepareTurn(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error)
 	PrepareConfirmation(context.Context, auth.Identity, string, string, string, agent.Decision) (conversation.TurnExecution, error)
 	PendingConfirmation(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error)
+	PendingClientCalls(context.Context, auth.Identity, string) ([]string, error)
+	AbandonClientCalls(context.Context, auth.Identity, string) error
+	PrepareClientResults(context.Context, auth.Identity, string, []llm.ToolResult) (conversation.TurnExecution, error)
 	SetFeedback(context.Context, auth.Identity, string, string, conversation.Feedback) (conversation.FeedbackRecord, error)
 	DeleteFeedback(context.Context, auth.Identity, string, string) error
 }
@@ -340,6 +344,8 @@ func conversationError(err error) (int, string, string) {
 		return http.StatusGone, "confirmation_expired", "the confirmation has expired; the action was not run"
 	case errors.Is(err, conversation.ErrNotPending):
 		return http.StatusConflict, "confirmation_not_pending", "the turn waits on no such confirmation"
+	case errors.Is(err, conversation.ErrInvalidToolResults):
+		return http.StatusBadRequest, "invalid_tool_results", "the tool messages must answer exactly the calls of the tools of the client the conversation waits on"
 	case errors.Is(err, conversation.ErrMessageTooLarge):
 		return http.StatusRequestEntityTooLarge, "history_message_too_large", "a stored message exceeds the display page size"
 	case errors.Is(err, conversation.ErrExpired):

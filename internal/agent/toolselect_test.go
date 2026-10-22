@@ -230,9 +230,18 @@ func TestACatalogToolOutsideTheShownOnesStillRuns(t *testing.T) {
 	if len(session.calls) != 1 || session.calls[0].name != "list_node_packages" {
 		t.Fatalf("calls = %v", session.calls)
 	}
-	model = &scriptedLLM{t: t, steps: []llmStep{searchCallStep("call-1", "no_such_tool", `{}`)}}
-	if _, err := searchAgent(t, model, &fakeSession{tools: searchCatalog()}, Config{}).RunTurn(t.Context(), nil, "x", func(Event) error { return nil }); err == nil {
-		t.Fatal("a tool outside the catalog ran")
+	// A tool outside the catalog is answered with a tool error, not run.
+	session = &fakeSession{tools: searchCatalog()}
+	var answered llm.ToolResult
+	model = &scriptedLLM{t: t, steps: []llmStep{searchCallStep("call-1", "no_such_tool", `{}`), func(request llm.Request, emit llm.EmitFunc) error {
+		answered = request.Messages[len(request.Messages)-1].ToolResults[0]
+		return textStep("done")(request, emit)
+	}}}
+	if _, err := searchAgent(t, model, session, Config{}).RunTurn(t.Context(), nil, "x", func(Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(session.calls) != 0 || !answered.IsError || !strings.Contains(string(answered.Content), "no tool of this name is offered") {
+		t.Fatalf("calls = %v, answer = %+v", session.calls, answered)
 	}
 }
 

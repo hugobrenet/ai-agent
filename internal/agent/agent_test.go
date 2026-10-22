@@ -173,7 +173,6 @@ func TestAskRejectsUnsafeToolRequests(t *testing.T) {
 		calls []llm.ToolCall
 		want  string
 	}{
-		{name: "unknown tool", calls: []llm.ToolCall{{ID: "call-1", Name: "unknown", Arguments: json.RawMessage(`{}`)}}, want: "unknown MCP tool"},
 		{name: "too many tools", calls: []llm.ToolCall{
 			{ID: "1", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
 			{ID: "2", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
