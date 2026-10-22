@@ -973,6 +973,121 @@
           }
         }
       }
+    },
+    "/v1/{backend}/conversations/{id}/runs": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        },
+        {
+          "$ref": "#/components/parameters/ConversationID"
+        }
+      ],
+      "post": {
+        "operationId": "runConversation",
+        "tags": [
+          "turns"
+        ],
+        "summary": "Run the agent on the conversation for an AG-UI client (https://docs.ag-ui.com): the last message of the user is the prompt, or resume answers the confirmation the conversation waits on. The stream speaks AG-UI.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunAgentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The run is streamed.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events of the AG-UI protocol: each event is written as `data: <event JSON>`, followed by an empty line, without an event name. The run starts with RUN_STARTED and ends with RUN_FINISHED, whose outcome is success or an interrupt for a confirmation, or RUN_ERROR."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          },
+          "400": {
+            "description": "The body is not a RunAgentInput, its threadId is not the conversation, its runId is invalid, the last message is not a text of the user, or the resume is invalid. Codes: `invalid_request`, `thread_mismatch`, `invalid_run_id`, `invalid_prompt`, `invalid_decision`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body exceeds 4 MiB, or the message of the user 32 KiB. Codes: `request_too_large`, `prompt_too_large`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The body is not JSON. Codes: `unsupported_media_type`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The conversation is busy, or waits on no such interrupt. Codes: `conversation_busy`, `confirmation_not_pending`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The conversation expired, or the confirmation did. Codes: `conversation_expired`, `confirmation_expired`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1525,6 +1640,83 @@
             "format": "date-time"
           }
         }
+      },
+      "RunAgentInput": {
+        "type": "object",
+        "description": "The AG-UI RunAgentInput. The agent reads threadId, runId, the last message, which must be a message of the user, and resume; it keeps its own history, and does not read the other messages, the state, the context, the forwarded properties or the tools.",
+        "required": [
+          "threadId",
+          "runId",
+          "messages"
+        ],
+        "properties": {
+          "threadId": {
+            "type": "string",
+            "description": "The ID of the conversation of the route."
+          },
+          "runId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The ID the client gives the run."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "role"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "content": {
+                  "description": "A text, or a list of text parts."
+                }
+              }
+            }
+          },
+          "resume": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "interruptId",
+                "status"
+              ],
+              "properties": {
+                "interruptId": {
+                  "type": "string",
+                  "description": "The id of the interrupt of the previous run: the confirmation ID."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "resolved",
+                    "cancelled"
+                  ]
+                },
+                "payload": {
+                  "type": "object",
+                  "required": [
+                    "approved"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "approved": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "additionalProperties": true
       }
     }
   }

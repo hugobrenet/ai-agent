@@ -1,0 +1,9 @@
+{
+  "name": "ai-agent-agui-conformance",
+  "private": true,
+  "type": "module",
+  "description": "Runs the official AG-UI client against the runs route: go test -tags agui_conformance ./internal/api/",
+  "dependencies": {
+    "@ag-ui/client": "1.0.3"
+  }
+}

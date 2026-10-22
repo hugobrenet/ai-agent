@@ -327,15 +327,19 @@ func TestTurnDoesNotStreamErrorAfterCancellation(t *testing.T) {
 	}
 }
 
-func TestWriteSSEEnforcesStreamBound(t *testing.T) {
+func TestWriteFrameEnforcesStreamBound(t *testing.T) {
 	response := httptest.NewRecorder()
 	written := int64(maxAskStreamBytes)
-	err := writeSSE(response, response, &written, AskEvent{Type: "error", Code: "test"})
+	frame, err := askFrame(AskEvent{Type: "error", Code: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = writeFrame(response, response, &written, frame)
 	if err == nil || !strings.Contains(err.Error(), "stream exceeds") {
-		t.Fatalf("writeSSE() error = %v", err)
+		t.Fatalf("writeFrame() error = %v", err)
 	}
 	if response.Body.Len() != 0 {
-		t.Fatalf("writeSSE() wrote %d bytes beyond limit", response.Body.Len())
+		t.Fatalf("writeFrame() wrote %d bytes beyond limit", response.Body.Len())
 	}
 }
 

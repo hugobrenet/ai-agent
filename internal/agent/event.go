@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/opensvc/ai-agent/internal/llm"
@@ -21,14 +22,20 @@ const (
 )
 
 type Event struct {
-	Type         EventType
-	TextDelta    string
-	ToolName     string
-	ToolError    bool
-	Usage        *llm.Usage
-	FinishReason llm.FinishReason
-	Confirmation *Confirmation
-	Iteration    int
+	Type      EventType
+	TextDelta string
+	ToolName  string
+	ToolError bool
+	// ToolCallID, ToolArguments and ToolResult describe a tool event: the
+	// call of the model, its JSON arguments, and with tool_finished its
+	// JSON result, for a client to show them.
+	ToolCallID    string
+	ToolArguments json.RawMessage
+	ToolResult    json.RawMessage
+	Usage         *llm.Usage
+	FinishReason  llm.FinishReason
+	Confirmation  *Confirmation
+	Iteration     int
 	// TurnID is set on the completion of a stored turn, for the client to
 	// refer to it, such as with a feedback.
 	TurnID string
@@ -46,11 +53,11 @@ func (e Event) Validate() error {
 			return fmt.Errorf("invalid text delta event")
 		}
 	case EventToolStarted:
-		if e.ToolName == "" || e.TextDelta != "" || e.Usage != nil || e.FinishReason != "" || e.ToolError {
+		if e.ToolName == "" || e.ToolCallID == "" || e.TextDelta != "" || e.Usage != nil || e.FinishReason != "" || e.ToolError {
 			return fmt.Errorf("invalid tool started event")
 		}
 	case EventToolFinished:
-		if e.ToolName == "" || e.TextDelta != "" || e.Usage != nil || e.FinishReason != "" {
+		if e.ToolName == "" || e.ToolCallID == "" || e.TextDelta != "" || e.Usage != nil || e.FinishReason != "" {
 			return fmt.Errorf("invalid tool finished event")
 		}
 	case EventUsage:
@@ -63,7 +70,7 @@ func (e Event) Validate() error {
 		}
 	case EventConfirmationRequired:
 		c := e.Confirmation
-		if c == nil || c.ID == "" || c.TurnID == "" || c.ToolName == "" || c.ExpiresAt.IsZero() || len(c.Arguments) == 0 ||
+		if c == nil || c.ID == "" || c.TurnID == "" || c.ToolName == "" || c.ToolCallID == "" || c.ExpiresAt.IsZero() || len(c.Arguments) == 0 ||
 			e.TextDelta != "" || e.ToolName != "" || e.Usage != nil || e.FinishReason != "" || e.ToolError {
 			return fmt.Errorf("invalid confirmation required event")
 		}
