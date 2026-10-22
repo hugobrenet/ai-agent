@@ -216,23 +216,23 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		for len(state.Results) < len(state.Calls) {
 			call := state.Calls[len(state.Results)]
 			if shelf.known(call.Name) {
-				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, Iteration: state.Iteration}); err != nil {
+				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: call.Arguments, Iteration: state.Iteration}); err != nil {
 					return false, err
 				}
 				readResult := shelf.read(ctx, session, call)
-				if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: readResult.IsError, Iteration: state.Iteration}); err != nil {
+				if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: readResult.IsError, ToolCallID: call.ID, ToolResult: readResult.Content, Iteration: state.Iteration}); err != nil {
 					return false, err
 				}
 				state.Results = append(state.Results, readResult)
 				continue
 			}
 			if selection.search && call.Name == SearchToolName {
-				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, Iteration: state.Iteration}); err != nil {
+				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: call.Arguments, Iteration: state.Iteration}); err != nil {
 					return false, err
 				}
 				searchResult := selection.run(call, titles)
 				state.ActiveTools, state.Searches = slices.Clone(selection.active), selection.searches
-				if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: searchResult.IsError, Iteration: state.Iteration}); err != nil {
+				if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: searchResult.IsError, ToolCallID: call.ID, ToolResult: searchResult.Content, Iteration: state.Iteration}); err != nil {
 					return false, err
 				}
 				state.Results = append(state.Results, searchResult)
@@ -256,7 +256,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				state.ToolTitle, state.ArgumentTypes = toolTitle(tool), argumentTypes(tool)
 				return true, nil
 			}
-			if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, Iteration: state.Iteration}); err != nil {
+			if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: call.Arguments, Iteration: state.Iteration}); err != nil {
 				return false, err
 			}
 			toolResult, err := session.CallTool(ctx, call.Name, arguments)
@@ -267,7 +267,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			if err != nil {
 				return false, fmt.Errorf("process agent MCP tool %q result: %w", call.Name, err)
 			}
-			if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: toolResult.IsError, Iteration: state.Iteration}); err != nil {
+			if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: toolResult.IsError, ToolCallID: call.ID, ToolResult: content, Iteration: state.Iteration}); err != nil {
 				return false, err
 			}
 			state.Results = append(state.Results, llm.ToolResult{CallID: call.ID, Content: content, IsError: toolResult.IsError})

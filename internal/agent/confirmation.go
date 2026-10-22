@@ -99,7 +99,9 @@ type Confirmation struct {
 	ToolName    string
 	ToolTitle   string
 	Destructive bool
-	Arguments   json.RawMessage
+	// ToolCallID is the call of the model waiting for the decision.
+	ToolCallID string
+	Arguments  json.RawMessage
 	// ArgumentTypes are the media types of the text arguments, such as
 	// application/yaml, as the input schema of the tool declares them.
 	ArgumentTypes map[string]string

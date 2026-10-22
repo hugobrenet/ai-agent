@@ -100,7 +100,39 @@ func acquireAgentSlot(response http.ResponseWriter, request *http.Request, limit
 	return false
 }
 
+// streamCodec writes the events of the agent in the protocol of a stream:
+// the frames opening it, those of each event, and the frame of a failure.
+type streamCodec interface {
+	begin() ([]byte, error)
+	event(agent.Event) ([]byte, error)
+	failure(code, message string) ([]byte, error)
+}
+
+// askCodec is the SSE protocol of the turns: one named event per event of
+// the agent.
+type askCodec struct{}
+
+func (askCodec) begin() ([]byte, error) { return nil, nil }
+
+func (askCodec) event(event agent.Event) ([]byte, error) { return askFrame(newAskEvent(event)) }
+
+func (askCodec) failure(code, message string) ([]byte, error) {
+	return askFrame(AskEvent{Type: "error", Code: code, Message: message})
+}
+
+func askFrame(event AskEvent) ([]byte, error) {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return nil, fmt.Errorf("encode API stream event: %w", err)
+	}
+	return fmt.Appendf(nil, "event: %s\ndata: %s\n\n", event.Type, data), nil
+}
+
 func streamAgent(response http.ResponseWriter, request *http.Request, audit auditLogger, prefix string, baseAttributes []slog.Attr, run func(agent.EmitFunc) error) bool {
+	return streamAgentWith(response, request, audit, prefix, baseAttributes, askCodec{}, run)
+}
+
+func streamAgentWith(response http.ResponseWriter, request *http.Request, audit auditLogger, prefix string, baseAttributes []slog.Attr, codec streamCodec, run func(agent.EmitFunc) error) bool {
 	flusher, ok := response.(http.Flusher)
 	if !ok {
 		audit.event(request.Context(), prefix+"_rejected", appendAttributes(baseAttributes,
@@ -128,6 +160,7 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 	clearAskWriteDeadline(response)
 	startedAt := time.Now()
 	audit.event(request.Context(), prefix+"_started", appendAttributes(baseAttributes, slog.Int("status", http.StatusOK))...)
+	opening, openErr := codec.begin()
 
 	writeFailed := false
 	completed := false
@@ -222,21 +255,34 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 			)
 		}
 	}
-	err := run(func(event agent.Event) error {
-		lastIteration = max(lastIteration, event.Iteration)
-		if event.Type != agent.EventToolStarted {
-			recordEvent(event)
-		}
-		streamEvent := newAskEvent(event)
-		if err := write(func() error { return writeSSE(response, flusher, &streamBytes, streamEvent) }); err != nil {
+	err := openErr
+	if err == nil && len(opening) > 0 {
+		if err = write(func() error { return writeFrame(response, flusher, &streamBytes, opening) }); err != nil {
 			writeFailed = true
-			return err
 		}
-		if event.Type == agent.EventToolStarted {
-			recordEvent(event)
-		}
-		return nil
-	})
+	}
+	if err == nil {
+		err = run(func(event agent.Event) error {
+			lastIteration = max(lastIteration, event.Iteration)
+			if event.Type != agent.EventToolStarted {
+				recordEvent(event)
+			}
+			frame, err := codec.event(event)
+			if err != nil {
+				return err
+			}
+			if len(frame) > 0 {
+				if err := write(func() error { return writeFrame(response, flusher, &streamBytes, frame) }); err != nil {
+					writeFailed = true
+					return err
+				}
+			}
+			if event.Type == agent.EventToolStarted {
+				recordEvent(event)
+			}
+			return nil
+		})
+	}
 	close(stopKeepAlive)
 	keepAlive.Wait()
 	failureCode := askFailureCode(err, completed, writeFailed, request.Context().Err())
@@ -277,13 +323,9 @@ func streamAgent(response http.ResponseWriter, request *http.Request, audit audi
 			code = "tool_call_limit"
 			message = "the question needs more tool calls than the agent runs in one answer; ask a narrower question"
 		}
-		_ = write(func() error {
-			return writeSSE(response, flusher, &streamBytes, AskEvent{
-				Type:    "error",
-				Code:    code,
-				Message: message,
-			})
-		})
+		if frame, err := codec.failure(code, message); err == nil && len(frame) > 0 {
+			_ = write(func() error { return writeFrame(response, flusher, &streamBytes, frame) })
+		}
 	}
 	return true
 }
@@ -417,12 +459,8 @@ func writeSSEComment(response io.Writer, flusher http.Flusher, streamBytes *int6
 	return nil
 }
 
-func writeSSE(response io.Writer, flusher http.Flusher, streamBytes *int64, event AskEvent) error {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("encode API stream event: %w", err)
-	}
-	frame := fmt.Appendf(nil, "event: %s\ndata: %s\n\n", event.Type, data)
+// writeFrame writes frames of the stream, within its size.
+func writeFrame(response io.Writer, flusher http.Flusher, streamBytes *int64, frame []byte) error {
 	if *streamBytes+int64(len(frame)) > maxAskStreamBytes {
 		return fmt.Errorf("API stream exceeds %d bytes", maxAskStreamBytes)
 	}

@@ -425,7 +425,7 @@ func (t *PreparedTurn) suspend(state agent.SuspendedTurn, run TurnRun, emit agen
 	}
 	if err := emit(agent.Event{Type: agent.EventConfirmationRequired, Iteration: state.Iteration, Confirmation: &agent.Confirmation{
 		ID: confirmationID, TurnID: t.turnID, ToolName: call.Name, ToolTitle: state.ToolTitle, Destructive: true,
-		Arguments: call.Arguments, ArgumentTypes: state.ArgumentTypes, ExpiresAt: pending.ExpiresAt,
+		ToolCallID: call.ID, Arguments: call.Arguments, ArgumentTypes: state.ArgumentTypes, ExpiresAt: pending.ExpiresAt,
 	}}); err != nil {
 		return fmt.Errorf("emit stored confirmation request: %w", err)
 	}

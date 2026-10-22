@@ -34,6 +34,7 @@ The routes of a backend, here `om3`; `oc3` has the same routes under
 | `DELETE /v1/om3/conversations/{id}` | Delete it |
 | `POST /v1/om3/conversations/{id}/turns` | Send a prompt, streamed |
 | `POST /v1/om3/conversations/{id}/turns/{turn_id}/confirmation` | Approve or reject a pending action, streamed |
+| `POST /v1/om3/conversations/{id}/runs` | Run the agent for an AG-UI client, streamed in AG-UI; see [AG-UI runs](#ag-ui-runs) |
 | `PUT /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Give or replace the feedback on a turn |
 | `DELETE /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Withdraw it |
 
@@ -132,6 +133,77 @@ server-sent events. Only one turn runs at a time in a conversation.
 - **Expiry.** A conversation expires after its configured lifetime, counted
   from its creation and then from its last completed turn; an expired
   conversation returns 410.
+
+## AG-UI runs
+
+`POST /v1/{backend}/conversations/{id}/runs` serves the clients of the
+[AG-UI protocol](https://docs.ag-ui.com), such as the `HttpAgent` of
+`@ag-ui/client`. It runs the same turns as `/turns` and `/confirmation`,
+on a conversation the client creates, lists, renames, deletes and rates
+with the routes above, and streams them in AG-UI. `/turns` and
+`/confirmation` are to be removed once the webapp speaks AG-UI.
+
+The request is an AG-UI `RunAgentInput`, at most 4 MiB, with the
+authentication headers of the backend:
+
+- `threadId` is the ID of the conversation of the route, or 400
+  `thread_mismatch`; `runId`, which the client gives, at most 128 printable
+  bytes without spaces, or 400 `invalid_run_id`.
+- The prompt is the last message, which must be a message of the user, a
+  text or text parts joined by line breaks, at most 32 KiB, or 400
+  `invalid_prompt`. The other content parts, such as images, are skipped, as
+  the protocol has a producer do rather than fail the run, and named in a
+  `CUSTOM` `opensvc.warning` event after `RUN_STARTED`,
+  `{message, skippedContentParts}`; a message without a text part is
+  refused. The agent keeps its own history: the other messages are
+  not read, so that a client cannot put words in the mouth of the assistant
+  or of a tool. Nor are `state`, `context`, `forwardedProps` or `tools`: the
+  tools of the client are not offered to the model yet.
+- `resume`, at most one entry, answers the confirmation the conversation
+  waits on: `interruptId` is the confirmation ID, or 409
+  `confirmation_not_pending`; `status` `resolved` with `payload`
+  `{"approved": true}` approves the call, `{"approved": false}` rejects it,
+  and `cancelled` rejects it. Edited arguments, `editedArgs`, are refused
+  with 400 `invalid_decision`: the call that runs is the call the user saw.
+  The messages of a resume are not read.
+
+Errors before the stream are the JSON errors of `/turns`. The stream is
+`text/event-stream`, one `data: <event JSON>` per event, without event
+names, and the `: keepalive` comments of `/turns`. Each event carries its
+`timestamp` in milliseconds:
+
+| Agent | AG-UI events |
+|---|---|
+| start | `RUN_STARTED` with `threadId`, `runId` and `protocolVersion` `1.0` |
+| text of one model answer | `TEXT_MESSAGE_START` (`messageId` `<runId>-<iteration>`, role `assistant`), `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` before a tool call or the end |
+| tool call, of the MCP or of the agent | `TOOL_CALL_START` (`toolCallId`, `toolCallName`, `parentMessageId` the message of its answer), `TOOL_CALL_ARGS` with the JSON arguments whole, `TOOL_CALL_END` |
+| tool result | `TOOL_CALL_RESULT` with the JSON result the model read, or a note of its size beyond 64 KiB |
+| completion | `RUN_FINISHED`, `outcome` `{"type":"success"}`, `result` `{"turnId": …}` for the feedback |
+| confirmation | the call as a tool call, then `RUN_FINISHED`, `outcome` `interrupt` |
+| failure | `RUN_ERROR` with the `code` and `message` of the `error` event of `/turns` |
+
+`RUN_FINISHED` and `RUN_ERROR` carry `usage`, one `TokenUsage`
+`{inputTokens, outputTokens, totalTokens}` summing the model calls of the
+run, `totalTokens` computed as input plus output; a resumed run reports its
+own calls only, as the protocol accounts them, and a run without a model
+call none.
+
+The interrupt of a confirmation is
+`{"id": <confirmation ID>, "reason": "tool_call", "toolCallId", "message", "responseSchema", "expiresAt", "metadata"}`,
+`tool_call` being the core reason of an interrupt bound to a tool call:
+`responseSchema` takes `{"approved": boolean}` only, `expiresAt` is the
+expiry of the confirmation, and `metadata` gives `turnId`, `tool` (`name`,
+`title`, `destructive`) and `argumentTypes`, the media types of the text
+arguments, as `confirmation_required` does. A resumed run gives the result
+of the confirmed call against its `toolCallId`, without its start again;
+a rejected one, a result telling the call did not run.
+
+`go test -tags agui_conformance ./internal/api/` runs the official client,
+`@ag-ui/client` at the version `internal/api/testdata/agui` pins, 1.0.3,
+against the route, after `npm ci --ignore-scripts` in that directory: its
+event verification accepts a run with text, tool calls and a confirmation,
+and its resume, and it rebuilds the messages of the thread from them. Run
+it again on each new version of the client.
 
 ## Resources
 
