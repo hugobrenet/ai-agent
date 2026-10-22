@@ -26,7 +26,7 @@ type ConversationService interface {
 	UpdateTitle(context.Context, auth.Identity, string, string) (conversation.Conversation, error)
 	Delete(context.Context, auth.Identity, string) error
 	PrepareTurn(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error)
-	PrepareConfirmation(context.Context, auth.Identity, string, string, string, agent.Decision) (conversation.TurnExecution, error)
+	PrepareConfirmation(context.Context, auth.Identity, string, string, string, agent.Decision, json.RawMessage) (conversation.TurnExecution, error)
 	PendingConfirmation(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error)
 	PendingClientCalls(context.Context, auth.Identity, string) ([]string, error)
 	AbandonClientCalls(context.Context, auth.Identity, string) error
@@ -133,6 +133,8 @@ func serveGetConversation(service ConversationService, audit auditLogger) http.H
 			var state agent.SuspendedTurn
 			if json.Unmarshal(pending.State, &state) == nil {
 				envelope.PendingConfirmation.ArgumentTypes = state.ArgumentTypes
+				envelope.PendingConfirmation.InputSchema = state.InputSchema
+				envelope.PendingConfirmation.Editable = len(state.InputSchema) > 0
 			}
 		}
 		audit.event(request.Context(), "conversation_read", slog.String("conversation_id", boundedAuditID(id)))
@@ -225,6 +227,8 @@ func writeConversationError(response http.ResponseWriter, request *http.Request,
 
 func conversationError(err error) (int, string, string) {
 	switch {
+	case errors.Is(err, agent.ErrInvalidEditedArguments):
+		return http.StatusBadRequest, "invalid_edited_arguments", "the edited arguments are invalid"
 	case errors.Is(err, conversation.ErrConfirmationExpired):
 		return http.StatusGone, "confirmation_expired", "the confirmation has expired; the action was not run"
 	case errors.Is(err, conversation.ErrNotPending):

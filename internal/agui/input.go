@@ -155,24 +155,40 @@ func (input RunAgentInput) Prompt() (string, []string, error) {
 }
 
 // Approval reads the answer to a confirmation: approved, true or false, of
-// a resolved entry; a cancelled one rejects the call. Edited arguments are
-// refused, not ignored: the call that runs is the call the user saw.
-func (entry ResumeEntry) Approval() (bool, error) {
+// a resolved entry, and the arguments the user edited, a full replacement of
+// those of the call, with an approval only; a cancelled entry rejects the
+// call. Any other member of the payload is refused.
+func (entry ResumeEntry) Approval() (approved bool, editedArgs json.RawMessage, err error) {
 	switch entry.Status {
 	case ResumeCancelled:
-		return false, nil
+		if len(bytes.TrimSpace(entry.Payload)) > 0 && !bytes.Equal(bytes.TrimSpace(entry.Payload), []byte("null")) {
+			var payload struct {
+				EditedArgs json.RawMessage `json:"editedArgs"`
+			}
+			if json.Unmarshal(entry.Payload, &payload) == nil && payload.EditedArgs != nil {
+				return false, nil, errors.New("edited arguments go with an approval only")
+			}
+		}
+		return false, nil, nil
 	case ResumeResolved:
 		var payload struct {
-			Approved *bool `json:"approved"`
+			Approved   *bool           `json:"approved"`
+			EditedArgs json.RawMessage `json:"editedArgs"`
 		}
 		decoder := json.NewDecoder(bytes.NewReader(entry.Payload))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&payload); err != nil || payload.Approved == nil {
-			return false, errors.New(`a resolved confirmation takes the payload {"approved": true} or {"approved": false}`)
+			return false, nil, errors.New(`a resolved confirmation takes the payload {"approved": true}, {"approved": true, "editedArgs": {…}} or {"approved": false}`)
 		}
-		return *payload.Approved, nil
+		if payload.EditedArgs != nil && !*payload.Approved {
+			return false, nil, errors.New("edited arguments go with an approval only")
+		}
+		if payload.EditedArgs != nil && !bytes.HasPrefix(bytes.TrimSpace(payload.EditedArgs), []byte("{")) {
+			return false, nil, errors.New("editedArgs must be a JSON object, the full arguments of the call")
+		}
+		return *payload.Approved, payload.EditedArgs, nil
 	}
-	return false, fmt.Errorf("resume status must be %q or %q", ResumeResolved, ResumeCancelled)
+	return false, nil, fmt.Errorf("resume status must be %q or %q", ResumeResolved, ResumeCancelled)
 }
 
 // Version reads the version of AG-UI the client declares, MAJOR.MINOR

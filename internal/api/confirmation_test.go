@@ -52,13 +52,13 @@ func TestConversationReadReturnsThePendingConfirmation(t *testing.T) {
 			return &conversation.PendingConfirmation{
 				TurnID: "turn-id", ConfirmationID: "confirmation-id", ToolName: "stop_object", ToolTitle: "Stop object",
 				Arguments: json.RawMessage(`{"path":"prod/svc/web"}`), ExpiresAt: confirmationExpiry,
-				State: []byte(`{"argument_types":{"yaml":"application/yaml"}}`),
+				State: []byte(`{"argument_types":{"yaml":"application/yaml"},"input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}`),
 			}, nil
 		},
 	}
 	response := httptest.NewRecorder()
 	newConversationTestHandler(t, service).ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/om3/conversations/conversation-id", ""))
-	want := `"pending_confirmation":{"id":"confirmation-id","turn_id":"turn-id","tool":{"name":"stop_object","title":"Stop object","destructive":true},"arguments":{"path":"prod/svc/web"},"argument_types":{"yaml":"application/yaml"},"expires_at":"2026-10-09T17:45:00Z"}`
+	want := `"pending_confirmation":{"id":"confirmation-id","turn_id":"turn-id","tool":{"name":"stop_object","title":"Stop object","destructive":true},"arguments":{"path":"prod/svc/web"},"argument_types":{"yaml":"application/yaml"},"editable":true,"input_schema":{"type":"object","properties":{"path":{"type":"string"}}},"expires_at":"2026-10-09T17:45:00Z"}`
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), want) {
 		t.Fatalf("got %d %s", response.Code, response.Body.String())
 	}

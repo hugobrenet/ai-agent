@@ -121,7 +121,7 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 		switch {
 		case len(input.Resume) > 0:
 			entry := input.Resume[0]
-			approved, err := entry.Approval()
+			approved, edited, err := entry.Approval()
 			if err != nil {
 				reject(http.StatusBadRequest, &APIError{Code: "invalid_decision", Message: err.Error()})
 				return
@@ -152,9 +152,19 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 				decision = agent.DecisionApprove
 			}
 			attributes = append(attributes, slog.String("turn_id", boundedAuditID(pending.TurnID)), slog.String("decision", string(decision)))
-			prepared, err := service.PrepareConfirmation(request.Context(), identity, id, pending.TurnID, pending.ConfirmationID, decision)
+			if edited != nil {
+				// The edit is audited by its hash and size, never its content.
+				attributes = append(attributes, slog.Bool("arguments_edited", true),
+					slog.String("edited_arguments_sha256", agent.ArgumentsHash(edited)), slog.Int("edited_arguments_bytes", len(edited)))
+			}
+			prepared, err := service.PrepareConfirmation(request.Context(), identity, id, pending.TurnID, pending.ConfirmationID, decision, edited)
 			if err != nil {
 				status, code, message := conversationError(err)
+				// The violation of the schema is the message: the user corrects
+				// the form, the confirmation still waiting.
+				if errors.Is(err, agent.ErrInvalidEditedArguments) {
+					message = err.Error()
+				}
 				reject(status, &APIError{Code: code, Message: message})
 				return
 			}
@@ -329,7 +339,7 @@ var agentCapabilities = map[string]any{
 	"identity":       map[string]any{"name": "OpenSVC AI agent", "type": "opensvc-ai-agent", "provider": "OpenSVC", "version": buildinfo.Version()},
 	"transport":      map[string]any{"streaming": true},
 	"tools":          map[string]any{"supported": true, "clientProvided": true},
-	"humanInTheLoop": map[string]any{"supported": true, "approvals": true, "interrupts": true, "approveWithEdits": false},
+	"humanInTheLoop": map[string]any{"supported": true, "approvals": true, "interrupts": true, "approveWithEdits": true},
 	"multimodal":     map[string]any{"input": map[string]any{"image": false, "audio": false, "video": false, "pdf": false, "file": false}},
 }
 

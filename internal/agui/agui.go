@@ -127,6 +127,21 @@ var approvalSchema = map[string]any{
 	"additionalProperties": false,
 }
 
+// editableApprovalSchema is the response a confirmation the user may edit
+// takes: approved, and editedArgs, the full arguments of the call, a
+// replacement and not a merge, valid against the input schema of the tool.
+func editableApprovalSchema(inputSchema json.RawMessage) map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"approved":   map[string]any{"type": "boolean"},
+			"editedArgs": inputSchema,
+		},
+		"required":             []string{"approved"},
+		"additionalProperties": false,
+	}
+}
+
 // Encoder translates the events of one run of the agent into AG-UI events,
 // in the order the protocol requires: RUN_STARTED first, a text message
 // opened before its content and closed before a tool call, and RUN_FINISHED
@@ -340,15 +355,22 @@ func (e *Encoder) Encode(event agent.Event) ([]Event, error) {
 		if title == "" {
 			title = c.ToolName
 		}
-		metadata := map[string]any{"turnId": c.TurnID, "tool": map[string]any{"name": c.ToolName, "title": c.ToolTitle, "destructive": c.Destructive}}
+		metadata := map[string]any{"turnId": c.TurnID, "tool": map[string]any{"name": c.ToolName, "title": c.ToolTitle, "destructive": c.Destructive}, "editable": len(c.InputSchema) > 0}
 		if len(c.ArgumentTypes) > 0 {
 			metadata["argumentTypes"] = c.ArgumentTypes
+		}
+		// A call the user may edit takes, beside the approval, the full
+		// arguments it runs with, against the input schema of the tool: its
+		// presence tells the client it may show an edit form.
+		responseSchema := approvalSchema
+		if len(c.InputSchema) > 0 {
+			responseSchema = editableApprovalSchema(c.InputSchema)
 		}
 		e.ended = true
 		// tool_call is the core reason of an interrupt bound to a tool call.
 		return append(events, e.stamp(Event{Type: RunFinished, ThreadID: e.threadID, RunID: e.runID, Usage: e.runUsage(), Outcome: &Outcome{Type: "interrupt", Interrupts: []Interrupt{{
 			ID: c.ID, Reason: "tool_call", Message: "Confirm the action " + title + " with the arguments of its call.",
-			ToolCallID: c.ToolCallID, ResponseSchema: approvalSchema, ExpiresAt: c.ExpiresAt.UTC().Format(time.RFC3339), Metadata: metadata,
+			ToolCallID: c.ToolCallID, ResponseSchema: responseSchema, ExpiresAt: c.ExpiresAt.UTC().Format(time.RFC3339), Metadata: metadata,
 		}}}})), nil
 	}
 	return nil, fmt.Errorf("AG-UI cannot translate agent event %q", event.Type)

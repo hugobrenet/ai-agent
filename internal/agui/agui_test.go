@@ -147,19 +147,26 @@ func TestRunAgentInputPromptAndApproval(t *testing.T) {
 		}
 	}
 	for raw, want := range map[string]string{
-		`{"interruptId":"c","status":"resolved","payload":{"approved":true}}`:                      "true",
-		`{"interruptId":"c","status":"resolved","payload":{"approved":false}}`:                     "false",
-		`{"interruptId":"c","status":"cancelled"}`:                                                 "false",
-		`{"interruptId":"c","status":"resolved","payload":{"approved":true,"editedArgs":{"a":1}}}`: "error",
-		`{"interruptId":"c","status":"resolved","payload":{}}`:                                     "error",
-		`{"interruptId":"c","status":"later"}`:                                                     "error",
+		`{"interruptId":"c","status":"resolved","payload":{"approved":true}}`:                       "true",
+		`{"interruptId":"c","status":"resolved","payload":{"approved":false}}`:                      "false",
+		`{"interruptId":"c","status":"cancelled"}`:                                                  "false",
+		`{"interruptId":"c","status":"resolved","payload":{"approved":true,"editedArgs":{"a":1}}}`:  "true edited",
+		`{"interruptId":"c","status":"resolved","payload":{"approved":false,"editedArgs":{"a":1}}}`: "error",
+		`{"interruptId":"c","status":"cancelled","payload":{"editedArgs":{"a":1}}}`:                 "error",
+		`{"interruptId":"c","status":"resolved","payload":{"approved":true,"editedArgs":[1]}}`:      "error",
+		`{"interruptId":"c","status":"resolved","payload":{"approved":true,"note":"x"}}`:            "error",
+		`{"interruptId":"c","status":"resolved","payload":{}}`:                                      "error",
+		`{"interruptId":"c","status":"later"}`:                                                      "error",
 	} {
 		var entry ResumeEntry
 		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
 			t.Fatal(err)
 		}
-		approved, err := entry.Approval()
+		approved, edited, err := entry.Approval()
 		got := map[bool]string{true: "true", false: "false"}[approved]
+		if edited != nil {
+			got += " edited"
+		}
 		if err != nil {
 			got = "error"
 		}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/auth"
@@ -39,7 +40,7 @@ func (noopConversationService) PrepareTurn(context.Context, auth.Identity, strin
 	return nil, conversation.ErrNotFound
 }
 
-func (noopConversationService) PrepareConfirmation(context.Context, auth.Identity, string, string, string, agent.Decision) (conversation.TurnExecution, error) {
+func (noopConversationService) PrepareConfirmation(context.Context, auth.Identity, string, string, string, agent.Decision, json.RawMessage) (conversation.TurnExecution, error) {
 	return nil, conversation.ErrNotFound
 }
 

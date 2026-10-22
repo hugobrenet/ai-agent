@@ -43,7 +43,11 @@ type Confirmation struct {
 	// {"yaml": "application/yaml"}, as the input schema of the tool
 	// declares them: the client shows them by it, not by guessing.
 	ArgumentTypes map[string]string `json:"argument_types,omitempty"`
-	ExpiresAt     time.Time         `json:"expires_at"`
+	// Editable tells whether the user may edit the arguments before
+	// approving them, against InputSchema, the input schema of the tool.
+	Editable    bool            `json:"editable"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	ExpiresAt   time.Time       `json:"expires_at"`
 }
 
 type ConfirmationTool struct {

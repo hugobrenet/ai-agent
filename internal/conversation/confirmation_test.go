@@ -68,7 +68,7 @@ func TestServiceStoresASuspendedTurnBeforeAskingForConfirmation(t *testing.T) {
 		t.Fatalf("unexpected stored state completed=%v failed=%v pending=%+v", store.completed, store.failed, store.suspended)
 	}
 
-	resumed, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, request.TurnID, request.ID, agent.DecisionApprove)
+	resumed, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, request.TurnID, request.ID, agent.DecisionApprove, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestServiceStoresASuspendedTurnBeforeAskingForConfirmation(t *testing.T) {
 	if runner.resumedWith != agent.DecisionApprove || runner.resumedCall.ID != "call-1" || !store.completed || len(store.completedMessages) != 2 {
 		t.Fatalf("resumed with %q call %+v completed=%v messages=%#v", runner.resumedWith, runner.resumedCall, store.completed, store.completedMessages)
 	}
-	if _, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, request.TurnID, request.ID, agent.DecisionApprove); !errors.Is(err, ErrNotPending) {
+	if _, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, request.TurnID, request.ID, agent.DecisionApprove, nil); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("a confirmation was used twice: %v", err)
 	}
 }
@@ -86,7 +86,7 @@ func TestServiceStoresASuspendedTurnBeforeAskingForConfirmation(t *testing.T) {
 func TestServiceRefusesAnInvalidDecisionOrATamperedCall(t *testing.T) {
 	store := newServiceTestStore()
 	service := newTestService(t, store, &confirmationRunner{})
-	if _, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, "turn-id", "turn-id", agent.Decision("yes")); !errors.Is(err, ErrInvalid) {
+	if _, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, "turn-id", "turn-id", agent.Decision("yes"), nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("an invalid decision was accepted: %v", err)
 	}
 	state, _ := json.Marshal(suspendedStopTurn())
@@ -95,7 +95,7 @@ func TestServiceRefusesAnInvalidDecisionOrATamperedCall(t *testing.T) {
 		Arguments: json.RawMessage(`{"path":"web"}`), ArgumentsHash: agent.ArgumentsHash(json.RawMessage(`{"path":"other"}`)),
 		State: state, CreatedAt: serviceTestNow, ExpiresAt: serviceTestNow.Add(DefaultConfirmationLifetime),
 	}
-	if _, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, "turn-id", "confirmation-id", agent.DecisionApprove); err == nil || !store.failed || store.failureCode != "confirmation_invalid" {
+	if _, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, "turn-id", "confirmation-id", agent.DecisionApprove, nil); err == nil || !store.failed || store.failureCode != "confirmation_invalid" {
 		t.Fatalf("a call not matching its confirmation resumed: %v failed=%v code=%q", err, store.failed, store.failureCode)
 	}
 }

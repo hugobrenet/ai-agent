@@ -295,10 +295,23 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				continue
 			}
 			if callDecision != DecisionApprove && requiresConfirmation(tool) {
-				state.ToolTitle, state.ArgumentTypes = toolTitle(tool), argumentTypes(tool)
+				state.ToolTitle, state.ArgumentTypes, state.InputSchema = toolTitle(tool), argumentTypes(tool), editableSchema(tool)
 				return true, nil
 			}
-			if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: call.Arguments, Iteration: state.Iteration}); err != nil {
+			// The user approved the call with arguments of their own, in place
+			// of those the model proposed.
+			edited := json.RawMessage(nil)
+			if callDecision == DecisionApprove && len(state.EditedArguments) > 0 {
+				edited, state.EditedArguments = state.EditedArguments, nil
+				if arguments, err = decodeToolArguments(llm.ToolCall{Name: call.Name, Arguments: edited}); err != nil {
+					return false, err
+				}
+			}
+			ranWith := call.Arguments
+			if edited != nil {
+				ranWith = edited
+			}
+			if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: ranWith, Iteration: state.Iteration}); err != nil {
 				return false, err
 			}
 			toolResult, err := session.CallTool(ctx, call.Name, arguments)
@@ -308,6 +321,9 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			content, err := encodeToolResult(toolResult)
 			if err != nil {
 				return false, fmt.Errorf("process agent MCP tool %q result: %w", call.Name, err)
+			}
+			if edited != nil {
+				content = editedToolResult(content, edited)
 			}
 			if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: toolResult.IsError, ToolCallID: call.ID, ToolResult: content, Iteration: state.Iteration}); err != nil {
 				return false, err
@@ -332,6 +348,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			messages = append(messages, assistantMessage, toolMessage)
 			state.Messages = append(state.Messages, assistantMessage, toolMessage)
 			state.Calls, state.Results, state.Text, state.ToolTitle, state.ArgumentTypes = nil, nil, "", "", nil
+			state.InputSchema, state.EditedArguments = nil, nil
 			state.ClientCalls, state.ClientResults = nil, nil
 		}
 		if state.Iteration >= a.config.MaxIterations {
