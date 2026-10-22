@@ -35,6 +35,7 @@ The routes of a backend, here `om3`; `oc3` has the same routes under
 | `POST /v1/om3/conversations/{id}/turns` | Send a prompt, streamed |
 | `POST /v1/om3/conversations/{id}/turns/{turn_id}/confirmation` | Approve or reject a pending action, streamed |
 | `POST /v1/om3/conversations/{id}/runs` | Run the agent for an AG-UI client, streamed in AG-UI; see [AG-UI runs](#ag-ui-runs) |
+| `GET /v1/om3/capabilities` | What the runs route can do, as an AG-UI `AgentCapabilities` |
 | `PUT /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Give or replace the feedback on a turn |
 | `DELETE /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Withdraw it |
 
@@ -157,8 +158,10 @@ authentication headers of the backend:
   `{message, skippedContentParts}`; a message without a text part is
   refused. The agent keeps its own history: the other messages are
   not read, so that a client cannot put words in the mouth of the assistant
-  or of a tool. Nor are `state`, `context`, `forwardedProps` or `tools`: the
-  tools of the client are not offered to the model yet.
+  or of a tool, but the answers to the calls of its tools, below. Nor are
+  `state`, `context` or `forwardedProps`.
+- `tools` are the tools of the client, which the agent offers to the model;
+  see [Client tools](#client-tools).
 - `resume`, at most one entry, answers the confirmation the conversation
   waits on: `interruptId` is the confirmation ID, or 409
   `confirmation_not_pending`; `status` `resolved` with `payload`
@@ -198,11 +201,74 @@ arguments, as `confirmation_required` does. A resumed run gives the result
 of the confirmed call against its `toolCallId`, without its start again;
 a rejected one, a result telling the call did not run.
 
+### Client tools
+
+The tools of the client, the frontend tools of AG-UI, are actions of its
+interface, such as opening a page or highlighting a row: the agent offers
+them to the model, and the client runs them, under its own consent rules.
+The agent never confirms them, and they act in the interface of the user,
+not on the clusters or the collector.
+
+- **Declaration.** At most 16 tools, each a name of 1 to 64 letters,
+  digits, underscores or hyphens, the names the model providers take, a
+  description of at most 4 KiB and parameters, a JSON schema object, of at
+  most 64 KiB, 256 KiB in all, or 400 `invalid_tools`. A name of a tool of
+  the agent, `search_tools` or `read_resource`, is refused there; a name of
+  a tool of the MCP ends the run with `RUN_ERROR` `tool_name_conflict`, the
+  turn reading the catalog of the MCP: a tool of the client must not take
+  the place of one, such as a destructive tool the agent confirms. They are
+  offered in every request of the turn, after `read_resource`, never
+  searched, and counted in the tools shown of its runs.
+- **Calls.** The calls of one answer of the model run in their order. At
+  the first call of a tool of the client, the calls of tools of the client
+  left in the answer are emitted, `TOOL_CALL_START`, `TOOL_CALL_ARGS` and
+  `TOOL_CALL_END`, and the run ends with `RUN_FINISHED`, `outcome`
+  `{"type": "success", "pendingToolCallIds": […]}`, in the order of the
+  calls; the calls of the MCP before them ran, those after them run once the
+  client answered. The agent never answers a call of a tool of the client:
+  no `TOOL_CALL_RESULT` for it, in this run or the next. The run gives no
+  `turnId`: the turn is not complete.
+- **Wait.** The turn is stored as suspended, as for a confirmation, with
+  the same lifetime, 10 minutes, after which it fails: `/turns` and
+  `/confirmation` answer 409 `conversation_busy` meanwhile, and the
+  conversation read gives no `pending_confirmation` for it.
+- **Answers.** The next run answers the calls with the tool messages its
+  messages end with, `{role: "tool", toolCallId, content, error?}`: the
+  text of `content`, a string or text parts, the other parts skipped and
+  named as for a prompt, 256 KiB in all, and an answer with `error` is a
+  tool error for the model. Of these tool messages, only those answering a
+  call waiting are read: the client keeps the results the agent gave in the
+  stream among its messages. They must answer each call waiting once, or
+  400 `invalid_tool_results`; on a conversation waiting on no call, 409
+  `client_tools_not_pending`; on a wait past its lifetime, 410
+  `client_tools_expired`, the turn having failed. The turn resumes, the model reading the
+  answers as results of the tools, and the history compaction applies to
+  them.
+- **Abandon.** A run whose last message is a message of the user abandons
+  the calls waiting, as AG-UI allows a client that leaves them: the turn is
+  canceled, `client_tools_abandoned`, and not stored, then the new turn
+  begins. A confirmation waiting is not abandoned: such a run answers 409
+  `conversation_busy`.
+- **Tools no longer offered.** A call of a tool the run does not offer,
+  such as a tool of the client the history called and the client no longer
+  declares, is answered with a tool error, `no tool of this name is offered
+  in this run`, rather than failing the run.
+
+`GET /v1/{backend}/capabilities` gives the AG-UI `AgentCapabilities` of the
+route, for a client to shape its interface before a run: `transport`
+`streaming`, `tools` `supported` and `clientProvided`, `parallelCalls` left
+undeclared, `humanInTheLoop`
+`approvals` and `interrupts` without `approveWithEdits`, and `multimodal`
+`input` text only. `HttpAgent` does not read it: a client subclassing it
+implements `getCapabilities()` with it.
+
 `go test -tags agui_conformance ./internal/api/` runs the official client,
 `@ag-ui/client` at the version `internal/api/testdata/agui` pins, 1.0.3,
 against the route, after `npm ci --ignore-scripts` in that directory: its
 event verification accepts a run with text, tool calls and a confirmation,
-and its resume, and it rebuilds the messages of the thread from them. Run
+and its resume, and a run leaving a call of a tool of the client pending,
+then the run answering it, and it rebuilds the messages of the thread from
+them. Run
 it again on each new version of the client.
 
 ## Resources

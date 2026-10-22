@@ -49,6 +49,10 @@ type SuspendedTurn struct {
 	// ArgumentTypes are the media types the input schema of the pending
 	// tool gives its text arguments, for the client to show them.
 	ArgumentTypes map[string]string `json:"argument_types,omitempty"`
+	// ClientCalls are the calls of tools of the client the turn waits on,
+	// by their ID, and ClientResults their answers, given to resume it.
+	ClientCalls   []string         `json:"client_calls,omitempty"`
+	ClientResults []llm.ToolResult `json:"client_results,omitempty"`
 }
 
 // PendingCall returns the call waiting for confirmation.

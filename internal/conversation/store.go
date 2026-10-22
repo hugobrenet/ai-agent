@@ -22,6 +22,9 @@ var (
 	// ErrConfirmationExpired refuses a decision arriving after the expiry of
 	// its confirmation; the turn has failed without running the call.
 	ErrConfirmationExpired = errors.New("confirmation expired")
+	// ErrInvalidToolResults refuses answers of the client that are not
+	// exactly one per call of its tools the turn waits on.
+	ErrInvalidToolResults = errors.New("the answers do not match the calls of the tools of the client the turn waits on")
 )
 
 type Store interface {
@@ -39,6 +42,9 @@ type Store interface {
 	SuspendTurn(context.Context, Owner, PendingConfirmation) error
 	ClaimConfirmation(context.Context, Owner, string, string, string, time.Time) (PendingConfirmation, error)
 	GetPendingConfirmation(context.Context, Owner, string, time.Time) (*PendingConfirmation, error)
+	// CancelSuspendedTurn cancels a suspended turn with a code, and deletes
+	// what it waits on.
+	CancelSuspendedTurn(context.Context, Owner, string, string, string, time.Time) error
 	LoadHistory(context.Context, Owner, string) ([]llm.Message, error)
 	ListMessages(context.Context, Owner, string, MessageQuery) (MessagePage, error)
 

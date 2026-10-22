@@ -244,6 +244,31 @@ type conversationServiceFuncs struct {
 	pending  func(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error)
 	feedback func(context.Context, auth.Identity, string, string, conversation.Feedback) (conversation.FeedbackRecord, error)
 	unrate   func(context.Context, auth.Identity, string, string) error
+	// clientCalls, abandon and answer serve the tools of the client.
+	clientCalls func(context.Context, auth.Identity, string) ([]string, error)
+	abandon     func(context.Context, auth.Identity, string) error
+	answer      func(context.Context, auth.Identity, string, []llm.ToolResult) (conversation.TurnExecution, error)
+}
+
+func (s conversationServiceFuncs) PendingClientCalls(ctx context.Context, identity auth.Identity, id string) ([]string, error) {
+	if s.clientCalls == nil {
+		return nil, nil
+	}
+	return s.clientCalls(ctx, identity, id)
+}
+
+func (s conversationServiceFuncs) AbandonClientCalls(ctx context.Context, identity auth.Identity, id string) error {
+	if s.abandon == nil {
+		return nil
+	}
+	return s.abandon(ctx, identity, id)
+}
+
+func (s conversationServiceFuncs) PrepareClientResults(ctx context.Context, identity auth.Identity, id string, results []llm.ToolResult) (conversation.TurnExecution, error) {
+	if s.answer == nil {
+		return nil, conversation.ErrNotPending
+	}
+	return s.answer(ctx, identity, id, results)
 }
 
 func (s conversationServiceFuncs) SetFeedback(ctx context.Context, identity auth.Identity, id string, turnID string, feedback conversation.Feedback) (conversation.FeedbackRecord, error) {

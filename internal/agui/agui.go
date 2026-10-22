@@ -6,6 +6,7 @@ package agui
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -72,6 +73,9 @@ type Usage struct {
 type Outcome struct {
 	Type       string      `json:"type"`
 	Interrupts []Interrupt `json:"interrupts,omitempty"`
+	// PendingToolCallIDs are the calls of tools of the client a successful
+	// run left for the client to answer, in the order they were made.
+	PendingToolCallIDs []string `json:"pendingToolCallIds,omitempty"`
 }
 
 // Interrupt is a decision a run waits on: a confirmation of a tool call.
@@ -203,6 +207,13 @@ func (e *Encoder) Encode(event agent.Event) ([]Event, error) {
 		e.ended = true
 		return append(events, e.stamp(Event{Type: RunFinished, ThreadID: e.threadID, RunID: e.runID,
 			Outcome: &Outcome{Type: "success"}, Result: map[string]string{"turnId": event.TurnID}, Usage: e.runUsage()})), nil
+	case agent.EventClientToolsPending:
+		// The run is complete: the calls of the tools of the client, which
+		// it emitted, are the client's to answer in the next run.
+		events := e.closeText()
+		e.ended = true
+		return append(events, e.stamp(Event{Type: RunFinished, ThreadID: e.threadID, RunID: e.runID, Usage: e.runUsage(),
+			Outcome: &Outcome{Type: "success", PendingToolCallIDs: slices.Clone(event.PendingCalls)}})), nil
 	case agent.EventConfirmationRequired:
 		c := event.Confirmation
 		if c == nil {

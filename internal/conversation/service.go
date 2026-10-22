@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -240,9 +241,14 @@ func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identit
 	if !decision.Valid() {
 		return nil, fmt.Errorf("%w: invalid confirmation decision", ErrInvalid)
 	}
-	item, err := s.Get(ctx, identity, conversationID)
+	item, waiting, waitState, err := s.pendingWait(ctx, identity, conversationID)
 	if err != nil {
 		return nil, err
+	}
+	// A turn waiting on the client is resumed by its answers, never by a
+	// decision.
+	if waiting != nil && waiting.ConfirmationID == confirmationID && waitState.WaitsOnClient() {
+		return nil, ErrNotPending
 	}
 	pending, err := s.store.ClaimConfirmation(ctx, item.Owner, item.ID, turnID, confirmationID, s.now().UTC())
 	if err != nil {
@@ -271,13 +277,91 @@ func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identit
 }
 
 // PendingConfirmation returns the unexpired confirmation the conversation
-// waits on, or nil, for a client to show it again.
+// waits on, or nil, for a client to show it again. A turn waiting on the
+// answers of the client to its tools waits on no confirmation.
 func (s *Service) PendingConfirmation(ctx context.Context, identity auth.Identity, conversationID string) (*PendingConfirmation, error) {
+	_, pending, state, err := s.pendingWait(ctx, identity, conversationID)
+	if err != nil || pending == nil || state.WaitsOnClient() {
+		return nil, err
+	}
+	return pending, nil
+}
+
+// pendingWait reads what the conversation waits on, and the suspended turn.
+func (s *Service) pendingWait(ctx context.Context, identity auth.Identity, conversationID string) (Conversation, *PendingConfirmation, agent.SuspendedTurn, error) {
+	var state agent.SuspendedTurn
 	item, err := s.Get(ctx, identity, conversationID)
+	if err != nil {
+		return item, nil, state, err
+	}
+	pending, err := s.store.GetPendingConfirmation(ctx, item.Owner, item.ID, s.now().UTC())
+	if err != nil || pending == nil {
+		return item, nil, state, err
+	}
+	if err := json.Unmarshal(pending.State, &state); err != nil {
+		return item, nil, state, fmt.Errorf("decode suspended turn: %w", err)
+	}
+	return item, pending, state, nil
+}
+
+// PendingClientCalls returns the calls of tools of the client the
+// conversation waits on, in the order they were made, or none.
+func (s *Service) PendingClientCalls(ctx context.Context, identity auth.Identity, conversationID string) ([]string, error) {
+	_, pending, state, err := s.pendingWait(ctx, identity, conversationID)
+	if err != nil || pending == nil || !state.WaitsOnClient() {
+		return nil, err
+	}
+	return slices.Clone(state.ClientCalls), nil
+}
+
+// AbandonClientCalls cancels the turn waiting on the answers of the client
+// to the calls of its tools, which a new prompt of the client abandons: the
+// protocol requires no answer from a client that leaves them. A turn waiting
+// on a confirmation stays.
+func (s *Service) AbandonClientCalls(ctx context.Context, identity auth.Identity, conversationID string) error {
+	item, pending, state, err := s.pendingWait(ctx, identity, conversationID)
+	if err != nil || pending == nil || !state.WaitsOnClient() {
+		return err
+	}
+	return s.store.CancelSuspendedTurn(ctx, item.Owner, item.ID, pending.TurnID, "client_tools_abandoned", s.now().UTC())
+}
+
+// PrepareClientResults resumes the turn waiting on the client with its
+// answers: exactly one per call of its tools the turn waits on.
+func (s *Service) PrepareClientResults(ctx context.Context, identity auth.Identity, conversationID string, results []llm.ToolResult) (TurnExecution, error) {
+	item, pending, state, err := s.pendingWait(ctx, identity, conversationID)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.GetPendingConfirmation(ctx, item.Owner, item.ID, s.now().UTC())
+	if pending == nil || !state.WaitsOnClient() {
+		return nil, ErrNotPending
+	}
+	answered := make(map[string]bool, len(results))
+	for _, result := range results {
+		if answered[result.CallID] || !slices.Contains(state.ClientCalls, result.CallID) {
+			return nil, ErrInvalidToolResults
+		}
+		answered[result.CallID] = true
+	}
+	if len(answered) != len(state.ClientCalls) {
+		return nil, ErrInvalidToolResults
+	}
+	if _, err := s.store.ClaimConfirmation(ctx, item.Owner, item.ID, pending.TurnID, pending.ConfirmationID, s.now().UTC()); err != nil {
+		return nil, err
+	}
+	state.ClientResults = slices.Clone(results)
+	history, err := s.store.LoadHistory(ctx, item.Owner, item.ID)
+	if err != nil {
+		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, pending.TurnID, TurnFailed, "history_failed"))
+	}
+	history, stats, err := s.prepareHistory(history)
+	if err != nil {
+		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, pending.TurnID, TurnFailed, "history_invalid"))
+	}
+	return &PreparedTurn{
+		service: s, owner: item.Owner, conversationID: item.ID, turnID: pending.TurnID,
+		history: history, historyStats: stats, resume: &state,
+	}, nil
 }
 
 func (s *Service) Recover(ctx context.Context) (int64, error) {
@@ -345,8 +429,8 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 			completedEvent = &copy
 			return nil
 		}
-		if event.Type == agent.EventConfirmationRequired {
-			return errors.New("conversation runner emitted a confirmation request")
+		if event.Type == agent.EventConfirmationRequired || event.Type == agent.EventClientToolsPending {
+			return errors.New("conversation runner emitted the end of a suspended turn")
 		}
 		return emit(event)
 	}
@@ -402,6 +486,11 @@ func (t *PreparedTurn) suspend(state agent.SuspendedTurn, run TurnRun, emit agen
 	if err != nil {
 		return errors.Join(err, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "agent_incomplete"))
 	}
+	// The call a turn waits on is stored with its arguments: a call of a
+	// tool of the client may come without any.
+	if len(call.Arguments) == 0 {
+		call.Arguments = json.RawMessage(`{}`)
+	}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return errors.Join(fmt.Errorf("encode suspended turn: %w", err), t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "agent_incomplete"))
@@ -422,6 +511,12 @@ func (t *PreparedTurn) suspend(state agent.SuspendedTurn, run TurnRun, emit agen
 	cancel()
 	if suspendErr != nil {
 		return errors.Join(suspendErr, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "persistence_failed"))
+	}
+	if state.WaitsOnClient() {
+		if err := emit(agent.Event{Type: agent.EventClientToolsPending, Iteration: state.Iteration, PendingCalls: slices.Clone(state.ClientCalls)}); err != nil {
+			return fmt.Errorf("emit stored client tool calls: %w", err)
+		}
+		return nil
 	}
 	if err := emit(agent.Event{Type: agent.EventConfirmationRequired, Iteration: state.Iteration, Confirmation: &agent.Confirmation{
 		ID: confirmationID, TurnID: t.turnID, ToolName: call.Name, ToolTitle: state.ToolTitle, Destructive: true,

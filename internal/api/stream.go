@@ -322,6 +322,9 @@ func streamAgentWith(response http.ResponseWriter, request *http.Request, audit 
 		} else if errors.Is(err, agent.ErrToolCallLimit) {
 			code = "tool_call_limit"
 			message = "the question needs more tool calls than the agent runs in one answer; ask a narrower question"
+		} else if errors.Is(err, agent.ErrClientToolConflict) {
+			code = "tool_name_conflict"
+			message = "a tool of the client is named as a tool of the agent; rename it"
 		}
 		if frame, err := codec.failure(code, message); err == nil && len(frame) > 0 {
 			_ = write(func() error { return writeFrame(response, flusher, &streamBytes, frame) })

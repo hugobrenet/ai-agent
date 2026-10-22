@@ -189,3 +189,111 @@ func TestRunErrorEndsTheRun(t *testing.T) {
 		t.Fatalf("got %s", response.Body.String())
 	}
 }
+
+func TestRunOffersTheToolsOfTheClientAndLeavesTheirCallsPending(t *testing.T) {
+	var offered []agent.ClientTool
+	abandoned := false
+	service := conversationServiceFuncs{
+		abandon: func(context.Context, auth.Identity, string) error { abandoned = true; return nil },
+		prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
+			return &testTurnExecution{run: func(ctx context.Context, emit agent.EmitFunc) error {
+				offered = agent.ClientToolsForTest(ctx)
+				_ = emit(agent.Event{Type: agent.EventToolStarted, ToolName: "open_page", ToolCallID: "ui-1", ToolArguments: json.RawMessage(`{"path":"/web"}`), Iteration: 1})
+				return emit(agent.Event{Type: agent.EventClientToolsPending, PendingCalls: []string{"ui-1"}, Iteration: 1})
+			}}, nil
+		},
+	}
+	response := runRequest(t, service, `{"threadId":"conversation-id","runId":"run-1","messages":[{"role":"user","content":"show web"}],
+		"tools":[{"name":"open_page","description":"Open a page","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}]}`)
+	events := aguiEvents(t, response.Body.String())
+	finished := events[len(events)-1]
+	outcome := finished["outcome"].(map[string]any)
+	if eventTypes(events) != "RUN_STARTED,TOOL_CALL_START,TOOL_CALL_ARGS,TOOL_CALL_END,RUN_FINISHED" || outcome["type"] != "success" ||
+		outcome["pendingToolCallIds"].([]any)[0] != "ui-1" || len(offered) != 1 || offered[0].Name != "open_page" || !abandoned {
+		t.Fatalf("got %s, offered %v, abandoned %v", response.Body.String(), offered, abandoned)
+	}
+}
+
+func TestRunRefusesInvalidToolsOfTheClient(t *testing.T) {
+	service := conversationServiceFuncs{prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
+		t.Fatal("invalid tools reached the agent")
+		return nil, nil
+	}}
+	many := make([]string, 0, agent.MaxClientTools+1)
+	for index := range agent.MaxClientTools + 1 {
+		many = append(many, `{"name":"tool_`+string(rune('a'+index))+`","description":"x"}`)
+	}
+	for name, tools := range map[string]string{
+		"too many":    "[" + strings.Join(many, ",") + "]",
+		"duplicated":  `[{"name":"open_page","description":"x"},{"name":"open_page","description":"y"}]`,
+		"agent tool":  `[{"name":"search_tools","description":"x"}]`,
+		"bad name":    `[{"name":"open page","description":"x"}]`,
+		"long schema": `[{"name":"open_page","description":"x","parameters":{"type":"object","description":"` + strings.Repeat("a", 65<<10) + `"}}]`,
+	} {
+		response := runRequest(t, service, `{"threadId":"conversation-id","runId":"run-1","messages":[{"role":"user","content":"x"}],"tools":`+tools+`}`)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_tools"`) {
+			t.Errorf("%s: got %d %s", name, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestRunResumesWithTheAnswersOfTheClient(t *testing.T) {
+	var answered []llm.ToolResult
+	service := conversationServiceFuncs{
+		clientCalls: func(context.Context, auth.Identity, string) ([]string, error) { return []string{"ui-1"}, nil },
+		answer: func(_ context.Context, _ auth.Identity, _ string, results []llm.ToolResult) (conversation.TurnExecution, error) {
+			answered = results
+			return &testTurnExecution{run: func(_ context.Context, emit agent.EmitFunc) error {
+				_ = emit(agent.Event{Type: agent.EventTextDelta, TextDelta: "Shown.", Iteration: 2})
+				return emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-1", Iteration: 2})
+			}}, nil
+		},
+		prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
+			t.Fatal("answers ran as a prompt")
+			return nil, nil
+		},
+	}
+	// The result the agent gave in the stream, kept by the client, is not
+	// an answer: only the call waiting is answered.
+	response := runRequest(t, service, `{"threadId":"conversation-id","runId":"run-2","messages":[{"role":"user","content":"show web"},
+		{"role":"assistant","toolCalls":[]},{"role":"tool","toolCallId":"mcp-1","content":"{}"},{"role":"tool","toolCallId":"ui-1","content":"opened"}]}`)
+	events := aguiEvents(t, response.Body.String())
+	if response.Code != http.StatusOK || eventTypes(events) != "RUN_STARTED,TEXT_MESSAGE_START,TEXT_MESSAGE_CONTENT,TEXT_MESSAGE_END,RUN_FINISHED" ||
+		len(answered) != 1 || answered[0].CallID != "ui-1" || !strings.Contains(string(answered[0].Content), "opened") {
+		t.Fatalf("got %d %s, answered %+v", response.Code, response.Body.String(), answered)
+	}
+	// Answers to a conversation that waits on none.
+	service.clientCalls = func(context.Context, auth.Identity, string) ([]string, error) { return nil, nil }
+	response = runRequest(t, service, `{"threadId":"conversation-id","runId":"run-3","messages":[{"role":"tool","toolCallId":"ui-1","content":"opened"}]}`)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"client_tools_not_pending"`) {
+		t.Fatalf("got %d %s", response.Code, response.Body.String())
+	}
+	// Answers to a wait that expired.
+	service.answer = func(context.Context, auth.Identity, string, []llm.ToolResult) (conversation.TurnExecution, error) {
+		return nil, conversation.ErrConfirmationExpired
+	}
+	service.clientCalls = func(context.Context, auth.Identity, string) ([]string, error) { return []string{"ui-1"}, nil }
+	response = runRequest(t, service, `{"threadId":"conversation-id","runId":"run-5","messages":[{"role":"tool","toolCallId":"ui-1","content":"opened"}]}`)
+	if response.Code != http.StatusGone || !strings.Contains(response.Body.String(), `"code":"client_tools_expired"`) || strings.Contains(response.Body.String(), "action") {
+		t.Fatalf("got %d %s", response.Code, response.Body.String())
+	}
+	// Answers that do not cover the calls waiting.
+	service.clientCalls = func(context.Context, auth.Identity, string) ([]string, error) { return []string{"ui-1", "ui-2"}, nil }
+	service.answer = func(context.Context, auth.Identity, string, []llm.ToolResult) (conversation.TurnExecution, error) {
+		return nil, conversation.ErrInvalidToolResults
+	}
+	response = runRequest(t, service, `{"threadId":"conversation-id","runId":"run-4","messages":[{"role":"tool","toolCallId":"ui-1","content":"opened"}]}`)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_tool_results"`) {
+		t.Fatalf("got %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCapabilities(t *testing.T) {
+	response := httptest.NewRecorder()
+	newConversationTestHandler(t, noopConversationService{}).ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/om3/capabilities", ""))
+	var capabilities map[string]map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &capabilities); err != nil || response.Code != http.StatusOK ||
+		capabilities["tools"]["clientProvided"] != true || capabilities["humanInTheLoop"]["interrupts"] != true || capabilities["humanInTheLoop"]["approveWithEdits"] != false {
+		t.Fatalf("got %d %s", response.Code, response.Body.String())
+	}
+}

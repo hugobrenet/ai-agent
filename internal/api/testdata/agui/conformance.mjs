@@ -35,4 +35,25 @@ if (events.some((event) => event.type === "TOOL_CALL_START" && event.toolCallId 
 const shape = agent.messages.map((message) => message.role + (message.toolCalls ? "[" + message.toolCalls.map((call) => call.function.name).join("+") + "]" : "") + (message.toolCallId ? "(" + message.toolCallId + ")" : ""));
 const want = "user,assistant[get_object],tool(call-1),assistant[stop_object],tool(call-7),assistant";
 if (shape.join(",") !== want) fail("messages " + shape.join(",") + ", want " + want);
+// A tool of the client: the run ends in success with the call pending, the
+// client answers it with a tool message, and the next run resumes on it.
+const page = new HttpAgent({
+  url: process.argv[2] + "/v1/om3/conversations/conversation-id/runs",
+  headers: { Authorization: "Bearer token", "X-Test-Backend": "cluster-id" },
+  threadId: "conversation-id",
+  initialMessages: [{ id: "u1", role: "user", content: "show web" }],
+});
+const tools = [{ name: "open_page", description: "Open a page of the application", parameters: { type: "object", properties: { path: { type: "string" } } } }];
+events.length = 0;
+await page.runAgent({ runId: "run-ui-1", tools }, subscriber);
+const pendingRun = events.at(-1);
+if (pendingRun?.type !== "RUN_FINISHED" || pendingRun.outcome?.type !== "success" || pendingRun.outcome.pendingToolCallIds?.join(",") !== "ui-1") {
+  fail("the run calling a tool of the client does not leave it pending: " + JSON.stringify(pendingRun));
+}
+if (events.some((event) => event.type === "TOOL_CALL_RESULT")) fail("the agent answered a tool of the client");
+page.addMessage({ id: "t1", role: "tool", toolCallId: "ui-1", content: "the page /web is open" });
+const answered = await page.runAgent({ runId: "run-ui-2", tools }, subscriber);
+if (answered.result?.turnId !== "turn-ui") fail("the run answering the tool of the client gives no turnId: " + JSON.stringify(answered.result));
+const pageShape = page.messages.map((message) => message.role + (message.toolCalls ? "[" + message.toolCalls.map((call) => call.function.name).join("+") + "]" : "") + (message.toolCallId ? "(" + message.toolCallId + ")" : ""));
+if (pageShape.join(",") !== "user,assistant[open_page],tool(ui-1),assistant") fail("messages " + pageShape.join(","));
 console.log("conformance: ok");

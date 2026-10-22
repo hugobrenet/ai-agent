@@ -151,3 +151,30 @@ func TestStoreRejectsInvalidConfirmations(t *testing.T) {
 		}
 	}
 }
+
+// A suspended turn the client abandons is canceled with its code, and the
+// conversation takes a new turn.
+func TestStoreCancelsASuspendedTurn(t *testing.T) {
+	store, _ := openTestStore(t, Config{})
+	item := testConversation("conversation-1", testOwner, testNow)
+	if err := store.CreateConversation(t.Context(), item); err != nil {
+		t.Fatal(err)
+	}
+	suspendTestTurn(t, store, item.ID, "turn-1", "confirmation-1", testNow.Add(time.Second))
+	if err := store.CancelSuspendedTurn(t.Context(), testOwner, item.ID, "turn-1", "client_tools_abandoned", testNow.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.GetPendingConfirmation(t.Context(), testOwner, item.ID, testNow.Add(3*time.Second)); err != nil || got != nil {
+		t.Fatalf("GetPendingConfirmation() = %+v, %v", got, err)
+	}
+	turn, _, err := store.TurnMessages(t.Context(), testOwner, item.ID, "turn-1")
+	if err != nil || turn.Status != conversation.TurnCanceled || turn.ErrorCode != "client_tools_abandoned" {
+		t.Fatalf("turn = %+v, %v", turn, err)
+	}
+	if _, err := store.BeginTurn(t.Context(), testOwner, item.ID, "turn-2", testNow.Add(4*time.Second)); err != nil {
+		t.Fatalf("a new turn did not begin: %v", err)
+	}
+	if err := store.CancelSuspendedTurn(t.Context(), testOwner, item.ID, "turn-1", "client_tools_abandoned", testNow.Add(5*time.Second)); !errors.Is(err, conversation.ErrNotPending) {
+		t.Fatalf("second cancellation: %v", err)
+	}
+}

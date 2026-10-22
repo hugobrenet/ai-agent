@@ -303,6 +303,14 @@ func (s *serviceTestStore) GetPendingConfirmation(context.Context, Owner, string
 	return s.suspended, nil
 }
 
+func (s *serviceTestStore) CancelSuspendedTurn(_ context.Context, _ Owner, _ string, turnID string, code string, _ time.Time) error {
+	if s.suspended == nil || s.suspended.TurnID != turnID {
+		return ErrNotPending
+	}
+	s.suspended, s.failed, s.failureCode = nil, true, code
+	return nil
+}
+
 func TestServiceBindsConversationsToItsBackend(t *testing.T) {
 	store := newServiceTestStore()
 	for _, name := range []string{"", "OM3", "om/3"} {

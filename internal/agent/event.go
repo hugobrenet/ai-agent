@@ -19,6 +19,9 @@ const (
 	// confirm a tool call. The conversation service emits it once the
 	// suspended turn is stored.
 	EventConfirmationRequired EventType = "confirmation_required"
+	// EventClientToolsPending ends a turn that waits for the client to
+	// answer the calls of its tools, once the suspended turn is stored.
+	EventClientToolsPending EventType = "client_tools_pending"
 )
 
 type Event struct {
@@ -39,6 +42,9 @@ type Event struct {
 	// TurnID is set on the completion of a stored turn, for the client to
 	// refer to it, such as with a feedback.
 	TurnID string
+	// PendingCalls are the calls of tools of the client the turn waits on,
+	// in the order they were made.
+	PendingCalls []string
 }
 
 type EmitFunc func(Event) error
@@ -73,6 +79,10 @@ func (e Event) Validate() error {
 		if c == nil || c.ID == "" || c.TurnID == "" || c.ToolName == "" || c.ToolCallID == "" || c.ExpiresAt.IsZero() || len(c.Arguments) == 0 ||
 			e.TextDelta != "" || e.ToolName != "" || e.Usage != nil || e.FinishReason != "" || e.ToolError {
 			return fmt.Errorf("invalid confirmation required event")
+		}
+	case EventClientToolsPending:
+		if len(e.PendingCalls) == 0 || e.TextDelta != "" || e.ToolName != "" || e.Usage != nil || e.FinishReason != "" || e.ToolError {
+			return fmt.Errorf("invalid client tools pending event")
 		}
 	default:
 		return fmt.Errorf("unsupported agent event type %q", e.Type)

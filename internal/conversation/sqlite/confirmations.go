@@ -238,3 +238,48 @@ func validatePendingConfirmation(pending conversation.PendingConfirmation) error
 	}
 	return nil
 }
+
+// CancelSuspendedTurn cancels a suspended turn with a code, such as the turn
+// a client abandoned, and deletes what it waits on, in one transaction.
+func (s *Store) CancelSuspendedTurn(ctx context.Context, owner conversation.Owner, conversationID string, turnID string, code string, at time.Time) error {
+	if err := validateOwnerAndID(owner, conversationID); err != nil {
+		return err
+	}
+	if err := validateIdentifier("turn", turnID); err != nil {
+		return err
+	}
+	if code == "" || len(code) > maxErrorCodeBytes || at.IsZero() {
+		return fmt.Errorf("%w: invalid turn cancellation", conversation.ErrInvalid)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin cancel suspended turn transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := requireConversation(ctx, tx, owner, conversationID); err != nil {
+		return err
+	}
+	turn, err := getTurn(ctx, tx, conversationID, turnID)
+	if err != nil {
+		return err
+	}
+	if turn.Status != conversation.TurnAwaitingConfirmation {
+		return conversation.ErrNotPending
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM confirmations WHERE turn_id = ?", turnID); err != nil {
+		return fmt.Errorf("delete suspended turn wait: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE turns SET status = 'canceled', error_code = ?, completed_at = ?
+WHERE id = ? AND conversation_id = ? AND status = 'awaiting_confirmation'`,
+		code, toUnixNano(at), turnID, conversationID); err != nil {
+		return fmt.Errorf("cancel suspended turn: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE conversations SET updated_at = ? WHERE id = ?", toUnixNano(at), conversationID); err != nil {
+		return fmt.Errorf("update canceled conversation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit canceled turn: %w", err)
+	}
+	return nil
+}
