@@ -70,7 +70,7 @@ func TestServiceResumesATurnWithTheAnswersOfTheClient(t *testing.T) {
 	if pending, err := service.PendingConfirmation(t.Context(), identity, store.item.ID); err != nil || pending != nil {
 		t.Fatalf("pending confirmation = %+v, %v", pending, err)
 	}
-	if _, err := service.PrepareConfirmation(t.Context(), identity, store.item.ID, store.suspended.TurnID, store.suspended.ConfirmationID, agent.DecisionApprove); !errors.Is(err, ErrNotPending) {
+	if _, err := service.PrepareConfirmation(t.Context(), identity, store.item.ID, store.suspended.TurnID, store.suspended.ConfirmationID, agent.DecisionApprove, nil); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("decision on a client wait: %v", err)
 	}
 	if calls, err := service.PendingClientCalls(t.Context(), identity, store.item.ID); err != nil || !slices.Equal(calls, []string{"ui-1", "ui-2"}) {
@@ -135,7 +135,7 @@ func TestSnapshotOfAResumedTurn(t *testing.T) {
 	if err := execution.Run(t.Context(), func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, store.suspended.TurnID, store.suspended.ConfirmationID, agent.DecisionApprove)
+	resumed, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, store.suspended.TurnID, store.suspended.ConfirmationID, agent.DecisionApprove, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

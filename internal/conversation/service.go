@@ -297,10 +297,15 @@ func (s *Service) PrepareTurn(ctx context.Context, identity auth.Identity, conve
 
 // PrepareConfirmation consumes the confirmation a suspended turn waits on and
 // returns the execution that resumes the turn with the decision of the user.
-// The decision applies to the call stored with the confirmation, never to
-// arguments supplied with the decision.
-func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identity, conversationID string, turnID string, confirmationID string, decision agent.Decision) (TurnExecution, error) {
-	if !decision.Valid() {
+// The decision applies to the call stored with the confirmation, the one
+// shown to the user, bound by the hash of its arguments.
+//
+// edited, when not nil, are the arguments the user approved the call with,
+// in place of those the model proposed: they are checked against the input
+// schema of the tool before the confirmation is used, so that an invalid
+// edit leaves it waiting for the user to correct it.
+func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identity, conversationID string, turnID string, confirmationID string, decision agent.Decision, edited json.RawMessage) (TurnExecution, error) {
+	if !decision.Valid() || (edited != nil && decision != agent.DecisionApprove) {
 		return nil, fmt.Errorf("%w: invalid confirmation decision", ErrInvalid)
 	}
 	item, waiting, waitState, err := s.pendingWait(ctx, identity, conversationID)
@@ -311,6 +316,14 @@ func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identit
 	// decision.
 	if waiting != nil && waiting.ConfirmationID == confirmationID && waitState.WaitsOnClient() {
 		return nil, ErrNotPending
+	}
+	if edited != nil {
+		if waiting == nil || waiting.ConfirmationID != confirmationID || waiting.TurnID != turnID {
+			return nil, ErrNotPending
+		}
+		if err := waitState.ValidateEditedArguments(edited); err != nil {
+			return nil, err
+		}
 	}
 	pending, err := s.store.ClaimConfirmation(ctx, item.Owner, item.ID, turnID, confirmationID, s.now().UTC())
 	if err != nil {
@@ -324,6 +337,9 @@ func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identit
 	if err != nil || call.Name != pending.ToolName || agent.ArgumentsHash(call.Arguments) != pending.ArgumentsHash {
 		return nil, errors.Join(fmt.Errorf("suspended turn does not hold the confirmed call"), s.failTurn(item.Owner, item.ID, turnID, TurnFailed, "confirmation_invalid"))
 	}
+	// The decision binds to the call shown, by its hash; the edit replaces
+	// its arguments for the run only.
+	state.EditedArguments = edited
 	history, historyIDs, err := s.store.LoadHistoryIDs(ctx, item.Owner, item.ID)
 	if err != nil {
 		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, turnID, TurnFailed, "history_failed"))
@@ -588,7 +604,7 @@ func (t *PreparedTurn) suspend(state agent.SuspendedTurn, run TurnRun, emit agen
 	}
 	if err := emit(agent.Event{Type: agent.EventConfirmationRequired, Iteration: state.Iteration, Confirmation: &agent.Confirmation{
 		ID: confirmationID, TurnID: t.turnID, ToolName: call.Name, ToolTitle: state.ToolTitle, Destructive: true,
-		ToolCallID: call.ID, Arguments: call.Arguments, ArgumentTypes: state.ArgumentTypes, ExpiresAt: pending.ExpiresAt,
+		ToolCallID: call.ID, Arguments: call.Arguments, ArgumentTypes: state.ArgumentTypes, InputSchema: state.InputSchema, ExpiresAt: pending.ExpiresAt,
 	}}); err != nil {
 		return fmt.Errorf("emit stored confirmation request: %w", err)
 	}

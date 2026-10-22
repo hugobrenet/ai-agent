@@ -163,7 +163,7 @@ the run with `RUN_FINISHED`, `outcome` `interrupt`:
   "expiresAt": "2026-10-09T17:45:00Z",
   "metadata": {"turnId": "<turn ID>",
     "tool": {"name": "stop_object", "title": "Stop object", "destructive": true},
-    "argumentTypes": {"yaml": "application/yaml"}}}]}
+    "editable": true, "argumentTypes": {"yaml": "application/yaml"}}}]}
 ```
 
 Show the tool, its title and its exact arguments, the `TOOL_CALL_ARGS` of
@@ -188,10 +188,20 @@ Answer with a new run on the conversation, its `resume` the decision:
  "resume": [{"interruptId": "<confirmation ID>", "status": "resolved", "payload": {"approved": true}}]}
 ```
 
-`{"approved": false}`, or the status `cancelled`, rejects the call. Edited
-arguments, or any other payload, return 400 `invalid_decision`: a decision
-cannot change the arguments or add text for the model. The identity is
-verified again and must own the conversation. A confirmation is used once.
+`{"approved": false}`, or the status `cancelled`, rejects the call. The
+identity is verified again and must own the conversation. A confirmation is
+used once.
+
+When `editable` is `true`, the `responseSchema` gives `editedArgs`, the
+input schema of the tool: show the arguments in a form built from it, its
+labels and descriptions from the schema, the values the model proposed
+filled in, and approve with `{"approved": true, "editedArgs": {…}}`, the
+full arguments, only when the user changed a value. Check the form against
+the schema before sending it; the agent checks it again, and an edit it
+refuses returns 400 `invalid_edited_arguments` with the violation, the
+confirmation still waiting. Edited arguments with a rejection, or any other
+payload, return 400 `invalid_decision`. Once approved, show the arguments
+the call ran with: the stream gave those the model proposed.
 
 The run streams the rest of the turn. Approved, the stored call runs, its
 `TOOL_CALL_RESULT` given, then the model continues; rejected, its result
@@ -201,6 +211,7 @@ another interrupt when the model calls a further destructive tool.
 | Case | Status | Code |
 |---|---|---|
 | Invalid resume or decision | 400 | `invalid_decision` |
+| Edited arguments the input schema refuses | 400 | `invalid_edited_arguments`; the confirmation still waits |
 | Unknown or foreign conversation | 404 | `conversation_not_found` |
 | No such pending confirmation, or already decided | 409 | `confirmation_not_pending` |
 | Confirmation expired | 410 | `confirmation_expired`; the turn failed and the call did not run |
@@ -209,8 +220,9 @@ another interrupt when the model calls a further destructive tool.
 
 - `GET /v1/om3/conversations/{id}` returns `pending_confirmation`, the
   confirmation with its `id`, `turn_id`, `tool`, `arguments`,
-  `argument_types` and `expires_at`, while it waits: show it again after a
-  page reload, and answer it with its `id` as the `interruptId`.
+  `argument_types`, `editable`, `input_schema` and `expires_at`, while it
+  waits: show it again after a page reload, editable when it was, and answer
+  it with its `id` as the `interruptId`.
 - A prompt returns 409 `conversation_busy` until the user decides or the
   confirmation expires; an expired one no longer blocks the conversation.
 - A pending confirmation survives an agent restart.

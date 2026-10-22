@@ -241,9 +241,12 @@ type conversationServiceFuncs struct {
 	prepare  func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error)
 	messages func(context.Context, auth.Identity, string, conversation.MessageQuery) (conversation.MessagePage, error)
 	confirm  func(context.Context, auth.Identity, string, string, string, agent.Decision) (conversation.TurnExecution, error)
-	pending  func(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error)
-	feedback func(context.Context, auth.Identity, string, string, conversation.Feedback) (conversation.FeedbackRecord, error)
-	unrate   func(context.Context, auth.Identity, string, string) error
+	// confirmEdited, when set, takes the confirmations with the arguments
+	// the user edited.
+	confirmEdited func(context.Context, auth.Identity, string, string, string, agent.Decision, json.RawMessage) (conversation.TurnExecution, error)
+	pending       func(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error)
+	feedback      func(context.Context, auth.Identity, string, string, conversation.Feedback) (conversation.FeedbackRecord, error)
+	unrate        func(context.Context, auth.Identity, string, string) error
 	// clientCalls, abandon and answer serve the tools of the client.
 	clientCalls func(context.Context, auth.Identity, string) ([]string, error)
 	abandon     func(context.Context, auth.Identity, string) error
@@ -328,9 +331,15 @@ func (s conversationServiceFuncs) PrepareTurn(ctx context.Context, identity auth
 	return s.prepare(ctx, identity, id, prompt)
 }
 
-func (s conversationServiceFuncs) PrepareConfirmation(ctx context.Context, identity auth.Identity, id string, turnID string, confirmationID string, decision agent.Decision) (conversation.TurnExecution, error) {
+func (s conversationServiceFuncs) PrepareConfirmation(ctx context.Context, identity auth.Identity, id string, turnID string, confirmationID string, decision agent.Decision, edited json.RawMessage) (conversation.TurnExecution, error) {
+	if s.confirmEdited != nil {
+		return s.confirmEdited(ctx, identity, id, turnID, confirmationID, decision, edited)
+	}
 	if s.confirm == nil {
 		return nil, errors.New("unexpected confirmation")
+	}
+	if edited != nil {
+		return nil, errors.New("unexpected edited arguments")
 	}
 	return s.confirm(ctx, identity, id, turnID, confirmationID, decision)
 }

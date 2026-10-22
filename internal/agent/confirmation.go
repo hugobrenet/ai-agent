@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opensvc/ai-agent/internal/llm"
 )
@@ -49,6 +51,12 @@ type SuspendedTurn struct {
 	// ArgumentTypes are the media types the input schema of the pending
 	// tool gives its text arguments, for the client to show them.
 	ArgumentTypes map[string]string `json:"argument_types,omitempty"`
+	// InputSchema is the input schema of the pending tool, which the user
+	// may edit its arguments against, absent when the call takes no edits.
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	// EditedArguments are the arguments the user approved the pending call
+	// with, in place of those the model proposed, which its message keeps.
+	EditedArguments json.RawMessage `json:"edited_arguments,omitempty"`
 	// ClientCalls are the calls of tools of the client the turn waits on,
 	// by their ID, and ClientResults their answers, given to resume it.
 	ClientCalls   []string         `json:"client_calls,omitempty"`
@@ -78,6 +86,12 @@ func (s SuspendedTurn) validate(maxIterations int) error {
 	}
 	if len(s.ArgumentTypes) > maxArgumentTypes {
 		return fmt.Errorf("suspended turn has more than %d argument types", maxArgumentTypes)
+	}
+	if len(s.InputSchema) > maxEditableSchemaBytes || len(s.EditedArguments) > maxToolArguments {
+		return fmt.Errorf("suspended turn input schema or edited arguments are too large")
+	}
+	if len(s.EditedArguments) > 0 && len(s.InputSchema) == 0 {
+		return fmt.Errorf("suspended turn holds edited arguments for a call that takes no edits")
 	}
 	if s.TotalToolCalls < len(s.Calls) || s.TotalToolCalls > maxToolCallsPerAsk {
 		return fmt.Errorf("suspended turn tool call count %d is out of range", s.TotalToolCalls)
@@ -109,7 +123,10 @@ type Confirmation struct {
 	// ArgumentTypes are the media types of the text arguments, such as
 	// application/yaml, as the input schema of the tool declares them.
 	ArgumentTypes map[string]string
-	ExpiresAt     time.Time
+	// InputSchema is the input schema of the tool, when the user may edit
+	// the arguments before approving them.
+	InputSchema json.RawMessage
+	ExpiresAt   time.Time
 }
 
 // requiresConfirmation tells whether a tool call must be confirmed by the
@@ -174,4 +191,93 @@ func toolTitle(tool *mcp.Tool) string {
 		return tool.Annotations.Title
 	}
 	return tool.Name
+}
+
+// maxEditableSchemaBytes bounds the input schema of a tool whose arguments
+// the user may edit before approving a call: a larger schema, or one
+// without properties to fill, takes no edits.
+const maxEditableSchemaBytes = 64 << 10
+
+// editableSchema gives the input schema of a tool the user may edit the
+// arguments of a call against: an object schema, within its bound, that
+// resolves without loading another schema. Any other takes no edits.
+func editableSchema(tool *mcp.Tool) json.RawMessage {
+	if tool.InputSchema == nil {
+		return nil
+	}
+	data, err := json.Marshal(tool.InputSchema)
+	if err != nil || len(data) > maxEditableSchemaBytes {
+		return nil
+	}
+	if _, err := resolveSchema(data); err != nil {
+		return nil
+	}
+	return data
+}
+
+func resolveSchema(data json.RawMessage) (*jsonschema.Resolved, error) {
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return nil, err
+	}
+	if schema.Type != "object" {
+		return nil, fmt.Errorf("the input schema is not an object schema")
+	}
+	return schema.Resolve(nil)
+}
+
+// ErrInvalidEditedArguments refuses arguments the user edited that are not
+// a JSON object valid against the input schema of the tool.
+var ErrInvalidEditedArguments = errors.New("the edited arguments are invalid")
+
+// ValidateEditedArguments checks the arguments the user edited against the
+// input schema of the pending call, a full replacement of the arguments the
+// model proposed. The error names the violation, its path and constraint.
+func (s SuspendedTurn) ValidateEditedArguments(edited json.RawMessage) error {
+	if len(s.InputSchema) == 0 {
+		return fmt.Errorf("%w: this action takes no edits", ErrInvalidEditedArguments)
+	}
+	if len(edited) > maxToolArguments {
+		return fmt.Errorf("%w: they exceed %d bytes", ErrInvalidEditedArguments, maxToolArguments)
+	}
+	if _, err := decodeToolArguments(llm.ToolCall{Name: "edited", Arguments: edited}); err != nil {
+		return fmt.Errorf("%w: they must be one JSON object", ErrInvalidEditedArguments)
+	}
+	resolved, err := resolveSchema(s.InputSchema)
+	if err != nil {
+		return fmt.Errorf("%w: the input schema of the tool cannot be read", ErrInvalidEditedArguments)
+	}
+	var instance any
+	if err := json.Unmarshal(edited, &instance); err != nil {
+		return fmt.Errorf("%w: they must be one JSON object", ErrInvalidEditedArguments)
+	}
+	if err := resolved.Validate(instance); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidEditedArguments, err)
+	}
+	return nil
+}
+
+// editedToolResult tells the model, ahead of the result of the call, that
+// the user edited its arguments and which it ran with: the message of the
+// model keeps the call it proposed.
+func editedToolResult(result json.RawMessage, edited json.RawMessage) json.RawMessage {
+	note := map[string]string{"type": "text", "text": "The user edited the arguments before approving; the call ran with: " + string(edited)}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return result
+	}
+	var content []json.RawMessage
+	if raw, ok := payload["content"]; ok {
+		if err := json.Unmarshal(raw, &content); err != nil {
+			return result
+		}
+	}
+	noteData, _ := json.Marshal(note)
+	content = append([]json.RawMessage{noteData}, content...)
+	payload["content"], _ = json.Marshal(content)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return result
+	}
+	return data
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,6 +55,7 @@ func TestGoldenAGUIStreams(t *testing.T) {
 		ID: "confirmation-1", TurnID: "turn-c", ToolName: "update_object_config", ToolTitle: "Update object config", Destructive: true,
 		ToolCallID: "call-7", Arguments: json.RawMessage(`{"path":"web","yaml":"app#1:\n  start: /bin/true\n"}`),
 		ArgumentTypes: map[string]string{"yaml": "application/yaml"}, ExpiresAt: confirmationExpiry,
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"The path of the object."},"yaml":{"type":"string","contentMediaType":"application/yaml","description":"The configuration to apply."},"wait":{"type":"boolean","description":"Wait until every live node has it."}},"required":["path","yaml"],"additionalProperties":false}`),
 	}
 	pending := func(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error) {
 		state := `{"messages":[],"iteration":1,"calls":[{"ID":"call-7","Name":"update_object_config","Arguments":{}}],"results":[]}`
@@ -173,6 +175,33 @@ func TestGoldenAGUIStreams(t *testing.T) {
 					agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-c", Iteration: 2},
 				)}),
 			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-1","role":"user"},{"id":"turn-1:2","role":"assistant"}],"tools":[],"resume":[{"interruptId":"confirmation-1","status":"resolved","payload":{"approved":false}}]}`,
+		},
+		{
+			// The user approved the call with arguments of their own: the
+			// result tells the model, ahead of what the call returned.
+			name: "resume_edited",
+			service: conversationServiceFuncs{pending: pending, confirmEdited: func(_ context.Context, _ auth.Identity, _, _, _ string, decision agent.Decision, edited json.RawMessage) (conversation.TurnExecution, error) {
+				if decision != agent.DecisionApprove || string(edited) != `{"path":"web","yaml":"app#1:\n  start: /bin/false\n"}` {
+					return nil, errors.New("unexpected edit")
+				}
+				return &testTurnExecution{turnID: "turn-c", run: emitEvents(
+					agent.Event{Type: agent.EventToolStarted, ToolName: "update_object_config", ToolCallID: "call-7", ToolArguments: edited, Iteration: 1},
+					agent.Event{Type: agent.EventToolFinished, ToolName: "update_object_config", ToolCallID: "call-7", Iteration: 1,
+						ToolResult: json.RawMessage(`{"content":[{"type":"text","text":"The user edited the arguments before approving; the call ran with: {\"path\":\"web\",\"yaml\":\"app#1:\\n  start: /bin/false\\n\"}"},{"type":"text","text":"updated"}]}`)},
+					agent.Event{Type: agent.EventTextDelta, TextDelta: "Done: web starts with /bin/false, as you set it.", Iteration: 2},
+					agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-c", Iteration: 2},
+				)}, nil
+			}},
+			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-c","role":"user"},{"id":"turn-c:2","role":"assistant"}],"tools":[],"resume":[{"interruptId":"confirmation-1","status":"resolved","payload":{"approved":true,"editedArgs":{"path":"web","yaml":"app#1:\n  start: /bin/false\n"}}}]}`,
+		},
+		{
+			// An edit the input schema of the tool refuses: the confirmation
+			// still waits, for the user to correct the form.
+			name: "invalid_edited_arguments",
+			service: conversationServiceFuncs{pending: pending, confirmEdited: func(context.Context, auth.Identity, string, string, string, agent.Decision, json.RawMessage) (conversation.TurnExecution, error) {
+				return nil, fmt.Errorf("%w: validating root: required: missing properties: [\"yaml\"]", agent.ErrInvalidEditedArguments)
+			}},
+			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[],"tools":[],"resume":[{"interruptId":"confirmation-1","status":"resolved","payload":{"approved":true,"editedArgs":{"path":"web"}}}]}`,
 		},
 		{
 			name:    "confirmation_not_pending",

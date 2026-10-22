@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -160,14 +162,14 @@ func TestRunRefusesInvalidInputs(t *testing.T) {
 		},
 	}
 	for body, want := range map[string]string{
-		`{"threadId":"other","runId":"r","messages":[{"role":"user","content":"x"}]}`:                                                                                           "thread_mismatch",
-		`{"threadId":"conversation-id","runId":"","messages":[{"role":"user","content":"x"}]}`:                                                                                  "invalid_run_id",
-		`{"threadId":"conversation-id","runId":"r 1","messages":[{"role":"user","content":"x"}]}`:                                                                               "invalid_run_id",
-		`{"threadId":"conversation-id","runId":"r","messages":[{"role":"assistant","content":"x"}]}`:                                                                            "invalid_prompt",
-		`{"threadId":"conversation-id","runId":"r","messages":[{"role":"user","content":"  "}]}`:                                                                                "invalid_prompt",
-		`{"threadId":"conversation-id","runId":"r","messages":[],"resume":[{"interruptId":"other","status":"resolved","payload":{"approved":true}}]}`:                           "confirmation_not_pending",
-		`{"threadId":"conversation-id","runId":"r","messages":[],"resume":[{"interruptId":"confirmation-id","status":"resolved","payload":{"approved":true,"editedArgs":{}}}]}`: "invalid_decision",
-		`{"threadId":"conversation-id","runId":"r","messages":[],"resume":[{"interruptId":"a","status":"cancelled"},{"interruptId":"b","status":"cancelled"}]}`:                 "invalid_decision",
+		`{"threadId":"other","runId":"r","messages":[{"role":"user","content":"x"}]}`:                                                                                            "thread_mismatch",
+		`{"threadId":"conversation-id","runId":"","messages":[{"role":"user","content":"x"}]}`:                                                                                   "invalid_run_id",
+		`{"threadId":"conversation-id","runId":"r 1","messages":[{"role":"user","content":"x"}]}`:                                                                                "invalid_run_id",
+		`{"threadId":"conversation-id","runId":"r","messages":[{"role":"assistant","content":"x"}]}`:                                                                             "invalid_prompt",
+		`{"threadId":"conversation-id","runId":"r","messages":[{"role":"user","content":"  "}]}`:                                                                                 "invalid_prompt",
+		`{"threadId":"conversation-id","runId":"r","messages":[],"resume":[{"interruptId":"other","status":"resolved","payload":{"approved":true}}]}`:                            "confirmation_not_pending",
+		`{"threadId":"conversation-id","runId":"r","messages":[],"resume":[{"interruptId":"confirmation-id","status":"resolved","payload":{"approved":false,"editedArgs":{}}}]}`: "invalid_decision",
+		`{"threadId":"conversation-id","runId":"r","messages":[],"resume":[{"interruptId":"a","status":"cancelled"},{"interruptId":"b","status":"cancelled"}]}`:                  "invalid_decision",
 		`not json`: "invalid_request",
 	} {
 		response := runRequest(t, service, body)
@@ -294,7 +296,7 @@ func TestCapabilities(t *testing.T) {
 	newConversationTestHandler(t, noopConversationService{}).ServeHTTP(response, authenticatedRequest(http.MethodGet, "/v1/om3/capabilities", ""))
 	var capabilities map[string]map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &capabilities); err != nil || response.Code != http.StatusOK ||
-		capabilities["tools"]["clientProvided"] != true || capabilities["humanInTheLoop"]["interrupts"] != true || capabilities["humanInTheLoop"]["approveWithEdits"] != false {
+		capabilities["tools"]["clientProvided"] != true || capabilities["humanInTheLoop"]["interrupts"] != true || capabilities["humanInTheLoop"]["approveWithEdits"] != true {
 		t.Fatalf("got %d %s", response.Code, response.Body.String())
 	}
 }
@@ -389,5 +391,44 @@ func TestRunKeepsThePromptIDOfTheClient(t *testing.T) {
 	held.Messages = append(held.Messages, agui.Message{ID: "turn-2:2"})
 	if !inPhase(held, messages, ids, stored) {
 		t.Fatal("a client holding the answer the turn waits in is out of phase")
+	}
+}
+
+// The arguments the user edited reach the service, and the audit records
+// their hash and size, never their content.
+func TestRunResumesWithTheEditedArguments(t *testing.T) {
+	state := `{"messages":[],"iteration":1,"calls":[{"ID":"call-7","Name":"switch_object","Arguments":{"path":"web"}}],"results":[]}`
+	var edited json.RawMessage
+	service := conversationServiceFuncs{
+		pending: func(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error) {
+			return &conversation.PendingConfirmation{TurnID: "turn-id", ConfirmationID: "confirmation-id", ToolName: "switch_object", State: []byte(state)}, nil
+		},
+		confirmEdited: func(_ context.Context, _ auth.Identity, _, _, _ string, decision agent.Decision, got json.RawMessage) (conversation.TurnExecution, error) {
+			if decision != agent.DecisionApprove {
+				t.Fatalf("decision %q", decision)
+			}
+			edited = got
+			return &testTurnExecution{run: func(_ context.Context, emit agent.EmitFunc) error {
+				return emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-id", Iteration: 2})
+			}}, nil
+		},
+	}
+	var output bytes.Buffer
+	handler, err := NewHandler([]Backend{{Name: "om3", Conversations: service, Authenticator: allowTestTokenVerifier()}},
+		HandlerConfig{MaxConcurrentAsks: 4, AuditLogger: slog.New(slog.NewJSONHandler(&output, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/conversation-id/runs",
+		`{"threadId":"conversation-id","runId":"run-2","messages":[],"resume":[{"interruptId":"confirmation-id","status":"resolved","payload":{"approved":true,"editedArgs":{"path":"web","to":"secret-node-marker"}}}]}`)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || string(edited) != `{"path":"web","to":"secret-node-marker"}` {
+		t.Fatalf("got %d %s, edited %s", response.Code, response.Body.String(), edited)
+	}
+	if !strings.Contains(output.String(), `"arguments_edited":true`) || !strings.Contains(output.String(), `"edited_arguments_sha256":"`+agent.ArgumentsHash(edited)+`"`) ||
+		strings.Contains(output.String(), "secret-node-marker") {
+		t.Fatalf("audit = %s", output.String())
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os/exec"
 	"testing"
@@ -76,14 +77,19 @@ func TestAGUIClientConformance(t *testing.T) {
 					{Type: agent.EventUsage, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15}, Iteration: 1},
 					{Type: agent.EventTextDelta, TextDelta: "Stopping web.", Iteration: 2},
 					{Type: agent.EventConfirmationRequired, Iteration: 2, Confirmation: &agent.Confirmation{ID: "confirmation-id", TurnID: "turn-id", ToolName: "stop_object",
-						ToolTitle: "Stop object", Destructive: true, ToolCallID: "call-7", Arguments: json.RawMessage(`{"path":"web"}`), ExpiresAt: time.Now().Add(10 * time.Minute)}},
+						ToolTitle: "Stop object", Destructive: true, ToolCallID: "call-7", Arguments: json.RawMessage(`{"path":"web"}`), ExpiresAt: time.Now().Add(10 * time.Minute),
+						InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)}},
 				})
 			}}, nil
 		},
 		pending: func(context.Context, auth.Identity, string) (*conversation.PendingConfirmation, error) {
 			return &conversation.PendingConfirmation{TurnID: "turn-id", ConfirmationID: "confirmation-id", State: []byte(state)}, nil
 		},
-		confirm: func(context.Context, auth.Identity, string, string, string, agent.Decision) (conversation.TurnExecution, error) {
+		// The client approves the call with the arguments the user edited.
+		confirmEdited: func(_ context.Context, _ auth.Identity, _, _, _ string, decision agent.Decision, edited json.RawMessage) (conversation.TurnExecution, error) {
+			if decision != agent.DecisionApprove || string(edited) != `{"path":"db"}` {
+				return nil, fmt.Errorf("unexpected decision %q with %s", decision, edited)
+			}
 			return &testTurnExecution{run: func(_ context.Context, emit agent.EmitFunc) error {
 				return emitAll(emit, []agent.Event{
 					{Type: agent.EventToolStarted, ToolName: "stop_object", ToolCallID: "call-7", ToolArguments: json.RawMessage(`{"path":"web"}`), Iteration: 2},

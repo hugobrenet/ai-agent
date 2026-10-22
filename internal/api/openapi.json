@@ -771,7 +771,7 @@
             "$ref": "#/components/responses/AuthenticationUnavailable"
           },
           "400": {
-            "description": "The body is not a RunAgentInput, its threadId is not the conversation, its runId is invalid, the tools of the client are invalid, the tool messages do not answer the calls waiting, the last message is not a text of the user, or the resume is invalid. Codes: `invalid_request`, `invalid_protocol_version`, `unsupported_protocol_version`, `thread_mismatch`, `invalid_run_id`, `invalid_tools`, `invalid_tool_results`, `invalid_prompt`, `invalid_decision`.",
+            "description": "The body is not a RunAgentInput, its threadId is not the conversation, its runId is invalid, the tools of the client are invalid, the tool messages do not answer the calls waiting, the last message is not a text of the user, or the resume is invalid. Codes: `invalid_request`, `invalid_protocol_version`, `unsupported_protocol_version`, `thread_mismatch`, `invalid_run_id`, `invalid_tools`, `invalid_tool_results`, `invalid_prompt`, `invalid_decision`, `invalid_edited_arguments`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1132,7 +1132,8 @@
           "turn_id",
           "tool",
           "arguments",
-          "expires_at"
+          "expires_at",
+          "editable"
         ],
         "properties": {
           "id": {
@@ -1173,6 +1174,14 @@
               "type": "string"
             },
             "description": "The media types of text arguments, such as `{\"yaml\": \"application/yaml\"}`, as the input schema of the tool declares them: show an argument by its type."
+          },
+          "editable": {
+            "type": "boolean",
+            "description": "Whether the user may edit the arguments before approving them, against `input_schema`."
+          },
+          "input_schema": {
+            "type": "object",
+            "description": "The input schema of the tool, when the call is editable: the schema of `editedArgs`."
           }
         },
         "description": "A tool call waiting for the decision of the user, which a run resumes with its `id` as the interruptId."
@@ -1399,6 +1408,10 @@
                   "properties": {
                     "approved": {
                       "type": "boolean"
+                    },
+                    "editedArgs": {
+                      "type": "object",
+                      "description": "With an approval, the full arguments the user edited, a replacement of those of the call, valid against the input schema of the tool. Only for an interrupt whose metadata is editable."
                     }
                   }
                 }

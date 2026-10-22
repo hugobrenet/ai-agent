@@ -126,10 +126,11 @@ request of the model alone: the run ends with `RUN_FINISHED`, `outcome`
 ```json
 {"id": "<confirmation ID>", "reason": "tool_call", "toolCallId": "…",
  "message": "Confirm the action Stop service with the arguments of its call.",
- "responseSchema": {"type": "object", "properties": {"approved": {"type": "boolean"}}, "required": ["approved"]},
+ "responseSchema": {"type": "object", "properties": {"approved": {"type": "boolean"},
+   "editedArgs": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}, "required": ["approved"]},
  "expiresAt": "2026-10-22T10:00:00Z",
  "metadata": {"turnId": "…", "tool": {"name": "stop_service", "title": "Stop service", "destructive": true},
-              "argumentTypes": {"yaml": "application/yaml"}}}
+              "editable": true, "argumentTypes": {"yaml": "application/yaml"}}}
 ```
 
 - Show the tool, its title, and the exact arguments of the tool call, taken
@@ -142,10 +143,17 @@ request of the model alone: the run ends with `RUN_FINISHED`, `outcome`
 - Answer with a new run on the same thread, `resume`:
   `{"interruptId": <id>, "status": "resolved", "payload": {"approved": true}}`
   runs the call, `{"approved": false}` or `"status": "cancelled"` rejects it.
-  `editedArgs` is refused: the call that runs is the call the user saw.
+- When `metadata.editable` is `true`, the `responseSchema` gives
+  `editedArgs`, the input schema of the tool: offer a form built from it,
+  and approve with `{"approved": true, "editedArgs": {…}}`, the full
+  arguments, only when the user changed one. An edit the schema refuses
+  returns 400 `invalid_edited_arguments` with the violation, and the
+  confirmation still waits; check the form against the schema before
+  sending it. See [the API](api.md#edited-arguments).
 - Errors: 409 `confirmation_not_pending` when the conversation waits on no
-  such interrupt, 410 `confirmation_expired`, 409 `conversation_busy` for a
-  prompt while it waits.
+  such interrupt, 410 `confirmation_expired`, 400 `invalid_edited_arguments`
+  for an edit the schema refuses, 409 `conversation_busy` for a prompt
+  while it waits.
 - Never show a call as approved before the run that resumes it gives its
   `TOOL_CALL_RESULT`.
 

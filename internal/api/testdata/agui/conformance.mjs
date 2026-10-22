@@ -28,7 +28,10 @@ if (finished?.type !== "RUN_FINISHED" || finished.outcome.type !== "interrupt" |
 if (finished.usage?.[0]?.totalTokens !== 15) fail("the interrupted run reports no usage: " + JSON.stringify(finished.usage));
 
 events.length = 0;
-const resumed = await agent.runAgent({ runId: "run-2", resume: [{ interruptId: interrupt.id, status: "resolved", payload: { approved: true } }] }, subscriber);
+if (interrupt.metadata?.editable !== true || interrupt.responseSchema?.properties?.editedArgs?.type !== "object") {
+  fail("the interrupt offers no edit of the arguments: " + JSON.stringify(interrupt));
+}
+const resumed = await agent.runAgent({ runId: "run-2", resume: [{ interruptId: interrupt.id, status: "resolved", payload: { approved: true, editedArgs: { path: "db" } } }] }, subscriber);
 if (resumed.result?.turnId !== "turn-id") fail("the resumed run gives no turnId: " + JSON.stringify(resumed.result));
 if (events.some((event) => event.type === "TOOL_CALL_START" && event.toolCallId === "call-7")) fail("the resumed run starts the confirmed call again");
 

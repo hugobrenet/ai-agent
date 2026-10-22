@@ -109,7 +109,7 @@ func TestConfirmationFlowSuspendsStoresAndResumesATurn(t *testing.T) {
 				t.Fatalf("pending confirmation not readable: %+v %v", pending, err)
 			}
 
-			resumed, err := service.PrepareConfirmation(t.Context(), identity, item.ID, request.TurnID, request.ID, tc.decision)
+			resumed, err := service.PrepareConfirmation(t.Context(), identity, item.ID, request.TurnID, request.ID, tc.decision, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

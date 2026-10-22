@@ -173,9 +173,11 @@ authentication headers of the backend:
   waits on: `interruptId` is the confirmation ID, or 409
   `confirmation_not_pending`; `status` `resolved` with `payload`
   `{"approved": true}` approves the call, `{"approved": false}` rejects it,
-  and `cancelled` rejects it. Edited arguments, `editedArgs`, are refused
-  with 400 `invalid_decision`: the call that runs is the call the user saw.
-  The messages of a resume are not read.
+  and `cancelled` rejects it. With an approval, `editedArgs` are the
+  arguments the user edited, a full replacement of those of the call; see
+  [Edited arguments](#edited-arguments). Any other member of the payload,
+  or `editedArgs` with a rejection, returns 400 `invalid_decision`. The
+  messages of a resume are not read.
 
 Errors before the stream are JSON errors, `{"error": {"code", "message"}}`,
 the codes the OpenAPI description lists. The stream is `text/event-stream`,
@@ -203,13 +205,43 @@ call none.
 The interrupt of a confirmation is
 `{"id": <confirmation ID>, "reason": "tool_call", "toolCallId", "message", "responseSchema", "expiresAt", "metadata"}`,
 `tool_call` being the core reason of an interrupt bound to a tool call:
-`responseSchema` takes `{"approved": boolean}` only, `expiresAt` is the
+`responseSchema` takes `{"approved": boolean}`, and `editedArgs`, the input
+schema of the tool, when the user may edit the call; `expiresAt` is the
 expiry of the confirmation, and `metadata` gives `turnId`, `tool` (`name`,
-`title`, `destructive`) and `argumentTypes`, the media types of the text
-arguments, as the conversation read gives them in its `pending_confirmation`
-after a reload. A resumed run gives the result
-of the confirmed call against its `toolCallId`, without its start again;
-a rejected one, a result telling the call did not run.
+`title`, `destructive`), `editable` and `argumentTypes`, the media types of
+the text arguments, as the conversation read gives them in its
+`pending_confirmation` after a reload. A resumed run gives the result of the
+confirmed call against its `toolCallId`, without its start again; a
+rejected one, a result telling the call did not run.
+
+### Edited arguments
+
+The user may edit the arguments of a call before approving it, when the
+tool declares an input schema the agent can check them against: an object
+schema of at most 64 KiB that resolves without loading another schema. The
+interrupt then gives the schema as `editedArgs` in its `responseSchema`,
+the signal AG-UI gives a client that it may show an edit form, and
+`metadata` `editable` `true`; a call of another tool is confirmable as is,
+`editable` `false`.
+
+- **Validation.** `editedArgs` are one JSON object of at most 256 KiB, a
+  full replacement of the arguments, not a merge, checked against the input
+  schema before the confirmation is used: an invalid edit returns 400
+  `invalid_edited_arguments` with the violation, its path and constraint,
+  in `message`, and the confirmation still waits for the user to correct
+  the form. An edit of a call that takes none returns the same code.
+- **The call shown.** The decision binds to the call the user saw, by the
+  hash of the arguments the model proposed; the edit replaces them for the
+  run only.
+- **The model.** Its message keeps the call it proposed: the result of the
+  tool tells it, ahead of what the call returned, `the user edited the
+  arguments before approving; the call ran with: {…}`. The history and the
+  copy a feedback keeps hold the proposal, the edit and the result.
+- **The client.** The resumed run gives the result against the original
+  `toolCallId`, whose arguments the stream gave as proposed: the client,
+  which sent the edit, shows the arguments the call ran with.
+- **Audit.** `confirmation_decided` records `arguments_edited`, the hash
+  and the size of the edited arguments, never their content.
 
 ### Messages snapshot
 
@@ -297,7 +329,7 @@ not on the clusters or the collector.
 route, for a client to shape its interface before a run: `transport`
 `streaming`, `tools` `supported` and `clientProvided`, `parallelCalls` left
 undeclared, `humanInTheLoop`
-`approvals` and `interrupts` without `approveWithEdits`, and `multimodal`
+`approvals`, `interrupts` and `approveWithEdits`, and `multimodal`
 `input` text only. `HttpAgent` does not read it: a client subclassing it
 implements `getCapabilities()` with it.
 
