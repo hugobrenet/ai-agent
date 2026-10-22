@@ -274,7 +274,7 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 			codec.opening = append(snapshot, codec.opening...)
 			attributes = append(attributes, slog.Bool("messages_snapshot", true))
 		}
-		started := streamAgentWith(response, request, audit, "conversation_run", attributes, codec, func(emit agent.EmitFunc) error {
+		started := streamRun(response, request, audit, "conversation_run", attributes, codec, func(emit agent.EmitFunc) error {
 			return execution.Run(runContext, emit)
 		})
 		if !started {

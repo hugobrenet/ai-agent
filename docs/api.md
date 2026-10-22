@@ -33,9 +33,7 @@ The routes of a backend, here `om3`; `oc3` has the same routes under
 | `GET /v1/om3/conversations/{id}/messages` | Read its stored messages |
 | `PATCH /v1/om3/conversations/{id}` | Rename it |
 | `DELETE /v1/om3/conversations/{id}` | Delete it |
-| `POST /v1/om3/conversations/{id}/turns` | Send a prompt, streamed |
-| `POST /v1/om3/conversations/{id}/turns/{turn_id}/confirmation` | Approve or reject a pending action, streamed |
-| `POST /v1/om3/conversations/{id}/runs` | Run the agent for an AG-UI client, streamed in AG-UI; see [AG-UI runs](#ag-ui-runs) |
+| `POST /v1/om3/conversations/{id}/runs` | Send a prompt, or answer a pending action, streamed in AG-UI; see [Runs](#runs) |
 | `GET /v1/om3/capabilities` | What the runs route can do, as an AG-UI `AgentCapabilities` |
 | `PUT /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Give or replace the feedback on a turn |
 | `DELETE /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Withdraw it |
@@ -106,8 +104,8 @@ answer is reused as for om3.
 ## Conversations
 
 A conversation stores the successful turns of the caller, as context for the
-next ones. Each turn takes `{"prompt":"..."}` and streams its events as
-server-sent events. Only one turn runs at a time in a conversation.
+next ones. A turn runs on a prompt, with a [run](#runs) streamed in AG-UI.
+Only one turn runs at a time in a conversation.
 
 - **Title.** After the first successful turn, the agent derives a title from
   its prompt: whitespace is normalized and titles longer than 80 characters
@@ -116,8 +114,8 @@ server-sent events. Only one turn runs at a time in a conversation.
 - **Failures.** Canceled, failed, timed-out and interrupted turns are not
   added to the model context and their partial output is not stored.
 - **Tool calls.** A turn runs at most 8 tool calls per model answer and 16 in
-  all. Beyond, it fails with the stream `error` event `tool_call_limit`: ask a
-  narrower question.
+  all. Beyond, it fails with `RUN_ERROR` `tool_call_limit`: ask a narrower
+  question.
 - **Last iteration.** The last model request of a turn, the
   `OPENSVC_AI_AGENT_MAX_ITERATIONS`th, declares the tools but takes no call of
   them (`tool_choice` none): the model answers with what the turn read,
@@ -130,20 +128,20 @@ server-sent events. Only one turn runs at a time in a conversation.
   nothing else is written, the stream sends an SSE comment, `: keepalive`,
   every 10 s, which clients ignore and which keeps idle proxies from closing
   it.
-- **Busy.** A second turn while one runs, or while an action waits for a
+- **Busy.** A prompt while a turn runs, or while an action waits for a
   decision, returns 409 `conversation_busy`.
 - **Expiry.** A conversation expires after its configured lifetime, counted
   from its creation and then from its last completed turn; an expired
   conversation returns 410.
 
-## AG-UI runs
+## Runs
 
-`POST /v1/{backend}/conversations/{id}/runs` serves the clients of the
-[AG-UI protocol](https://docs.ag-ui.com), such as the `HttpAgent` of
-`@ag-ui/client`. It runs the same turns as `/turns` and `/confirmation`,
-on a conversation the client creates, lists, renames, deletes and rates
-with the routes above, and streams them in AG-UI. `/turns` and
-`/confirmation` are to be removed once the webapp speaks AG-UI.
+`POST /v1/{backend}/conversations/{id}/runs` runs the agent on a
+conversation for a client of the [AG-UI protocol](https://docs.ag-ui.com),
+such as the OpenSVC webapp or the `HttpAgent` of `@ag-ui/client`: a new
+prompt, the answer to the confirmation the conversation waits on, or the
+answers to the calls of the tools of the client. The client creates, lists,
+renames, deletes and rates the conversation with the routes above.
 
 The request is an AG-UI `RunAgentInput`, at most 4 MiB, with the
 authentication headers of the backend:
@@ -179,10 +177,11 @@ authentication headers of the backend:
   with 400 `invalid_decision`: the call that runs is the call the user saw.
   The messages of a resume are not read.
 
-Errors before the stream are the JSON errors of `/turns`. The stream is
-`text/event-stream`, one `data: <event JSON>` per event, without event
-names, and the `: keepalive` comments of `/turns`. Each event carries its
-`timestamp` in milliseconds:
+Errors before the stream are JSON errors, `{"error": {"code", "message"}}`,
+the codes the OpenAPI description lists. The stream is `text/event-stream`,
+one `data: <event JSON>` per event, without event names, and the
+`: keepalive` comments of an idle stream. Each event carries its `timestamp`
+in milliseconds:
 
 | Agent | AG-UI events |
 |---|---|
@@ -193,7 +192,7 @@ names, and the `: keepalive` comments of `/turns`. Each event carries its
 | tool result | `TOOL_CALL_RESULT` with the JSON result the model read, or a note of its size beyond 64 KiB |
 | completion | `RUN_FINISHED`, `outcome` `{"type":"success"}`, `result` `{"turnId": …}` for the feedback |
 | confirmation | the call as a tool call, then `RUN_FINISHED`, `outcome` `interrupt` |
-| failure | `RUN_ERROR` with the `code` and `message` of the `error` event of `/turns` |
+| failure | `RUN_ERROR` with a `code`, `tool_call_limit`, `request_timeout`, `tool_name_conflict` or `agent_failed`, and a `message` for the developer |
 
 `RUN_FINISHED` and `RUN_ERROR` carry `usage`, one `TokenUsage`
 `{inputTokens, outputTokens, totalTokens}` summing the model calls of the
@@ -207,7 +206,8 @@ The interrupt of a confirmation is
 `responseSchema` takes `{"approved": boolean}` only, `expiresAt` is the
 expiry of the confirmation, and `metadata` gives `turnId`, `tool` (`name`,
 `title`, `destructive`) and `argumentTypes`, the media types of the text
-arguments, as `confirmation_required` does. A resumed run gives the result
+arguments, as the conversation read gives them in its `pending_confirmation`
+after a reload. A resumed run gives the result
 of the confirmed call against its `toolCallId`, without its start again;
 a rejected one, a result telling the call did not run.
 
@@ -268,9 +268,9 @@ not on the clusters or the collector.
   no `TOOL_CALL_RESULT` for it, in this run or the next. The run gives no
   `turnId`: the turn is not complete.
 - **Wait.** The turn is stored as suspended, as for a confirmation, with
-  the same lifetime, 10 minutes, after which it fails: `/turns` and
-  `/confirmation` answer 409 `conversation_busy` meanwhile, and the
-  conversation read gives no `pending_confirmation` for it.
+  the same lifetime, 10 minutes, after which it fails: a resume answers 409
+  `confirmation_not_pending` meanwhile, and the conversation read gives no
+  `pending_confirmation` for it.
 - **Answers.** The next run answers the calls with the tool messages its
   messages end with, `{role: "tool", toolCallId, content, error?}`: the
   text of `content`, a string or text parts, the other parts skipped and

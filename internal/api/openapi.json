@@ -26,7 +26,7 @@
     },
     {
       "name": "turns",
-      "description": "Prompts and action decisions, answered as server-sent events."
+      "description": "Runs of the agent, in AG-UI, and the feedback on their turns."
     },
     {
       "name": "service",
@@ -539,259 +539,6 @@
         }
       }
     },
-    "/v1/{backend}/conversations/{id}/turns": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Backend"
-        },
-        {
-          "$ref": "#/components/parameters/ClusterID"
-        },
-        {
-          "$ref": "#/components/parameters/Node"
-        },
-        {
-          "$ref": "#/components/parameters/ConversationID"
-        }
-      ],
-      "post": {
-        "operationId": "createTurn",
-        "tags": [
-          "turns"
-        ],
-        "summary": "Send a prompt and stream the turn of the agent. The agent keeps the conversation history: send the new prompt only. One turn runs at a time in a conversation.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TurnRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The turn is streamed.",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string",
-                  "description": "Server-sent events. Each event is written as `event: <type>` and `data: <StreamEvent JSON>`, followed by an empty line; the JSON is the StreamEvent schema of the components. The stream ends after `completed`, `confirmation_required` or `error`."
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "503": {
-            "$ref": "#/components/responses/AuthenticationUnavailable"
-          },
-          "400": {
-            "description": "The body is invalid or the prompt is empty. Codes: `invalid_request`, `invalid_prompt`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "The body exceeds 64 KiB or the prompt exceeds 32 KiB. Codes: `request_too_large`, `prompt_too_large`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "The body is not JSON. Codes: `unsupported_media_type`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "A turn is running, an action waits a decision, or a conversation limit is reached. Codes: `conversation_busy`, `conversation_limit`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "The conversation has expired. Codes: `conversation_expired`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "$ref": "#/components/responses/TooManyRequests"
-          },
-          "500": {
-            "description": "The turn could not start. Codes: `conversation_failed`, `streaming_unavailable`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/{backend}/conversations/{id}/turns/{turn_id}/confirmation": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Backend"
-        },
-        {
-          "$ref": "#/components/parameters/ClusterID"
-        },
-        {
-          "$ref": "#/components/parameters/Node"
-        },
-        {
-          "$ref": "#/components/parameters/ConversationID"
-        },
-        {
-          "$ref": "#/components/parameters/TurnID"
-        }
-      ],
-      "post": {
-        "operationId": "confirmTurnAction",
-        "tags": [
-          "turns"
-        ],
-        "summary": "Approve or reject the action a turn waits on, and stream the rest of the turn. Only the om3 backend has actions; an approved action runs exactly as stored.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConfirmationRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The rest of the turn is streamed.",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string",
-                  "description": "Server-sent events. Each event is written as `event: <type>` and `data: <StreamEvent JSON>`, followed by an empty line; the JSON is the StreamEvent schema of the components. The stream ends after `completed`, `confirmation_required` or `error`."
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "503": {
-            "$ref": "#/components/responses/AuthenticationUnavailable"
-          },
-          "400": {
-            "description": "The body or the decision is invalid. Codes: `invalid_request`, `invalid_decision`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "The body exceeds 4 KiB. Codes: `request_too_large`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "The body is not JSON. Codes: `unsupported_media_type`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The conversation does not exist, or belongs to another identity or backend. Codes: `conversation_not_found`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The turn waits on no such confirmation, or the conversation is busy. Codes: `confirmation_not_pending`, `conversation_busy`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "The confirmation or the conversation has expired; the action did not run. Codes: `confirmation_expired`, `conversation_expired`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "$ref": "#/components/responses/TooManyRequests"
-          },
-          "500": {
-            "description": "The turn could not resume. Codes: `conversation_failed`, `streaming_unavailable`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/{backend}/conversations/{id}/turns/{turn_id}/feedback": {
       "parameters": [
         {
@@ -1012,7 +759,7 @@
               "text/event-stream": {
                 "schema": {
                   "type": "string",
-                  "description": "Server-sent events of the AG-UI protocol: each event is written as `data: <event JSON>`, followed by an empty line, without an event name. The run starts with RUN_STARTED and ends with RUN_FINISHED, whose outcome is success or an interrupt for a confirmation, or RUN_ERROR."
+                  "description": "Server-sent events of the AG-UI protocol: each event is written as `data: <event JSON>`, followed by an empty line, without an event name. The run starts with RUN_STARTED and ends with RUN_FINISHED, whose outcome is success or an interrupt for a confirmation, or RUN_ERROR. A RUN_ERROR carries a code: `tool_call_limit` (ask a narrower question), `request_timeout`, `tool_name_conflict`, or `agent_failed`."
                 }
               }
             }
@@ -1085,6 +832,16 @@
           },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "description": "The conversation operation failed, or the response cannot be streamed. Codes: `conversation_failed`, `snapshot_failed`, `streaming_unavailable`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1368,42 +1125,6 @@
           }
         }
       },
-      "TurnRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "prompt"
-        ],
-        "properties": {
-          "prompt": {
-            "type": "string",
-            "minLength": 1,
-            "description": "The question of the user, at most 32 KiB, not blank."
-          }
-        }
-      },
-      "ConfirmationRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "confirmation_id",
-          "decision"
-        ],
-        "properties": {
-          "confirmation_id": {
-            "type": "string",
-            "minLength": 1,
-            "description": "The `id` of the confirmation."
-          },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "approve",
-              "reject"
-            ]
-          }
-        }
-      },
       "Confirmation": {
         "type": "object",
         "required": [
@@ -1445,8 +1166,16 @@
           "expires_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "argument_types": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The media types of text arguments, such as `{\"yaml\": \"application/yaml\"}`, as the input schema of the tool declares them: show an argument by its type."
           }
-        }
+        },
+        "description": "A tool call waiting for the decision of the user, which a run resumes with its `id` as the interruptId."
       },
       "DisplayMessage": {
         "type": "object",
@@ -1501,91 +1230,6 @@
           "next_cursor": {
             "type": "string",
             "description": "Pass it as `before` to read the previous page; empty when there is none."
-          }
-        }
-      },
-      "StreamEvent": {
-        "type": "object",
-        "required": [
-          "type"
-        ],
-        "description": "One event of a streamed turn. The SSE event name equals `type`.",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "text_delta",
-              "tool_started",
-              "tool_finished",
-              "usage",
-              "completed",
-              "confirmation_required",
-              "error"
-            ]
-          },
-          "iteration": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "The model iteration of the turn."
-          },
-          "turn_id": {
-            "type": "string",
-            "description": "`completed`: the ID of the stored turn, to give a feedback on it."
-          },
-          "text_delta": {
-            "type": "string",
-            "description": "`text_delta`: the next piece of the answer."
-          },
-          "tool_name": {
-            "type": "string",
-            "description": "`tool_started`, `tool_finished`: the MCP tool."
-          },
-          "tool_error": {
-            "type": "boolean",
-            "description": "`tool_finished`: whether the tool failed."
-          },
-          "usage": {
-            "type": "object",
-            "description": "`usage`: the tokens of one model call.",
-            "properties": {
-              "input_tokens": {
-                "type": "integer"
-              },
-              "output_tokens": {
-                "type": "integer"
-              },
-              "total_tokens": {
-                "type": "integer"
-              }
-            }
-          },
-          "finish_reason": {
-            "type": "string",
-            "enum": [
-              "completed",
-              "tool_calls",
-              "length",
-              "content_filter",
-              "other"
-            ],
-            "description": "`completed`: why the model stopped."
-          },
-          "confirmation": {
-            "$ref": "#/components/schemas/Confirmation",
-            "description": "`confirmation_required`: the action waiting a decision; the turn ends until it is given."
-          },
-          "code": {
-            "type": "string",
-            "enum": [
-              "agent_failed",
-              "request_timeout",
-              "tool_call_limit"
-            ],
-            "description": "`error`: why the turn failed. `tool_call_limit`: the model asked for more than 8 tools in one answer, or more than 16 in the turn."
-          },
-          "message": {
-            "type": "string",
-            "description": "`error`: a human-readable message."
           }
         }
       },

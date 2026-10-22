@@ -46,7 +46,7 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 		return auth.Identity{ClusterID: "cluster-id", Subject: "alice\noperator", Issuer: "node-a"}, nil
 	}))
 
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"`+promptMarker+`"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/runs", strings.NewReader(runBody(promptMarker)))
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)
 	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
@@ -65,7 +65,7 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 	}
 
 	events := decodeAuditEvents(t, output.String())
-	wantEvents := []string{"conversation_turn_started", "tool_started", "tool_finished", "llm_usage", "conversation_turn_completed"}
+	wantEvents := []string{"conversation_run_started", "tool_started", "tool_finished", "llm_usage", "conversation_run_completed"}
 	if len(events) != len(wantEvents) {
 		t.Fatalf("audit events = %#v", events)
 	}
@@ -104,7 +104,7 @@ func TestAuditRecordsAuthenticationRejectionWithoutTokenOrVerifierError(t *testi
 	}), tokenVerifierFunc(func(context.Context, string) (auth.Identity, error) {
 		return auth.Identity{ClusterID: "cluster-id"}, errors.New(errorMarker)
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/runs", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenMarker)
 	request.Header.Set(testBackendHeader, "cluster-id")
 	response := httptest.NewRecorder()
@@ -134,10 +134,10 @@ func TestAuditRecordsStableAgentFailureCodeWithoutRawError(t *testing.T) {
 		return errors.New(errorMarker)
 	}), allowTestTokenVerifier())
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, newAuthenticatedTurnRequest(`{"prompt":"health"}`))
+	handler.ServeHTTP(response, newAuthenticatedRunRequest(runBody("health")))
 
 	events := decodeAuditEvents(t, output.String())
-	if len(events) != 2 || events[1]["event"] != "conversation_turn_failed" || events[1]["code"] != "agent_failed" {
+	if len(events) != 2 || events[1]["event"] != "conversation_run_failed" || events[1]["code"] != "agent_failed" {
 		t.Fatalf("audit events = %#v", events)
 	}
 	if strings.Contains(output.String(), errorMarker) {
@@ -151,14 +151,14 @@ func TestAuditRecordsValidatedRequestRejection(t *testing.T) {
 		t.Fatal("agent was called")
 		return nil
 	}), allowTestTokenVerifier())
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/runs", strings.NewReader(runBody("health")))
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(testBackendHeader, "cluster-id")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
 	events := decodeAuditEvents(t, output.String())
-	if len(events) != 1 || events[0]["event"] != "conversation_turn_rejected" || events[0]["code"] != "unsupported_media_type" {
+	if len(events) != 1 || events[0]["event"] != "conversation_run_rejected" || events[0]["code"] != "unsupported_media_type" {
 		t.Fatalf("audit events = %#v", events)
 	}
 	if events[0]["subject"] != "test-user" || events[0]["status"] != float64(http.StatusUnsupportedMediaType) {
@@ -196,7 +196,7 @@ func TestAuditDoesNotRecordConversationTitle(t *testing.T) {
 	}
 }
 
-func TestAskFailureCode(t *testing.T) {
+func TestStreamFailureCode(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		err        error
@@ -217,8 +217,8 @@ func TestAskFailureCode(t *testing.T) {
 		{name: "incomplete", want: "agent_incomplete"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := askFailureCode(test.err, test.completed, test.writeError, test.contextErr); got != test.want {
-				t.Fatalf("askFailureCode() = %q, want %q", got, test.want)
+			if got := streamFailureCode(test.err, test.completed, test.writeError, test.contextErr); got != test.want {
+				t.Fatalf("streamFailureCode() = %q, want %q", got, test.want)
 			}
 		})
 	}

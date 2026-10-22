@@ -142,8 +142,8 @@ func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {
 				t.Fatalf("foreign access method=%s status=%d", method, response.Code)
 			}
 		}
-		if response := call("POST", path+"/turns", token, `{"prompt":"read history"}`); response.Code != 404 {
-			t.Fatalf("foreign turn: %d", response.Code)
+		if response := call("POST", path+"/runs", token, runInput(item.Conversation.ID, "read history")); response.Code != 404 {
+			t.Fatalf("foreign run: %d", response.Code)
 		}
 		response := call("GET", "/v1/om3/conversations", token, "")
 		if response.Code != 200 || strings.Contains(response.Body.String(), item.Conversation.ID) {
@@ -163,8 +163,8 @@ func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {
 		before := checks.Load()
 		for _, tc := range []struct{ method, path, body string }{
 			{"GET", "/v1/om3/conversations", ""}, {"GET", path, ""}, {"GET", path + "/messages", ""}, {"DELETE", path, ""},
-			{"PATCH", path, `{"title":"refused"}`}, {"POST", path + "/turns", `{"prompt":"refused"}`},
-			{"POST", "/v1/om3/conversations/conversation-1/turns", `{"prompt":"refused"}`}, {"POST", "/v1/om3/conversations", ""},
+			{"PATCH", path, `{"title":"refused"}`}, {"POST", path + "/runs", runInput(item.Conversation.ID, "refused")},
+			{"POST", "/v1/om3/conversations/conversation-1/runs", runBody("refused")}, {"POST", "/v1/om3/conversations", ""},
 		} {
 			response := call(tc.method, tc.path, token, tc.body)
 			if response.Code != 401 || strings.Contains(response.Body.String(), token) {
@@ -192,8 +192,8 @@ func TestRemoteIdentityProtectsLocalConversationsAndModelCalls(t *testing.T) {
 	if response := call("GET", path, alice, ""); response.Code != 200 {
 		t.Fatal("refused deletion changed existing conversation")
 	}
-	if response := call("POST", path+"/turns", alice, `{"prompt":"hello"}`); response.Code != 200 || modelCalls.Load() != 1 {
-		t.Fatalf("authorized turn rejected: %d", response.Code)
+	if response := call("POST", path+"/runs", alice, runInput(item.Conversation.ID, "hello")); response.Code != 200 || modelCalls.Load() != 1 {
+		t.Fatalf("authorized run rejected: %d", response.Code)
 	}
 	// Each token was checked by the MCP once: alice, bob, the other cluster,
 	// the three refused tokens, and the unverified token twice while the MCP

@@ -99,22 +99,23 @@ func TestLiveConversationTurnStreamsClusterHealth(t *testing.T) {
 		t.Fatalf("decode live conversation: %v", err)
 	}
 
-	response := send("/v1/om3/conversations/"+envelope.Conversation.ID+"/turns", `{"prompt":"Use get_cluster_health to assess the current OpenSVC cluster health, then answer concisely."}`)
+	id := envelope.Conversation.ID
+	response := send("/v1/om3/conversations/"+id+"/runs", `{"threadId":"`+id+`","runId":"live-run","messages":[{"id":"live-prompt","role":"user","content":"Use get_cluster_health to assess the current OpenSVC cluster health, then answer concisely."}]}`)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		t.Fatalf("live turn returned HTTP %d", response.StatusCode)
+		t.Fatalf("live run returned HTTP %d", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
 	if err != nil {
-		t.Fatalf("read live turn stream: %v", err)
+		t.Fatalf("read live run stream: %v", err)
 	}
 	body := string(data)
-	for _, expected := range []string{`"type":"tool_started"`, `"tool_name":"get_cluster_health"`, `"type":"completed"`} {
+	for _, expected := range []string{`"type":"TOOL_CALL_START"`, `"toolCallName":"get_cluster_health"`, `"type":"RUN_FINISHED"`} {
 		if !strings.Contains(body, expected) {
-			t.Fatalf("live turn stream does not contain %s: %s", expected, body)
+			t.Fatalf("live run stream does not contain %s: %s", expected, body)
 		}
 	}
 	if strings.Contains(body, mcpJWT) {
-		t.Fatal("live turn stream exposes delegated JWT")
+		t.Fatal("live run stream exposes delegated JWT")
 	}
 }

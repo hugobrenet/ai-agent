@@ -153,7 +153,7 @@ func TestConversationTitleUpdateReturnsStableServiceErrors(t *testing.T) {
 	}
 }
 
-func TestConversationTurnStreamsPreparedExecution(t *testing.T) {
+func TestConversationRunStreamsPreparedExecution(t *testing.T) {
 	execution := &testTurnExecution{run: func(_ context.Context, emit agent.EmitFunc) error {
 		if err := emit(agent.Event{Type: agent.EventTextDelta, TextDelta: "healthy", Iteration: 1}); err != nil {
 			return err
@@ -167,20 +167,19 @@ func TestConversationTurnStreamsPreparedExecution(t *testing.T) {
 		return execution, nil
 	}}
 	handler := newConversationTestHandler(t, service)
-	request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/conversation-id/turns", `{"prompt":"health"}`)
+	request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/conversation-id/runs", runInput("conversation-id", "health"))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
-		t.Fatalf("turn status=%d body=%s", response.Code, response.Body.String())
+		t.Fatalf("run status=%d body=%s", response.Code, response.Body.String())
 	}
-	events := decodeSSEEvents(t, response.Body.String())
-	if len(events) != 2 || events[0].Type != "text_delta" || events[1].Type != "completed" {
-		t.Fatalf("unexpected turn events %#v", events)
+	if events := aguiEvents(t, response.Body.String()); eventTypes(events) != "RUN_STARTED,TEXT_MESSAGE_START,TEXT_MESSAGE_CONTENT,TEXT_MESSAGE_END,RUN_FINISHED" {
+		t.Fatalf("unexpected run events %s", response.Body.String())
 	}
 }
 
-func TestConversationTurnReturnsStablePreStreamErrors(t *testing.T) {
+func TestConversationRunReturnsStablePreStreamErrors(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		err        error
@@ -196,7 +195,7 @@ func TestConversationTurnReturnsStablePreStreamErrors(t *testing.T) {
 				return nil, test.err
 			}}
 			handler := newConversationTestHandler(t, service)
-			request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/id/turns", `{"prompt":"health"}`)
+			request := authenticatedRequest(http.MethodPost, "/v1/om3/conversations/id/runs", runInput("id", "health"))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
@@ -220,7 +219,8 @@ func TestConversationRoutesRequireAuthentication(t *testing.T) {
 		{http.MethodGet, "/v1/om3/conversations/id/messages"},
 		{http.MethodPatch, "/v1/om3/conversations/id"},
 		{http.MethodDelete, "/v1/om3/conversations/id"},
-		{http.MethodPost, "/v1/om3/conversations/id/turns"},
+		{http.MethodPost, "/v1/om3/conversations/id/runs"},
+		{http.MethodGet, "/v1/om3/capabilities"},
 		{http.MethodPut, "/v1/om3/conversations/id/turns/t/feedback"},
 		{http.MethodDelete, "/v1/om3/conversations/id/turns/t/feedback"},
 	} {

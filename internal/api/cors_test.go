@@ -148,13 +148,13 @@ func TestCORSPreservesStreamingConversationTurns(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := authenticatedRequest("POST", "/v1/om3/conversations/id/turns", `{"prompt":"hello"}`)
+		r := authenticatedRequest("POST", "/v1/om3/conversations/id/runs", runInput("id", "hello"))
 		r.Header.Set("Origin", "https://a.example")
 		r.Header.Set("Content-Type", "application/json")
 		w := &writeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
 		handler.ServeHTTP(w, r)
-		if w.Code != 200 || !w.Flushed || len(w.deadlines) == 0 || !strings.Contains(w.Body.String(), "event: completed") || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
-			t.Fatalf("CORS broke streamed turn: status=%d body=%s", w.Code, w.Body.String())
+		if w.Code != 200 || !w.Flushed || len(w.deadlines) == 0 || !strings.Contains(w.Body.String(), `"type":"RUN_FINISHED"`) || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+			t.Fatalf("CORS broke streamed run: status=%d body=%s", w.Code, w.Body.String())
 		}
 		if w.Header().Get("Access-Control-Allow-Origin") != origins[0] {
 			t.Fatal("SSE response lost CORS headers")

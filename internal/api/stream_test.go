@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/agui"
 	"github.com/opensvc/ai-agent/internal/auth"
 	"github.com/opensvc/ai-agent/internal/llm"
 )
@@ -47,7 +47,16 @@ func (f tokenVerifierFunc) Authenticate(ctx context.Context, _ http.Header, toke
 	return ctx, identity, err
 }
 
-func TestTurnStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
+// runBody is the RunAgentInput of a run of testConversationID on prompt.
+func runBody(prompt string) string { return runInput(testConversationID, prompt) }
+
+// runInput is the RunAgentInput of a run of the conversation id on prompt.
+func runInput(id, prompt string) string {
+	data, _ := json.Marshal(prompt)
+	return `{"threadId":"` + id + `","runId":"run-1","messages":[{"id":"u-1","role":"user","content":` + string(data) + `}]}`
+}
+
+func TestRunStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 	const token = "test-jwt-marker"
 	var called bool
 	handler := newTestHandler(t, turnFunc(func(ctx context.Context, prompt string, emit agent.EmitFunc) error {
@@ -63,10 +72,10 @@ func TestTurnStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 		}
 		for _, event := range []agent.Event{
 			{Type: agent.EventTextDelta, TextDelta: "checking", Iteration: 1},
-			{Type: agent.EventToolStarted, ToolName: "get_cluster_health", Iteration: 1},
-			{Type: agent.EventToolFinished, ToolName: "get_cluster_health", Iteration: 1},
+			{Type: agent.EventToolStarted, ToolName: "get_cluster_health", ToolCallID: "call-1", Iteration: 1},
+			{Type: agent.EventToolFinished, ToolName: "get_cluster_health", ToolCallID: "call-1", Iteration: 1},
 			{Type: agent.EventUsage, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}, Iteration: 1},
-			{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, Iteration: 2},
+			{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-1", Iteration: 2},
 		} {
 			if err := emit(event); err != nil {
 				return err
@@ -75,7 +84,7 @@ func TestTurnStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 		return nil
 	}))
 
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health of my cluster"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/runs", strings.NewReader(runBody("health of my cluster")))
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
@@ -91,31 +100,21 @@ func TestTurnStreamsAgentEventsWithDelegatedJWT(t *testing.T) {
 	if got := response.Header().Get("Content-Type"); got != "text/event-stream; charset=utf-8" {
 		t.Fatalf("got Content-Type %q", got)
 	}
-	events := decodeSSEEvents(t, response.Body.String())
-	if len(events) != 5 {
-		t.Fatalf("got %d events: %#v", len(events), events)
+	events := aguiEvents(t, response.Body.String())
+	if eventTypes(events) != "RUN_STARTED,TEXT_MESSAGE_START,TEXT_MESSAGE_CONTENT,TEXT_MESSAGE_END,TOOL_CALL_START,TOOL_CALL_ARGS,TOOL_CALL_END,TOOL_CALL_RESULT,RUN_FINISHED" {
+		t.Fatalf("got events %s", response.Body.String())
 	}
-	if events[0].Type != "text_delta" || events[0].TextDelta != "checking" || events[0].Iteration != 1 {
-		t.Fatalf("unexpected text event %#v", events[0])
-	}
-	if events[1].Type != "tool_started" || events[1].ToolName != "get_cluster_health" {
-		t.Fatalf("unexpected tool started event %#v", events[1])
-	}
-	if events[2].ToolError == nil || *events[2].ToolError {
-		t.Fatalf("unexpected tool finished event %#v", events[2])
-	}
-	if events[3].Usage == nil || events[3].Usage.TotalTokens != 12 {
-		t.Fatalf("unexpected usage event %#v", events[3])
-	}
-	if events[4].FinishReason != string(llm.FinishReasonCompleted) {
-		t.Fatalf("unexpected completed event %#v", events[4])
+	finished := events[len(events)-1]
+	if events[2]["delta"] != "checking" || events[4]["toolCallName"] != "get_cluster_health" ||
+		finished["usage"].([]any)[0].(map[string]any)["totalTokens"] != float64(12) || finished["result"].(map[string]any)["turnId"] != "turn-1" {
+		t.Fatalf("got events %s", response.Body.String())
 	}
 	if strings.Contains(response.Body.String(), token) {
 		t.Fatal("response body exposes delegated JWT")
 	}
 }
 
-func TestTurnRejectsTokenRejectedByVerifier(t *testing.T) {
+func TestRunRejectsTokenRejectedByVerifier(t *testing.T) {
 	const token = "forged-jwt-marker"
 	var agentCalls atomic.Int64
 	verifier := tokenVerifierFunc(func(_ context.Context, got string) (auth.Identity, error) {
@@ -128,8 +127,8 @@ func TestTurnRejectsTokenRejectedByVerifier(t *testing.T) {
 		agentCalls.Add(1)
 		return nil
 	}), verifier)
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", nil)
-	body := &readTrackingBody{reader: strings.NewReader(`{"prompt":"health"}`)}
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/runs", nil)
+	body := &readTrackingBody{reader: strings.NewReader(runBody("health"))}
 	request.Body = body
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set(testBackendHeader, "cluster-id")
@@ -154,7 +153,7 @@ func TestTurnRejectsTokenRejectedByVerifier(t *testing.T) {
 	}
 }
 
-func TestTurnRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
+func TestRunRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		authorization string
@@ -163,15 +162,14 @@ func TestTurnRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 		wantStatus    int
 		wantCode      string
 	}{
-		{name: "missing authorization", contentType: "application/json", body: `{"prompt":"health"}`, wantStatus: http.StatusUnauthorized, wantCode: "unauthorized"},
-		{name: "wrong scheme", authorization: "Basic value", contentType: "application/json", body: `{"prompt":"health"}`, wantStatus: http.StatusUnauthorized, wantCode: "unauthorized"},
-		{name: "missing content type", authorization: "Bearer token", body: `{"prompt":"health"}`, wantStatus: http.StatusUnsupportedMediaType, wantCode: "unsupported_media_type"},
+		{name: "missing authorization", contentType: "application/json", body: runBody("health"), wantStatus: http.StatusUnauthorized, wantCode: "unauthorized"},
+		{name: "wrong scheme", authorization: "Basic value", contentType: "application/json", body: runBody("health"), wantStatus: http.StatusUnauthorized, wantCode: "unauthorized"},
+		{name: "missing content type", authorization: "Bearer token", body: runBody("health"), wantStatus: http.StatusUnsupportedMediaType, wantCode: "unsupported_media_type"},
 		{name: "invalid JSON", authorization: "Bearer token", contentType: "application/json", body: `{`, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
-		{name: "unknown field", authorization: "Bearer token", contentType: "application/json", body: `{"prompt":"health","extra":true}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
-		{name: "multiple values", authorization: "Bearer token", contentType: "application/json", body: `{"prompt":"health"}{}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
-		{name: "empty prompt", authorization: "Bearer token", contentType: "application/json", body: `{"prompt":"  "}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_prompt"},
-		{name: "large prompt", authorization: "Bearer token", contentType: "application/json", body: `{"prompt":"` + strings.Repeat("x", maxPromptBytes+1) + `"}`, wantStatus: http.StatusRequestEntityTooLarge, wantCode: "prompt_too_large"},
-		{name: "large request", authorization: "Bearer token", contentType: "application/json", body: `{"prompt":"health","padding":"` + strings.Repeat("x", maxAskRequestBytes) + `"}`, wantStatus: http.StatusRequestEntityTooLarge, wantCode: "request_too_large"},
+		{name: "multiple values", authorization: "Bearer token", contentType: "application/json", body: runBody("health") + `{}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
+		{name: "empty prompt", authorization: "Bearer token", contentType: "application/json", body: runBody("  "), wantStatus: http.StatusBadRequest, wantCode: "invalid_prompt"},
+		{name: "large prompt", authorization: "Bearer token", contentType: "application/json", body: runBody(strings.Repeat("x", maxPromptBytes+1)), wantStatus: http.StatusRequestEntityTooLarge, wantCode: "prompt_too_large"},
+		{name: "large request", authorization: "Bearer token", contentType: "application/json", body: `{"threadId":"conversation-1","runId":"run-1","state":"` + strings.Repeat("x", maxRunRequestBytes) + `"}`, wantStatus: http.StatusRequestEntityTooLarge, wantCode: "request_too_large"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var calls atomic.Int64
@@ -179,7 +177,7 @@ func TestTurnRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 				calls.Add(1)
 				return nil
 			}))
-			request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(test.body))
+			request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/runs", strings.NewReader(test.body))
 			if test.authorization != "" {
 				request.Header.Set("Authorization", test.authorization)
 				request.Header.Set(testBackendHeader, "cluster-id")
@@ -207,76 +205,52 @@ func TestTurnRejectsInvalidRequestsBeforeCallingAgent(t *testing.T) {
 	}
 }
 
-func TestTurnStreamsGenericRuntimeError(t *testing.T) {
-	const sensitiveDetail = "provider failed with secret detail"
-	handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
-		return errors.New(sensitiveDetail)
-	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
-	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(testBackendHeader, "cluster-id")
-	request.Header.Set("Content-Type", "application/json")
+// runErrorOf runs a turn that fails with err and gives the stream.
+func runErrorOf(t *testing.T, err error) (string, []map[string]any) {
+	t.Helper()
+	handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error { return err }))
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
+	handler.ServeHTTP(response, newAuthenticatedRunRequest(runBody("health")))
 	if response.Code != http.StatusOK {
 		t.Fatalf("got status %d, want streaming status 200", response.Code)
 	}
-	events := decodeSSEEvents(t, response.Body.String())
-	if len(events) != 1 || events[0].Type != "error" || events[0].Code != "agent_failed" {
-		t.Fatalf("unexpected error events %#v", events)
+	return response.Body.String(), aguiEvents(t, response.Body.String())
+}
+
+func TestRunStreamsGenericRuntimeError(t *testing.T) {
+	const sensitiveDetail = "provider failed with secret detail"
+	body, events := runErrorOf(t, errors.New(sensitiveDetail))
+	if eventTypes(events) != "RUN_STARTED,RUN_ERROR" || events[1]["code"] != "agent_failed" {
+		t.Fatalf("unexpected error events %s", body)
 	}
-	if strings.Contains(response.Body.String(), sensitiveDetail) {
+	if strings.Contains(body, sensitiveDetail) {
 		t.Fatal("stream exposes internal agent error")
 	}
 }
 
-func TestTurnStreamsToolCallLimitError(t *testing.T) {
-	handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
-		return fmt.Errorf("run LLM iteration 2: read stream: %w: requested more than 8 tools at once", agent.ErrToolCallLimit)
-	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
-	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
-	events := decodeSSEEvents(t, response.Body.String())
-	if len(events) != 1 || events[0].Type != "error" || events[0].Code != "tool_call_limit" || !strings.Contains(events[0].Message, "narrower question") {
-		t.Fatalf("unexpected tool call limit events %#v", events)
+func TestRunStreamsToolCallLimitError(t *testing.T) {
+	body, events := runErrorOf(t, fmt.Errorf("run LLM iteration 2: read stream: %w: requested more than 8 tools at once", agent.ErrToolCallLimit))
+	if eventTypes(events) != "RUN_STARTED,RUN_ERROR" || events[1]["code"] != "tool_call_limit" || !strings.Contains(events[1]["message"].(string), "narrower question") {
+		t.Fatalf("unexpected tool call limit events %s", body)
 	}
-	if strings.Contains(response.Body.String(), "iteration") {
+	if strings.Contains(body, "iteration") {
 		t.Fatal("stream exposes internal agent error")
 	}
 }
 
-func TestTurnStreamsTimeoutError(t *testing.T) {
-	handler := newTestHandler(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
-		return context.DeadlineExceeded
-	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
-	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(testBackendHeader, "cluster-id")
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
-	events := decodeSSEEvents(t, response.Body.String())
-	if len(events) != 1 || events[0].Type != "error" || events[0].Code != "request_timeout" {
-		t.Fatalf("unexpected timeout events %#v", events)
+func TestRunStreamsTimeoutError(t *testing.T) {
+	body, events := runErrorOf(t, context.DeadlineExceeded)
+	if eventTypes(events) != "RUN_STARTED,RUN_ERROR" || events[1]["code"] != "request_timeout" {
+		t.Fatalf("unexpected timeout events %s", body)
 	}
 }
 
-func TestTurnSetsAndClearsWriteDeadline(t *testing.T) {
+func TestRunSetsAndClearsWriteDeadline(t *testing.T) {
 	response := &writeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
 	handler := newTestHandler(t, turnFunc(func(_ context.Context, _ string, emit agent.EmitFunc) error {
 		return emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, Iteration: 1})
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
-	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(testBackendHeader, "cluster-id")
-	request.Header.Set("Content-Type", "application/json")
-	handler.ServeHTTP(response, request)
+	handler.ServeHTTP(response, newAuthenticatedRunRequest(runBody("health")))
 
 	if len(response.deadlines) < 2 {
 		t.Fatalf("got %d write deadlines, want active and cleared deadlines", len(response.deadlines))
@@ -289,48 +263,39 @@ func TestTurnSetsAndClearsWriteDeadline(t *testing.T) {
 	}
 }
 
-func TestTurnDoesNotEmitAfterCompleted(t *testing.T) {
+func TestRunDoesNotEmitAfterFinished(t *testing.T) {
 	handler := newTestHandler(t, turnFunc(func(_ context.Context, _ string, emit agent.EmitFunc) error {
 		if err := emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, Iteration: 1}); err != nil {
 			return err
 		}
 		return errors.New("session close failed")
 	}))
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`))
-	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(testBackendHeader, "cluster-id")
-	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	handler.ServeHTTP(response, newAuthenticatedRunRequest(runBody("health")))
 
-	events := decodeSSEEvents(t, response.Body.String())
-	if len(events) != 1 || events[0].Type != "completed" {
-		t.Fatalf("unexpected terminal events %#v", events)
+	if events := aguiEvents(t, response.Body.String()); eventTypes(events) != "RUN_STARTED,RUN_FINISHED" {
+		t.Fatalf("unexpected terminal events %s", response.Body.String())
 	}
 }
 
-func TestTurnDoesNotStreamErrorAfterCancellation(t *testing.T) {
+func TestRunDoesNotStreamErrorAfterCancellation(t *testing.T) {
 	handler := newTestHandler(t, turnFunc(func(ctx context.Context, _ string, _ agent.EmitFunc) error {
 		return ctx.Err()
 	}))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(`{"prompt":"health"}`)).WithContext(ctx)
-	request.Header.Set("Authorization", "Bearer token")
-	request.Header.Set(testBackendHeader, "cluster-id")
-	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	handler.ServeHTTP(response, newAuthenticatedRunRequest(runBody("health")).WithContext(ctx))
 
-	if events := decodeSSEEvents(t, response.Body.String()); len(events) != 0 {
-		t.Fatalf("got events after request cancellation: %#v", events)
+	if events := aguiEvents(t, response.Body.String()); eventTypes(events) != "RUN_STARTED" {
+		t.Fatalf("got events after request cancellation: %s", response.Body.String())
 	}
 }
 
 func TestWriteFrameEnforcesStreamBound(t *testing.T) {
 	response := httptest.NewRecorder()
-	written := int64(maxAskStreamBytes)
-	frame, err := askFrame(AskEvent{Type: "error", Code: "test"})
+	written := int64(maxStreamBytes)
+	frame, err := aguiFrames([]agui.Event{{Type: agui.RunError, Code: "test"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +308,7 @@ func TestWriteFrameEnforcesStreamBound(t *testing.T) {
 	}
 }
 
-func TestTurnRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
+func TestRunRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	firstDone := make(chan struct{})
@@ -357,7 +322,7 @@ func TestTurnRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	})
 	handler := newTestHandlerWithLimit(t, asker, 1)
 
-	firstRequest := newAuthenticatedTurnRequest(`{"prompt":"first"}`)
+	firstRequest := newAuthenticatedRunRequest(runBody("first"))
 	firstResponse := httptest.NewRecorder()
 	go func() {
 		defer close(firstDone)
@@ -366,7 +331,7 @@ func TestTurnRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	<-started
 
 	secondResponse := httptest.NewRecorder()
-	handler.ServeHTTP(secondResponse, newAuthenticatedTurnRequest(`{"prompt":"second"}`))
+	handler.ServeHTTP(secondResponse, newAuthenticatedRunRequest(runBody("second")))
 	if secondResponse.Code != http.StatusTooManyRequests {
 		t.Fatalf("second status = %d, want 429", secondResponse.Code)
 	}
@@ -388,7 +353,7 @@ func TestTurnRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	}
 
 	thirdResponse := httptest.NewRecorder()
-	handler.ServeHTTP(thirdResponse, newAuthenticatedTurnRequest(`{"prompt":"third"}`))
+	handler.ServeHTTP(thirdResponse, newAuthenticatedRunRequest(runBody("third")))
 	if thirdResponse.Code != http.StatusOK {
 		t.Fatalf("third status = %d, want released slot", thirdResponse.Code)
 	}
@@ -397,7 +362,7 @@ func TestTurnRejectsWhenConcurrencyLimitIsReached(t *testing.T) {
 	}
 }
 
-func TestTurnReleasesConcurrencySlotAfterAgentError(t *testing.T) {
+func TestRunReleasesConcurrencySlotAfterAgentError(t *testing.T) {
 	var calls atomic.Int64
 	handler := newTestHandlerWithLimit(t, turnFunc(func(context.Context, string, agent.EmitFunc) error {
 		calls.Add(1)
@@ -406,7 +371,7 @@ func TestTurnReleasesConcurrencySlotAfterAgentError(t *testing.T) {
 
 	for _, prompt := range []string{"first", "second"} {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, newAuthenticatedTurnRequest(fmt.Sprintf(`{"prompt":%q}`, prompt)))
+		handler.ServeHTTP(response, newAuthenticatedRunRequest(runBody(prompt)))
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s status = %d, want streaming 200", prompt, response.Code)
 		}
@@ -416,7 +381,7 @@ func TestTurnReleasesConcurrencySlotAfterAgentError(t *testing.T) {
 	}
 }
 
-func TestTurnReleasesConcurrencySlotAfterCancellation(t *testing.T) {
+func TestRunReleasesConcurrencySlotAfterCancellation(t *testing.T) {
 	started := make(chan struct{})
 	done := make(chan struct{})
 	var calls atomic.Int64
@@ -430,7 +395,7 @@ func TestTurnReleasesConcurrencySlotAfterCancellation(t *testing.T) {
 	}), 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	firstRequest := newAuthenticatedTurnRequest(`{"prompt":"first"}`).WithContext(ctx)
+	firstRequest := newAuthenticatedRunRequest(runBody("first")).WithContext(ctx)
 	go func() {
 		defer close(done)
 		handler.ServeHTTP(httptest.NewRecorder(), firstRequest)
@@ -440,7 +405,7 @@ func TestTurnReleasesConcurrencySlotAfterCancellation(t *testing.T) {
 	<-done
 
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, newAuthenticatedTurnRequest(`{"prompt":"second"}`))
+	handler.ServeHTTP(response, newAuthenticatedRunRequest(runBody("second")))
 	if response.Code != http.StatusOK || calls.Load() != 2 {
 		t.Fatalf("second status=%d calls=%d, want released slot", response.Code, calls.Load())
 	}
@@ -522,51 +487,10 @@ func allowTestTokenVerifier() Authenticator {
 	})
 }
 
-func newAuthenticatedTurnRequest(body string) *http.Request {
-	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/turns", strings.NewReader(body))
+func newAuthenticatedRunRequest(body string) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/v1/om3/conversations/conversation-1/runs", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer token")
 	request.Header.Set(testBackendHeader, "cluster-id")
 	request.Header.Set("Content-Type", "application/json")
 	return request
-}
-
-func decodeSSEEvents(t *testing.T, body string) []AskEvent {
-	t.Helper()
-	var events []AskEvent
-	var eventName string
-	var data strings.Builder
-	dispatch := func() {
-		if data.Len() == 0 {
-			return
-		}
-		var event AskEvent
-		if err := json.Unmarshal([]byte(data.String()), &event); err != nil {
-			t.Fatalf("decode SSE data %q: %v", data.String(), err)
-		}
-		if event.Type != eventName {
-			t.Fatalf("SSE event name %q differs from payload type %q", eventName, event.Type)
-		}
-		events = append(events, event)
-		eventName = ""
-		data.Reset()
-	}
-	scanner := bufio.NewScanner(strings.NewReader(body))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			dispatch()
-			continue
-		}
-		if value, ok := strings.CutPrefix(line, "event: "); ok {
-			eventName = value
-		}
-		if value, ok := strings.CutPrefix(line, "data: "); ok {
-			data.WriteString(value)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan SSE body: %v", err)
-	}
-	dispatch()
-	return events
 }

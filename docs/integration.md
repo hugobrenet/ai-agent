@@ -92,6 +92,11 @@ const result = await agent.runAgent({ runId: crypto.randomUUID() }, {
 - `internal/api/testdata/agui/conformance.mjs`, in the repository of the
   agent, is a complete client: runs, a confirmation and its resume, a tool
   of the client, and a resynchronization.
+- `internal/api/testdata/agui/streams.json` holds the streams the runs serve
+  in the scenarios of a client, with the input of each: an interface can
+  replay them in its tests, as the om3 webapp does, so that a change of the
+  stream breaks them. `AGUI_GOLDEN_UPDATE=1 go test ./internal/api -run
+  TestGoldenAGUIStreams` rewrites it.
 
 ## 4. What the events show
 
@@ -197,22 +202,3 @@ class OpenSVCAgent extends HttpAgent {
   must not buffer the stream.
 - **No resumption.** A stream cut off is not resumed: the turn fails, and
   is not stored. Read the conversation again.
-
-## 9. From the turns protocol
-
-`POST …/turns` and `POST …/turns/{turn_id}/confirmation`, the SSE protocol
-of the agent before AG-UI, are to be removed once the web interfaces speak
-AG-UI:
-
-| Turns | AG-UI |
-|---|---|
-| `{"prompt": …}` | the last message of the user of `RunAgentInput` |
-| `text_delta` | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` |
-| `tool_started` | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, with the arguments |
-| `tool_finished` | `TOOL_CALL_RESULT`, with the result |
-| `usage` | `usage` of `RUN_FINISHED` |
-| `confirmation_required` | `RUN_FINISHED` with an interrupt |
-| `POST …/confirmation` `approve`, `reject` | a run with `resume` |
-| `completed` | `RUN_FINISHED` with `result.turnId` |
-| `error` | `RUN_ERROR` |
-| `pending_confirmation` of the conversation read | the interrupt of the run; read the conversation for it after a reload |

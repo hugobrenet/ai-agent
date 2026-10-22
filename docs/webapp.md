@@ -1,9 +1,9 @@
 # OpenID client headers
 
 The [integration guide](integration.md) tells how an interface speaks to the
-agent with AG-UI, the protocol the turns of this guide are to be replaced
-with.
-
+agent with AG-UI. This guide adds what a browser client of the om3 backend,
+such as the OpenSVC webapp, needs: its headers, the verification of its
+token, the history, the feedback, the confirmation of actions and CORS.
 
 Each protected HTTPS request under `/v1/om3` supplies the user's access token
 and cluster ID, and may name a daemon node:
@@ -17,10 +17,9 @@ X-OpenSVC-Node: <daemon.nodename>
 `X-OpenSVC-Node` is optional and om3-only. Requests under `/v1/oc3` send only
 `Authorization`, and no other header. Use the headers of the backend for each
 of its routes: conversation creation, listing, reading, renaming, deletion,
-turns and confirmations. The routes are listed in the
-[client API](api.md#routes). The request bodies and SSE
-events are unchanged: a turn still sends only `{"prompt":"..."}`. The target
-belongs in the header so authentication completes before reading the body.
+runs and feedback. The routes are listed in the
+[client API](api.md#routes). The target belongs in the header so
+authentication completes before reading the body.
 Use the current token after renewal; the agent does not refresh tokens.
 
 Each target header is one exact, nonempty value of at most 256 bytes, without
@@ -116,15 +115,19 @@ their prompt or partial answer, and therefore cannot be reconstructed here.
 Reading does not invoke the model or tools, update retention, or change the
 model context. All retained display messages can be paged, independently of
 the smaller context window selected for model turns. Existing stored turns are
-readable without a schema change. Metadata routes and SSE remain unchanged.
+readable without a schema change.
+
+The IDs of the messages are those the runs give them, so that a client
+holding a page is in phase with the agent; a prompt goes by the ID the client
+gave it, when the agent kept it. See [the API](api.md#messages-snapshot).
 
 ## Feedback
 
 Under each assistant answer, offer 👍 and 👎. After a 👎, offer the optional
 reasons and a free text field "What did you expect?", then send them with
 `PUT /v1/om3/conversations/{id}/turns/{turn_id}/feedback`, using the
-`turn_id` of the message, or of the `completed` event for an answer just
-streamed:
+`turn_id` of the message, or the `result.turnId` of `RUN_FINISHED` for an
+answer just streamed:
 
 | Reason | Code |
 |---|---|
@@ -150,64 +153,65 @@ non-destructive actions run without confirmation.
 ### Request
 
 When the model calls such a tool, the agent stores the turn in the
-`awaiting_confirmation` state without running the call, then ends the turn
-stream with:
+`awaiting_confirmation` state without running the call, gives the call as a
+tool call, `TOOL_CALL_START`, `TOOL_CALL_ARGS` and `TOOL_CALL_END`, and ends
+the run with `RUN_FINISHED`, `outcome` `interrupt`:
 
-```text
-event: confirmation_required
-data: {"type":"confirmation_required","iteration":1,"confirmation":{
-  "id":"<confirmation ID>","turn_id":"<turn ID>",
-  "tool":{"name":"stop_object","title":"Stop object","destructive":true},
-  "arguments":{"path":"prod/svc/web"},
-  "expires_at":"2026-10-09T17:45:00Z"}}
+```json
+{"type": "interrupt", "interrupts": [{
+  "id": "<confirmation ID>", "reason": "tool_call", "toolCallId": "<call ID>",
+  "expiresAt": "2026-10-09T17:45:00Z",
+  "metadata": {"turnId": "<turn ID>",
+    "tool": {"name": "stop_object", "title": "Stop object", "destructive": true},
+    "argumentTypes": {"yaml": "application/yaml"}}}]}
 ```
 
-The stream then ends without `completed`. Show the tool, its title and its
-exact arguments, which are the call that runs if the user approves: take them
-from this event, not from the model text, which can describe the action
-differently. The confirmation expires after 10 minutes.
+Show the tool, its title and its exact arguments, the `TOOL_CALL_ARGS` of
+the `toolCallId`, which are the call that runs if the user approves: never
+the model text, which can describe the action differently. The confirmation
+expires after 10 minutes.
 
-`argument_types`, when present, gives the media type of text arguments, as
+`argumentTypes`, when present, gives the media type of text arguments, as
 the input schema of the tool declares them in `contentMediaType`, such as
 `{"yaml":"application/yaml"}` for the definition of a form: show such an
 argument by its type, its lines and indentation kept, highlighted for a
 type the client knows, rather than guess the format of a text. Show any
 text holding line breaks with its whitespace kept, typed or not
-(`white-space: pre-wrap`). The pending confirmation a conversation read
-gives (`pending_confirmation`) carries it too.
+(`white-space: pre-wrap`).
 
 ### Decision
 
-```http
-POST /v1/om3/conversations/{id}/turns/{turn_id}/confirmation
-Content-Type: application/json
+Answer with a new run on the conversation, its `resume` the decision:
 
-{"confirmation_id":"<confirmation ID>","decision":"approve"}
+```json
+{"threadId": "<conversation ID>", "runId": "<run ID>", "messages": [],
+ "resume": [{"interruptId": "<confirmation ID>", "status": "resolved", "payload": {"approved": true}}]}
 ```
 
-`decision` is exactly `approve` or `reject`. Any other value, an unknown field
-or a second object returns 400: a decision cannot change the arguments or add
-text for the model. The identity is verified again and must own the
-conversation. A confirmation is used once.
+`{"approved": false}`, or the status `cancelled`, rejects the call. Edited
+arguments, or any other payload, return 400 `invalid_decision`: a decision
+cannot change the arguments or add text for the model. The identity is
+verified again and must own the conversation. A confirmation is used once.
 
-The response is a new turn stream. Approved, the stored call runs, then the
-model continues; rejected, the model is told the action did not run, and
-answers. The stream may end with another `confirmation_required` when the
-model calls a further destructive tool.
+The run streams the rest of the turn. Approved, the stored call runs, its
+`TOOL_CALL_RESULT` given, then the model continues; rejected, its result
+tells the action did not run, and the model answers. The run may end with
+another interrupt when the model calls a further destructive tool.
 
 | Case | Status | Code |
 |---|---|---|
-| Invalid body or decision | 400 | `invalid_request`, `invalid_decision` |
-| Unknown or foreign conversation or turn | 404 | `conversation_not_found` |
+| Invalid resume or decision | 400 | `invalid_decision` |
+| Unknown or foreign conversation | 404 | `conversation_not_found` |
 | No such pending confirmation, or already decided | 409 | `confirmation_not_pending` |
 | Confirmation expired | 410 | `confirmation_expired`; the turn failed and the call did not run |
 
 ### While it waits
 
-- `GET /v1/om3/conversations/{id}` returns `pending_confirmation`, with the same
-  fields as the event, while a confirmation waits: show it again after a page
-  reload.
-- A new turn returns 409 `conversation_busy` until the user decides or the
+- `GET /v1/om3/conversations/{id}` returns `pending_confirmation`, the
+  confirmation with its `id`, `turn_id`, `tool`, `arguments`,
+  `argument_types` and `expires_at`, while it waits: show it again after a
+  page reload, and answer it with its `id` as the `interruptId`.
+- A prompt returns 409 `conversation_busy` until the user decides or the
   confirmation expires; an expired one no longer blocks the conversation.
 - A pending confirmation survives an agent restart.
 
@@ -237,11 +241,11 @@ cluster/node catalogue restrictions, daemon grants or TLS checks. Use exact
 origins when they are known and controlled.
 
 Preflight `OPTIONS` requests are handled before JWT authentication. Allowed
-methods are `GET`, `POST`, `PATCH` and `DELETE`; allowed request headers are
+methods are `GET`, `POST`, `PUT`, `PATCH` and `DELETE`; allowed request headers are
 `Authorization`, `Content-Type`, `X-OpenSVC-Cluster-ID` and `X-OpenSVC-Node`.
 Successful preflights return 204 and may be cached by the browser for 600
 seconds. Actual requests still pass through normal authentication, and allowed
-origins receive CORS headers on errors and SSE responses too. Unlisted origins
+origins receive CORS headers on errors and streamed runs too. Unlisted origins
 in restrictive mode return 403; invalid preflight methods/headers also return
 403 without invoking authentication, conversation storage or the model.
 
