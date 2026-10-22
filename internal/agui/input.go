@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -13,15 +14,18 @@ import (
 // an interrupt; the history it keeps is its own, so the other messages, the
 // state, the context and the tools of the client are not read.
 type RunAgentInput struct {
-	ThreadID       string          `json:"threadId"`
-	RunID          string          `json:"runId"`
-	ParentRunID    string          `json:"parentRunId,omitempty"`
-	State          json.RawMessage `json:"state,omitempty"`
-	Messages       []Message       `json:"messages"`
-	Tools          []Tool          `json:"tools"`
-	Context        json.RawMessage `json:"context,omitempty"`
-	ForwardedProps json.RawMessage `json:"forwardedProps,omitempty"`
-	Resume         []ResumeEntry   `json:"resume,omitempty"`
+	ThreadID    string `json:"threadId"`
+	RunID       string `json:"runId"`
+	ParentRunID string `json:"parentRunId,omitempty"`
+	// ProtocolVersion is the version of AG-UI the client speaks, absent
+	// for a client from before the protocol carried one.
+	ProtocolVersion string          `json:"protocolVersion,omitempty"`
+	State           json.RawMessage `json:"state,omitempty"`
+	Messages        []Message       `json:"messages"`
+	Tools           []Tool          `json:"tools"`
+	Context         json.RawMessage `json:"context,omitempty"`
+	ForwardedProps  json.RawMessage `json:"forwardedProps,omitempty"`
+	Resume          []ResumeEntry   `json:"resume,omitempty"`
 }
 
 type Message struct {
@@ -169,4 +173,40 @@ func (entry ResumeEntry) Approval() (bool, error) {
 		return *payload.Approved, nil
 	}
 	return false, fmt.Errorf("resume status must be %q or %q", ResumeResolved, ResumeCancelled)
+}
+
+// Version reads the version of AG-UI the client declares, MAJOR.MINOR
+// compared numerically: whether it is newer than the agent's, and an error
+// for a declaration that is not a version, or of another major line.
+func (input RunAgentInput) Version() (newer bool, err error) {
+	if input.ProtocolVersion == "" {
+		return false, nil
+	}
+	major, minor, ok := splitVersion(input.ProtocolVersion)
+	if !ok {
+		return false, ErrInvalidVersion
+	}
+	ownMajor, ownMinor, _ := splitVersion(ProtocolVersion)
+	if major != ownMajor {
+		return false, ErrUnsupportedVersion
+	}
+	return minor > ownMinor, nil
+}
+
+var (
+	ErrInvalidVersion     = errors.New("protocolVersion must be a version MAJOR.MINOR, such as 1.0")
+	ErrUnsupportedVersion = errors.New("the agent speaks the major version 1 of AG-UI only")
+)
+
+func splitVersion(version string) (int, int, bool) {
+	major, minor, ok := strings.Cut(version, ".")
+	if !ok {
+		return 0, 0, false
+	}
+	a, errA := strconv.ParseUint(major, 10, 16)
+	b, errB := strconv.ParseUint(minor, 10, 16)
+	if errA != nil || errB != nil {
+		return 0, 0, false
+	}
+	return int(a), int(b), true
 }

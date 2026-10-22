@@ -81,7 +81,7 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 			reject(status, apiError)
 			return
 		}
-		attributes = append(attributes, slog.String("run_id", boundedAuditID(input.RunID)))
+		attributes = append(attributes, slog.String("run_id", boundedAuditID(input.RunID)), slog.String("protocol_version", boundedAuditID(input.ProtocolVersion)))
 		if !acquireAgentSlot(response, request, limiter, audit, "conversation_run", attributes) {
 			return
 		}
@@ -103,12 +103,21 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 			return
 		}
 		runContext := agent.WithClientTools(request.Context(), tools)
+		// A client of a newer minor version is served in the version of the
+		// agent, and told so; an invalid one, or another major line, was
+		// refused with the request.
+		if newer, _ := input.Version(); newer {
+			codec.opening = append(codec.opening, codec.encoder.Warning("the client declares AG-UI "+input.ProtocolVersion+", newer than "+agui.ProtocolVersion+": the run is served in "+agui.ProtocolVersion, nil)...)
+		}
 		answers, skippedAnswers, err := input.ToolAnswers()
 		if err != nil {
 			reject(http.StatusBadRequest, &APIError{Code: "invalid_tool_results", Message: err.Error()})
 			return
 		}
 		var execution conversation.TurnExecution
+		// prompt is the message of the user a new turn starts from, and
+		// promptID the ID the client gave it.
+		var prompt, promptID string
 		switch {
 		case len(input.Resume) > 0:
 			entry := input.Resume[0]
@@ -153,7 +162,7 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 			if approved {
 				codec.encoder.Resume(call)
 			} else {
-				codec.opening = codec.encoder.Rejected(call)
+				codec.opening = append(codec.opening, codec.encoder.Rejected(call)...)
 			}
 			execution = prepared
 		case len(answers) > 0:
@@ -192,11 +201,12 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 			}
 			audit.event(request.Context(), "client_tools_answered", appendAttributes(attributes, slog.Int("answers", len(results)))...)
 			if len(skippedAnswers) > 0 {
-				codec.opening = codec.encoder.Warning("the agent reads the text parts of a tool message only: the other parts were skipped", skippedAnswers)
+				codec.opening = append(codec.opening, codec.encoder.Warning("the agent reads the text parts of a tool message only: the other parts were skipped", skippedAnswers)...)
 			}
 			execution = prepared
 		default:
-			prompt, skipped, err := input.Prompt()
+			text, skipped, err := input.Prompt()
+			prompt = text
 			if err != nil {
 				reject(http.StatusBadRequest, &APIError{Code: "invalid_prompt", Message: err.Error()})
 				return
@@ -210,7 +220,7 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 				return
 			}
 			if len(skipped) > 0 {
-				codec.opening = codec.encoder.Warning("the agent reads the text parts of a message only: the other parts were skipped", skipped)
+				codec.opening = append(codec.opening, codec.encoder.Warning("the agent reads the text parts of a message only: the other parts were skipped", skipped)...)
 			}
 			// A new prompt abandons the calls of tools of the client the
 			// conversation waits on; a confirmation keeps it busy.
@@ -218,12 +228,51 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 				writeConversationError(response, request, audit, "conversation_run_rejected", err, id)
 				return
 			}
+			// The ID the client gave its prompt names it in the conversation.
+			messageID := input.Messages[len(input.Messages)-1].ID
+			if messageID != "" && !conversation.ValidPromptID(messageID) {
+				reject(http.StatusBadRequest, &APIError{Code: "invalid_message_id", Message: "the ID of the message of the user must be at most 128 printable bytes without spaces"})
+				return
+			}
+			promptID = messageID
 			prepared, err := service.PrepareTurn(request.Context(), identity, id, prompt)
 			if err != nil {
 				writeConversationError(response, request, audit, "conversation_run_rejected", err, id)
 				return
 			}
 			execution = prepared
+		}
+		// The messages of the run are named as the conversation stores them,
+		// and a client that does not hold the last of its stored messages,
+		// such as another tab, receives the thread first.
+		codec.encoder.SetTurn(execution.TurnID())
+		messages, ids, stored, omitted := execution.Snapshot()
+		inPhaseClient := inPhase(input, messages, ids, stored)
+		// A client in phase keeps the ID it gave its prompt. One out of phase
+		// holds its prompt, which @ag-ui/client keeps in its place when it
+		// merges the snapshot, before the turns it lacked: the prompt goes
+		// under <turn ID>:1 instead, which the client does not hold, and its
+		// copy is replaced, after them.
+		if inPhaseClient && promptID != "" {
+			if err := execution.SetPromptID(request.Context(), promptID); err != nil {
+				_ = execution.Cancel("prompt_id_failed")
+				writeJSONError(response, http.StatusInternalServerError, "conversation_failed", "the conversation operation failed")
+				return
+			}
+		}
+		if !inPhaseClient {
+			var current *agui.SnapshotMessage
+			if prompt != "" {
+				current = &agui.SnapshotMessage{ID: execution.PromptID(), Role: "user", Content: &prompt}
+			}
+			snapshot, err := codec.encoder.Snapshot(messages, ids, current, omitted)
+			if err != nil {
+				_ = execution.Cancel("snapshot_failed")
+				writeJSONError(response, http.StatusInternalServerError, "snapshot_failed", "the thread could not be given")
+				return
+			}
+			codec.opening = append(snapshot, codec.opening...)
+			attributes = append(attributes, slog.Bool("messages_snapshot", true))
 		}
 		started := streamAgentWith(response, request, audit, "conversation_run", attributes, codec, func(emit agent.EmitFunc) error {
 			return execution.Run(runContext, emit)
@@ -261,6 +310,11 @@ func decodeRunRequest(response http.ResponseWriter, request *http.Request, id st
 	if input.RunID == "" || len(input.RunID) > maxRunIDBytes || strings.ContainsFunc(input.RunID, func(r rune) bool { return !unicode.IsPrint(r) || unicode.IsSpace(r) }) {
 		return input, http.StatusBadRequest, &APIError{Code: "invalid_run_id", Message: fmt.Sprintf("runId must be at most %d printable bytes without spaces", maxRunIDBytes)}
 	}
+	if _, err := input.Version(); errors.Is(err, agui.ErrInvalidVersion) {
+		return input, http.StatusBadRequest, &APIError{Code: "invalid_protocol_version", Message: err.Error()}
+	} else if err != nil {
+		return input, http.StatusBadRequest, &APIError{Code: "unsupported_protocol_version", Message: err.Error()}
+	}
 	if len(input.Resume) > 1 {
 		return input, http.StatusBadRequest, &APIError{Code: "invalid_decision", Message: "a conversation waits on one interrupt at most"}
 	}
@@ -284,4 +338,23 @@ var agentCapabilities = map[string]any{
 func serveCapabilities(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, agentCapabilities)
+}
+
+// inPhase tells whether the messages of the client hold the last stored
+// message of the conversation, by its ID, and, for a resumed turn, the
+// answer of the model it waits in: a client in phase needs no snapshot.
+func inPhase(input agui.RunAgentInput, messages []llm.Message, ids []string, stored int) bool {
+	held := make(map[string]bool, len(input.Messages))
+	for _, message := range input.Messages {
+		held[message.ID] = true
+	}
+	if stored > 0 && !held[ids[stored-1]] {
+		return false
+	}
+	for index := len(messages) - 1; index >= stored; index-- {
+		if messages[index].Role == llm.RoleAssistant {
+			return held[ids[index]]
+		}
+	}
+	return true
 }

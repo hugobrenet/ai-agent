@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -189,6 +190,7 @@ type serviceTestStore struct {
 	messageQuery      MessageQuery
 	messageReads      int
 	suspended         *PendingConfirmation
+	promptID          string
 }
 
 func newServiceTestStore() *serviceTestStore {
@@ -251,8 +253,12 @@ func (s *serviceTestStore) FailTurn(_ context.Context, _ Owner, _ string, _ stri
 	s.failureCode = code
 	return nil
 }
-func (s *serviceTestStore) LoadHistory(context.Context, Owner, string) ([]llm.Message, error) {
-	return append([]llm.Message(nil), s.history...), nil
+func (s *serviceTestStore) LoadHistoryIDs(context.Context, Owner, string) ([]llm.Message, []string, error) {
+	ids := make([]string, 0, len(s.history))
+	for index := range s.history {
+		ids = append(ids, fmt.Sprintf("stored-turn:%d", index+1))
+	}
+	return append([]llm.Message(nil), s.history...), ids, nil
 }
 func (s *serviceTestStore) ListMessages(_ context.Context, owner Owner, id string, query MessageQuery) (MessagePage, error) {
 	if owner != s.item.Owner || id != s.item.ID {
@@ -301,6 +307,11 @@ func (s *serviceTestStore) ClaimConfirmation(_ context.Context, _ Owner, _ strin
 
 func (s *serviceTestStore) GetPendingConfirmation(context.Context, Owner, string, time.Time) (*PendingConfirmation, error) {
 	return s.suspended, nil
+}
+
+func (s *serviceTestStore) SetTurnPromptID(_ context.Context, _ Owner, _ string, _ string, promptID string) (bool, error) {
+	s.promptID = promptID
+	return true, nil
 }
 
 func (s *serviceTestStore) CancelSuspendedTurn(_ context.Context, _ Owner, _ string, turnID string, code string, _ time.Time) error {

@@ -346,6 +346,38 @@ func (s conversationServiceFuncs) PendingConfirmation(ctx context.Context, ident
 type testTurnExecution struct {
 	run      func(context.Context, agent.EmitFunc) error
 	canceled bool
+	// turnID and history are the turn and the messages, with their IDs,
+	// the execution gives an AG-UI run.
+	turnID     string
+	promptID   string
+	history    []llm.Message
+	historyIDs []string
+	// current and currentIDs are the messages of a resumed turn so far.
+	current    []llm.Message
+	currentIDs []string
+}
+
+func (e *testTurnExecution) TurnID() string {
+	if e.turnID == "" {
+		return "turn-id"
+	}
+	return e.turnID
+}
+
+func (e *testTurnExecution) SetPromptID(_ context.Context, id string) error {
+	e.promptID = id
+	return nil
+}
+
+func (e *testTurnExecution) PromptID() string {
+	if e.promptID == "" {
+		return e.TurnID() + ":1"
+	}
+	return e.promptID
+}
+
+func (e *testTurnExecution) Snapshot() ([]llm.Message, []string, int, int) {
+	return append(append([]llm.Message(nil), e.history...), e.current...), append(append([]string(nil), e.historyIDs...), e.currentIDs...), len(e.history), 0
 }
 
 func (e *testTurnExecution) Run(ctx context.Context, emit agent.EmitFunc) error {

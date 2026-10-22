@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/agui"
 	"github.com/opensvc/ai-agent/internal/auth"
 	"github.com/opensvc/ai-agent/internal/conversation"
 	"github.com/opensvc/ai-agent/internal/llm"
@@ -295,5 +296,98 @@ func TestCapabilities(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &capabilities); err != nil || response.Code != http.StatusOK ||
 		capabilities["tools"]["clientProvided"] != true || capabilities["humanInTheLoop"]["interrupts"] != true || capabilities["humanInTheLoop"]["approveWithEdits"] != false {
 		t.Fatalf("got %d %s", response.Code, response.Body.String())
+	}
+}
+
+// A client that does not hold the last stored message, such as another tab,
+// receives the thread first; a client in phase does not.
+func TestRunSnapshotsTheThreadToAClientOutOfPhase(t *testing.T) {
+	history := []llm.Message{{Role: llm.RoleUser, Text: "nodes?"}, {Role: llm.RoleAssistant, Text: "Two nodes."}}
+	service := conversationServiceFuncs{prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
+		return &testTurnExecution{turnID: "turn-2", history: history, historyIDs: []string{"turn-1:1", "turn-1:2"}, run: func(_ context.Context, emit agent.EmitFunc) error {
+			_ = emit(agent.Event{Type: agent.EventTextDelta, TextDelta: "No service.", Iteration: 1})
+			return emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-2", Iteration: 1})
+		}}, nil
+	}}
+	behind := runRequest(t, service, `{"threadId":"conversation-id","runId":"run-2","protocolVersion":"1.0","messages":[{"id":"client-1","role":"user","content":"services?"}]}`)
+	events := aguiEvents(t, behind.Body.String())
+	if eventTypes(events) != "RUN_STARTED,MESSAGES_SNAPSHOT,TEXT_MESSAGE_START,TEXT_MESSAGE_CONTENT,TEXT_MESSAGE_END,RUN_FINISHED" {
+		t.Fatalf("got %s", behind.Body.String())
+	}
+	thread := events[1]["messages"].([]any)
+	if len(thread) != 3 || thread[0].(map[string]any)["id"] != "turn-1:1" || thread[2].(map[string]any)["id"] != "turn-2:1" || events[2]["messageId"] != "turn-2:2" {
+		t.Fatalf("snapshot = %v", events[1])
+	}
+	inPhase := runRequest(t, service, `{"threadId":"conversation-id","runId":"run-3","messages":[{"id":"turn-1:1","role":"user","content":"nodes?"},
+		{"id":"turn-1:2","role":"assistant","content":"Two nodes."},{"id":"client-1","role":"user","content":"services?"}]}`)
+	if strings.Contains(inPhase.Body.String(), "MESSAGES_SNAPSHOT") {
+		t.Fatalf("a client in phase received a snapshot: %s", inPhase.Body.String())
+	}
+}
+
+func TestRunReadsTheProtocolVersionOfTheClient(t *testing.T) {
+	service := conversationServiceFuncs{prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
+		return &testTurnExecution{run: func(_ context.Context, emit agent.EmitFunc) error {
+			return emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-id", Iteration: 1})
+		}}, nil
+	}}
+	body := func(version string) string {
+		return `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"` + version + `","messages":[{"role":"user","content":"x"}]}`
+	}
+	for version, code := range map[string]string{"2.0": "unsupported_protocol_version", "1.x": "invalid_protocol_version"} {
+		if response := runRequest(t, service, body(version)); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"`+code+`"`) {
+			t.Errorf("%s: got %d %s", version, response.Code, response.Body.String())
+		}
+	}
+	newer := aguiEvents(t, runRequest(t, service, body("1.3")).Body.String())
+	if eventTypes(newer) != "RUN_STARTED,CUSTOM,RUN_FINISHED" || newer[0]["protocolVersion"] != "1.0" || !strings.Contains(newer[1]["value"].(map[string]any)["message"].(string), "1.3") {
+		t.Fatalf("newer = %v", newer)
+	}
+}
+
+// The ID the client gives its prompt names it; a resumed turn is in phase
+// only with a client holding the answer it waits in.
+func TestRunKeepsThePromptIDOfTheClient(t *testing.T) {
+	var execution *testTurnExecution
+	service := conversationServiceFuncs{prepare: func(context.Context, auth.Identity, string, string) (conversation.TurnExecution, error) {
+		execution = &testTurnExecution{turnID: "turn-2", history: []llm.Message{{Role: llm.RoleUser, Text: "nodes?"}, {Role: llm.RoleAssistant, Text: "Two."}},
+			historyIDs: []string{"client-u1", "turn-1:2"}, run: func(_ context.Context, emit agent.EmitFunc) error {
+				return emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-2", Iteration: 1})
+			}}
+		return execution, nil
+	}}
+	// Out of phase: the prompt goes under its stored ID, which the client
+	// does not hold, and the ID of the client is not kept.
+	response := runRequest(t, service, `{"threadId":"conversation-id","runId":"run-2","messages":[{"id":"client-u3","role":"user","content":"services?"}]}`)
+	events := aguiEvents(t, response.Body.String())
+	thread := events[1]["messages"].([]any)
+	if execution.promptID != "" || thread[0].(map[string]any)["id"] != "client-u1" || thread[2].(map[string]any)["id"] != "turn-2:1" {
+		t.Fatalf("prompt ID %q, snapshot %v", execution.promptID, events[1])
+	}
+	// In phase: the ID of the client is kept.
+	runRequest(t, service, `{"threadId":"conversation-id","runId":"run-3","messages":[{"id":"client-u1","role":"user","content":"nodes?"},{"id":"turn-1:2","role":"assistant","content":"Two."},{"id":"client-u3","role":"user","content":"services?"}]}`)
+	if execution.promptID != "client-u3" {
+		t.Fatalf("prompt ID in phase %q", execution.promptID)
+	}
+	if response := runRequest(t, service, `{"threadId":"conversation-id","runId":"run-3","messages":[{"id":"has space","role":"user","content":"x"}]}`); response.Code != http.StatusBadRequest ||
+		!strings.Contains(response.Body.String(), `"code":"invalid_message_id"`) {
+		t.Fatalf("got %d %s", response.Code, response.Body.String())
+	}
+	// A client holding the last stored message, but not the answer the
+	// resumed turn waits in, is out of phase.
+	resumed := &testTurnExecution{turnID: "turn-2", history: []llm.Message{{Role: llm.RoleUser, Text: "nodes?"}, {Role: llm.RoleAssistant, Text: "Two."}}, historyIDs: []string{"client-u1", "turn-1:2"},
+		current:    []llm.Message{{Role: llm.RoleUser, Text: "stop web"}, {Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call-7", Name: "stop_object", Arguments: json.RawMessage(`{}`)}}}},
+		currentIDs: []string{"client-u3", "turn-2:2"},
+		run: func(_ context.Context, emit agent.EmitFunc) error {
+			return emit(agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-2", Iteration: 1})
+		}}
+	held := agui.RunAgentInput{Messages: []agui.Message{{ID: "client-u1"}, {ID: "turn-1:2"}}}
+	messages, ids, stored, _ := resumed.Snapshot()
+	if inPhase(held, messages, ids, stored) {
+		t.Fatal("a client lacking the answer the turn waits in is in phase")
+	}
+	held.Messages = append(held.Messages, agui.Message{ID: "turn-2:2"})
+	if !inPhase(held, messages, ids, stored) {
+		t.Fatal("a client holding the answer the turn waits in is out of phase")
 	}
 }

@@ -24,6 +24,9 @@ CREATE TABLE turns (
     started_at INTEGER NOT NULL,
     completed_at INTEGER,
     runs_json BLOB NOT NULL DEFAULT '[]',
+    -- prompt_id is the ID the client gave the message of the user, which
+    -- names it instead of <turn ID>:1; empty when the client gave none.
+    prompt_id TEXT NOT NULL DEFAULT '',
     UNIQUE (conversation_id, sequence)
 );
 

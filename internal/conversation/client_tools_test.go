@@ -121,3 +121,27 @@ func TestServiceAbandonsTheCallsOfTheClient(t *testing.T) {
 		t.Fatalf("abandon of a confirmation: %v, suspended %v", err, confirmations.suspended != nil)
 	}
 }
+
+// The snapshot of a resumed turn holds its messages so far and the
+// iteration it waits in, named as the turn stores them.
+func TestSnapshotOfAResumedTurn(t *testing.T) {
+	store := newServiceTestStore()
+	store.history = []llm.Message{{Role: llm.RoleUser, Text: "earlier"}, {Role: llm.RoleAssistant, Text: "answer"}}
+	service := newTestService(t, store, &confirmationRunner{})
+	execution, err := service.PrepareTurn(t.Context(), serviceTestIdentity(), store.item.ID, "stop web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := execution.Run(t.Context(), func(agent.Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, store.suspended.TurnID, store.suspended.ConfirmationID, agent.DecisionApprove)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, ids, stored, omitted := resumed.Snapshot()
+	if !slices.Equal(ids, []string{"stored-turn:1", "stored-turn:2", "turn-id:1", "turn-id:2"}) || stored != 2 || omitted != 0 || len(messages) != 4 ||
+		messages[3].Role != llm.RoleAssistant || messages[3].ToolCalls[0].ID != "call-1" || resumed.TurnID() != "turn-id" {
+		t.Fatalf("snapshot = %v %v", ids, messages)
+	}
+}

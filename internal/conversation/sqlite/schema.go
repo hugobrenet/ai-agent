@@ -7,7 +7,13 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 5
+const schemaVersion = 6
+
+// migrations convert a database of a version to the next one: the only
+// conversions the store makes, each one that keeps the conversations.
+var migrations = map[int]string{
+	5: "ALTER TABLE turns ADD COLUMN prompt_id TEXT NOT NULL DEFAULT ''",
+}
 
 //go:embed schema.sql
 var schemaSQL string
@@ -24,6 +30,15 @@ func initializeSchema(ctx context.Context, db *sql.DB) error {
 	var current int
 	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
 		return fmt.Errorf("read conversation SQLite schema version: %w", err)
+	}
+	for current < schemaVersion && migrations[current] != "" {
+		if _, err := tx.ExecContext(ctx, migrations[current]); err != nil {
+			return fmt.Errorf("convert conversation SQLite schema version %d: %w", current, err)
+		}
+		current++
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", current)); err != nil {
+			return fmt.Errorf("set conversation SQLite schema version: %w", err)
+		}
 	}
 	switch current {
 	case schemaVersion:

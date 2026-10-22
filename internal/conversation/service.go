@@ -200,6 +200,67 @@ func (s *Service) UpdateTitle(ctx context.Context, identity auth.Identity, id st
 type TurnExecution interface {
 	Run(context.Context, agent.EmitFunc) error
 	Cancel(string) error
+	// TurnID is the turn the execution runs, which names its messages, and
+	// PromptID the ID its message of the user goes by.
+	TurnID() string
+	PromptID() string
+	// SetPromptID names the message of the user of a new turn with the ID
+	// the client gave it, unless the conversation holds it already.
+	SetPromptID(context.Context, string) error
+	// Snapshot gives the messages the model reads as the execution starts,
+	// with their IDs: the history, its first stored messages, and, for a
+	// resumed turn, its messages so far; and the number of the turns the
+	// bound of the history left out.
+	Snapshot() (messages []llm.Message, ids []string, stored int, omitted int)
+}
+
+func (t *PreparedTurn) TurnID() string { return t.turnID }
+
+// PromptID is the ID the message of the user of the turn goes by: the one
+// the client gave it, or <turn ID>:1.
+func (t *PreparedTurn) PromptID() string {
+	return MessageID(t.turnID, t.promptID, 1)
+}
+
+// SetPromptID records the ID the client gave the message of the user of a
+// new turn: the client stays in phase with the conversation on its own IDs.
+func (t *PreparedTurn) SetPromptID(ctx context.Context, id string) error {
+	if t.resume != nil || !ValidPromptID(id) {
+		return fmt.Errorf("%w: invalid prompt ID", ErrInvalid)
+	}
+	recorded, err := t.service.store.SetTurnPromptID(ctx, t.owner, t.conversationID, t.turnID, id)
+	if err != nil {
+		return err
+	}
+	if recorded {
+		t.promptID = id
+	}
+	return nil
+}
+
+func (t *PreparedTurn) Snapshot() ([]llm.Message, []string, int, int) {
+	messages, ids := slices.Clone(t.history), slices.Clone(t.historyIDs)
+	if t.resume != nil {
+		for index, message := range t.resume.Messages {
+			messages = append(messages, message)
+			ids = append(ids, MessageID(t.turnID, t.promptID, int64(index+1)))
+		}
+		// The iteration the turn waits in: its answer and the results of
+		// its calls already run, which the turn stores once it is done.
+		if state := t.resume; len(state.Calls) > 0 {
+			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Text: state.Text, ToolCalls: slices.Clone(state.Calls)})
+			ids = append(ids, fmt.Sprintf("%s:%d", t.turnID, 2*state.Iteration))
+			if len(state.Results) > 0 {
+				messages = append(messages, llm.Message{Role: llm.RoleTool, ToolResults: slices.Clone(state.Results)})
+				ids = append(ids, fmt.Sprintf("%s:%d", t.turnID, 2*state.Iteration+1))
+			}
+		}
+	}
+	omitted := 0
+	if t.historyStats != nil {
+		omitted = t.historyStats.RemovedTurns
+	}
+	return messages, ids, len(t.history), omitted
 }
 
 func (s *Service) PrepareTurn(ctx context.Context, identity auth.Identity, conversationID string, prompt string) (TurnExecution, error) {
@@ -219,7 +280,8 @@ func (s *Service) PrepareTurn(ctx context.Context, identity auth.Identity, conve
 	if err != nil {
 		return nil, err
 	}
-	history, err := s.store.LoadHistory(ctx, item.Owner, item.ID)
+
+	history, historyIDs, err := s.store.LoadHistoryIDs(ctx, item.Owner, item.ID)
 	if err != nil {
 		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, turn.ID, TurnFailed, "history_failed"))
 	}
@@ -229,7 +291,7 @@ func (s *Service) PrepareTurn(ctx context.Context, identity auth.Identity, conve
 	}
 	return &PreparedTurn{
 		service: s, owner: item.Owner, conversationID: item.ID, turnID: turn.ID,
-		prompt: prompt, history: history, historyStats: stats,
+		prompt: prompt, history: history, historyIDs: historyIDs[len(historyIDs)-len(history):], historyStats: stats,
 	}, nil
 }
 
@@ -262,7 +324,7 @@ func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identit
 	if err != nil || call.Name != pending.ToolName || agent.ArgumentsHash(call.Arguments) != pending.ArgumentsHash {
 		return nil, errors.Join(fmt.Errorf("suspended turn does not hold the confirmed call"), s.failTurn(item.Owner, item.ID, turnID, TurnFailed, "confirmation_invalid"))
 	}
-	history, err := s.store.LoadHistory(ctx, item.Owner, item.ID)
+	history, historyIDs, err := s.store.LoadHistoryIDs(ctx, item.Owner, item.ID)
 	if err != nil {
 		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, turnID, TurnFailed, "history_failed"))
 	}
@@ -272,7 +334,7 @@ func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identit
 	}
 	return &PreparedTurn{
 		service: s, owner: item.Owner, conversationID: item.ID, turnID: turnID,
-		history: history, historyStats: stats, resume: &state, decision: decision,
+		history: history, historyIDs: historyIDs[len(historyIDs)-len(history):], historyStats: stats, promptID: s.turnPromptID(ctx, item.Owner, item.ID, turnID), resume: &state, decision: decision,
 	}, nil
 }
 
@@ -350,7 +412,7 @@ func (s *Service) PrepareClientResults(ctx context.Context, identity auth.Identi
 		return nil, err
 	}
 	state.ClientResults = slices.Clone(results)
-	history, err := s.store.LoadHistory(ctx, item.Owner, item.ID)
+	history, historyIDs, err := s.store.LoadHistoryIDs(ctx, item.Owner, item.ID)
 	if err != nil {
 		return nil, errors.Join(err, s.failTurn(item.Owner, item.ID, pending.TurnID, TurnFailed, "history_failed"))
 	}
@@ -360,7 +422,7 @@ func (s *Service) PrepareClientResults(ctx context.Context, identity auth.Identi
 	}
 	return &PreparedTurn{
 		service: s, owner: item.Owner, conversationID: item.ID, turnID: pending.TurnID,
-		history: history, historyStats: stats, resume: &state,
+		history: history, historyIDs: historyIDs[len(historyIDs)-len(history):], historyStats: stats, promptID: s.turnPromptID(ctx, item.Owner, item.ID, pending.TurnID), resume: &state,
 	}, nil
 }
 
@@ -404,11 +466,17 @@ type PreparedTurn struct {
 	turnID         string
 	prompt         string
 	history        []llm.Message
-	historyStats   *HistoryStats
-	resume         *agent.SuspendedTurn
-	decision       agent.Decision
-	mu             sync.Mutex
-	claimed        bool
+	// historyIDs are the IDs of the messages of history, the turns the
+	// bound of the history leaves out left out.
+	historyIDs []string
+	// promptID is the ID the client gave the message of the user of the
+	// turn, empty when it gave none.
+	promptID     string
+	historyStats *HistoryStats
+	resume       *agent.SuspendedTurn
+	decision     agent.Decision
+	mu           sync.Mutex
+	claimed      bool
 }
 
 func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
@@ -638,4 +706,14 @@ func boundHistory(history []llm.Message, maxMessages int, maxBytes int) ([]llm.M
 		}
 	}
 	return nil, nil
+}
+
+// turnPromptID reads the ID the client gave the prompt of a turn, none when
+// it cannot be read: the message is then named <turn ID>:1.
+func (s *Service) turnPromptID(ctx context.Context, owner Owner, conversationID, turnID string) string {
+	turn, _, err := s.store.TurnMessages(ctx, owner, conversationID, turnID)
+	if err != nil {
+		return ""
+	}
+	return turn.PromptID
 }

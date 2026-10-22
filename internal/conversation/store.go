@@ -42,10 +42,16 @@ type Store interface {
 	SuspendTurn(context.Context, Owner, PendingConfirmation) error
 	ClaimConfirmation(context.Context, Owner, string, string, string, time.Time) (PendingConfirmation, error)
 	GetPendingConfirmation(context.Context, Owner, string, time.Time) (*PendingConfirmation, error)
+	// SetTurnPromptID records the ID the client gave the message of the
+	// user of a running turn, and tells whether it did: an ID a turn of the
+	// conversation holds already is not recorded twice.
+	SetTurnPromptID(context.Context, Owner, string, string, string) (bool, error)
 	// CancelSuspendedTurn cancels a suspended turn with a code, and deletes
 	// what it waits on.
 	CancelSuspendedTurn(context.Context, Owner, string, string, string, time.Time) error
-	LoadHistory(context.Context, Owner, string) ([]llm.Message, error)
+	// LoadHistoryIDs loads the messages of the completed turns, with the ID
+	// of each, <turn ID>:<sequence>.
+	LoadHistoryIDs(context.Context, Owner, string) ([]llm.Message, []string, error)
 	ListMessages(context.Context, Owner, string, MessageQuery) (MessagePage, error)
 
 	// TurnMessages reads one turn of an owned conversation and its messages.
