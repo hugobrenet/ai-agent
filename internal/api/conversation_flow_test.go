@@ -84,11 +84,11 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 
 	for index, prompt := range []string{"first", "second"} {
 		response := httptest.NewRecorder()
-		request := requestWithToken(http.MethodPost, "/v1/om3/conversations/"+id+"/turns", "alice", `{"prompt":"`+prompt+`"}`)
+		request := requestWithToken(http.MethodPost, "/v1/om3/conversations/"+id+"/runs", "alice", runInput(id, prompt))
 		request.Header.Set("Content-Type", "application/json")
 		handler.ServeHTTP(response, request)
-		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"type":"completed"`) {
-			t.Fatalf("turn %q status=%d body=%s", prompt, response.Code, response.Body.String())
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"type":"RUN_FINISHED"`) {
+			t.Fatalf("run %q status=%d body=%s", prompt, response.Code, response.Body.String())
 		}
 		if index == 0 {
 			messagesResponse := httptest.NewRecorder()
@@ -100,10 +100,10 @@ func TestConversationFlowPersistsHistoryAndIsolatesOwner(t *testing.T) {
 			if turnNumber != 1 {
 				t.Fatal("reading messages ran a model turn")
 			}
-			// The completion names the stored turn, the one its messages carry,
-			// for the client to rate the answer without reloading.
-			if want := `"turn_id":"` + page.Messages[1].TurnID + `"`; !strings.Contains(response.Body.String(), want) {
-				t.Fatalf("completed event without %s: %s", want, response.Body.String())
+			// The end of the run names the stored turn, the one its messages
+			// carry, for the client to rate the answer without reloading.
+			if want := `"turnId":"` + page.Messages[1].TurnID + `"`; !strings.Contains(response.Body.String(), want) {
+				t.Fatalf("RUN_FINISHED without %s: %s", want, response.Body.String())
 			}
 			foreignMessages := httptest.NewRecorder()
 			handler.ServeHTTP(foreignMessages, requestWithToken(http.MethodGet, "/v1/om3/conversations/"+id+"/messages", "bob", ""))

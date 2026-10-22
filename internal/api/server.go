@@ -103,8 +103,6 @@ func backendRoutes(conversations ConversationService, limiter *askLimiter, audit
 		{"GET", "/conversations/{id}/messages", serveConversationMessages(conversations, audit)},
 		{"PATCH", "/conversations/{id}", serveUpdateConversationTitle(conversations, audit)},
 		{"DELETE", "/conversations/{id}", serveDeleteConversation(conversations, audit)},
-		{"POST", "/conversations/{id}/turns", serveConversationTurn(conversations, limiter, audit)},
-		{"POST", "/conversations/{id}/turns/{turn_id}/confirmation", serveConversationConfirmation(conversations, limiter, audit)},
 		{"POST", "/conversations/{id}/runs", serveConversationRun(conversations, limiter, audit)},
 		{"GET", "/capabilities", http.HandlerFunc(serveCapabilities)},
 		{"PUT", "/conversations/{id}/turns/{turn_id}/feedback", servePutFeedback(conversations, audit)},

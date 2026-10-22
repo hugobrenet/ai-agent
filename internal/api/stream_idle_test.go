@@ -32,7 +32,7 @@ func slowToolTurn(wait time.Duration) turnFunc {
 	})
 }
 
-// streamOverHTTP2 posts a turn to handler over TLS and HTTP/2, as the agent
+// streamOverHTTP2 posts a run to handler over TLS and HTTP/2, as the agent
 // serves it, and reads the whole stream.
 func streamOverHTTP2(t *testing.T, handler http.Handler) string {
 	t.Helper()
@@ -40,7 +40,7 @@ func streamOverHTTP2(t *testing.T, handler http.Handler) string {
 	server.EnableHTTP2 = true
 	server.StartTLS()
 	defer server.Close()
-	request := newAuthenticatedTurnRequest(`{"prompt":"follow the action"}`)
+	request := newAuthenticatedRunRequest(runBody("follow the action"))
 	request.RequestURI = ""
 	target, err := http.NewRequest(request.Method, server.URL+request.URL.Path, request.Body)
 	if err != nil {
@@ -62,26 +62,26 @@ func streamOverHTTP2(t *testing.T, handler http.Handler) string {
 	return string(body)
 }
 
-func TestTurnOutlivesTheWriteTimeoutBetweenEvents(t *testing.T) {
-	timeout, interval := askWriteTimeout, askKeepAliveInterval
-	askWriteTimeout, askKeepAliveInterval = 200*time.Millisecond, time.Hour
-	t.Cleanup(func() { askWriteTimeout, askKeepAliveInterval = timeout, interval })
+func TestRunOutlivesTheWriteTimeoutBetweenEvents(t *testing.T) {
+	timeout, interval := streamWriteTimeout, streamKeepAliveInterval
+	streamWriteTimeout, streamKeepAliveInterval = 200*time.Millisecond, time.Hour
+	t.Cleanup(func() { streamWriteTimeout, streamKeepAliveInterval = timeout, interval })
 	// A tool running three write timeouts long: the deadline of the last
 	// write must not reset the stream.
 	body := streamOverHTTP2(t, newTestHandler(t, slowToolTurn(600*time.Millisecond)))
-	events := decodeSSEEvents(t, body)
-	if len(events) == 0 || events[len(events)-1].Type != "completed" {
+	events := aguiEvents(t, body)
+	if len(events) == 0 || events[len(events)-1]["type"] != "RUN_FINISHED" {
 		t.Fatalf("events = %+v", events)
 	}
 }
 
-func TestTurnKeepsTheStreamAlive(t *testing.T) {
-	interval := askKeepAliveInterval
-	askKeepAliveInterval = 50 * time.Millisecond
-	t.Cleanup(func() { askKeepAliveInterval = interval })
+func TestRunKeepsTheStreamAlive(t *testing.T) {
+	interval := streamKeepAliveInterval
+	streamKeepAliveInterval = 50 * time.Millisecond
+	t.Cleanup(func() { streamKeepAliveInterval = interval })
 	body := streamOverHTTP2(t, newTestHandler(t, slowToolTurn(300*time.Millisecond)))
-	events := decodeSSEEvents(t, body)
-	if !strings.Contains(body, ": keepalive\n\n") || len(events) == 0 || events[len(events)-1].Type != "completed" {
+	events := aguiEvents(t, body)
+	if !strings.Contains(body, ": keepalive\n\n") || len(events) == 0 || events[len(events)-1]["type"] != "RUN_FINISHED" {
 		t.Fatalf("body = %q", body)
 	}
 }

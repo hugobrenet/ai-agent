@@ -8,62 +8,37 @@ import (
 	"io"
 	"log/slog"
 	"math"
-	"mime"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/opensvc/ai-agent/internal/agent"
+	"github.com/opensvc/ai-agent/internal/llm"
 )
 
 const (
-	maxAskRequestBytes = 64 << 10
-	maxPromptBytes     = 32 << 10
-	maxAskStreamBytes  = 16 << 20
+	maxPromptBytes = 32 << 10
+	maxStreamBytes = 16 << 20
 )
 
 var (
-	// askWriteTimeout bounds each write of the stream, so that a client
+	// streamWriteTimeout bounds each write of the stream, so that a client
 	// reading it slowly is cut off; it is cleared between writes, a tool or
 	// a model request may run longer without any.
-	askWriteTimeout = 15 * time.Second
-	// askKeepAliveInterval is how often the stream sends a comment while
+	streamWriteTimeout = 15 * time.Second
+	// streamKeepAliveInterval is how often the stream sends a comment while
 	// nothing else is written, which keeps idle proxies from closing it.
-	askKeepAliveInterval = 10 * time.Second
+	streamKeepAliveInterval = 10 * time.Second
 )
 
-type AskRequest struct {
-	Prompt string `json:"prompt"`
-}
-
-type AskUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
-}
-
-type AskEvent struct {
-	Type         string           `json:"type"`
-	Iteration    int              `json:"iteration,omitempty"`
-	TurnID       string           `json:"turn_id,omitempty"`
-	TextDelta    string           `json:"text_delta,omitempty"`
-	ToolName     string           `json:"tool_name,omitempty"`
-	ToolError    *bool            `json:"tool_error,omitempty"`
-	Usage        *AskUsage        `json:"usage,omitempty"`
-	FinishReason string           `json:"finish_reason,omitempty"`
-	Confirmation *AskConfirmation `json:"confirmation,omitempty"`
-	Code         string           `json:"code,omitempty"`
-	Message      string           `json:"message,omitempty"`
-}
-
-// AskConfirmation is a tool call waiting for the decision of the user: the
-// exact call that runs if the user approves it.
-type AskConfirmation struct {
-	ID        string              `json:"id"`
-	TurnID    string              `json:"turn_id"`
-	Tool      AskConfirmationTool `json:"tool"`
-	Arguments json.RawMessage     `json:"arguments"`
+// Confirmation is a tool call waiting for the decision of the user, as the
+// conversation read returns it: the exact call that runs if the user
+// approves it.
+type Confirmation struct {
+	ID        string           `json:"id"`
+	TurnID    string           `json:"turn_id"`
+	Tool      ConfirmationTool `json:"tool"`
+	Arguments json.RawMessage  `json:"arguments"`
 	// ArgumentTypes are the media types of text arguments, such as
 	// {"yaml": "application/yaml"}, as the input schema of the tool
 	// declares them: the client shows them by it, not by guessing.
@@ -71,7 +46,7 @@ type AskConfirmation struct {
 	ExpiresAt     time.Time         `json:"expires_at"`
 }
 
-type AskConfirmationTool struct {
+type ConfirmationTool struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
 	Destructive bool   `json:"destructive"`
@@ -100,39 +75,9 @@ func acquireAgentSlot(response http.ResponseWriter, request *http.Request, limit
 	return false
 }
 
-// streamCodec writes the events of the agent in the protocol of a stream:
-// the frames opening it, those of each event, and the frame of a failure.
-type streamCodec interface {
-	begin() ([]byte, error)
-	event(agent.Event) ([]byte, error)
-	failure(code, message string) ([]byte, error)
-}
-
-// askCodec is the SSE protocol of the turns: one named event per event of
-// the agent.
-type askCodec struct{}
-
-func (askCodec) begin() ([]byte, error) { return nil, nil }
-
-func (askCodec) event(event agent.Event) ([]byte, error) { return askFrame(newAskEvent(event)) }
-
-func (askCodec) failure(code, message string) ([]byte, error) {
-	return askFrame(AskEvent{Type: "error", Code: code, Message: message})
-}
-
-func askFrame(event AskEvent) ([]byte, error) {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return nil, fmt.Errorf("encode API stream event: %w", err)
-	}
-	return fmt.Appendf(nil, "event: %s\ndata: %s\n\n", event.Type, data), nil
-}
-
-func streamAgent(response http.ResponseWriter, request *http.Request, audit auditLogger, prefix string, baseAttributes []slog.Attr, run func(agent.EmitFunc) error) bool {
-	return streamAgentWith(response, request, audit, prefix, baseAttributes, askCodec{}, run)
-}
-
-func streamAgentWith(response http.ResponseWriter, request *http.Request, audit auditLogger, prefix string, baseAttributes []slog.Attr, codec streamCodec, run func(agent.EmitFunc) error) bool {
+// streamRun streams the events of a run of the agent in AG-UI, within the
+// bounds of the stream, and audits it.
+func streamRun(response http.ResponseWriter, request *http.Request, audit auditLogger, prefix string, baseAttributes []slog.Attr, codec *aguiCodec, run func(agent.EmitFunc) error) bool {
 	flusher, ok := response.(http.Flusher)
 	if !ok {
 		audit.event(request.Context(), prefix+"_rejected", appendAttributes(baseAttributes,
@@ -142,7 +87,7 @@ func streamAgentWith(response http.ResponseWriter, request *http.Request, audit 
 		writeJSONError(response, http.StatusInternalServerError, "streaming_unavailable", "response streaming is unavailable")
 		return false
 	}
-	if err := setAskWriteDeadline(response); err != nil {
+	if err := setStreamWriteDeadline(response); err != nil {
 		audit.event(request.Context(), prefix+"_rejected", appendAttributes(baseAttributes,
 			slog.Int("status", http.StatusInternalServerError),
 			slog.String("code", "streaming_unavailable"),
@@ -150,14 +95,14 @@ func streamAgentWith(response http.ResponseWriter, request *http.Request, audit 
 		writeJSONError(response, http.StatusInternalServerError, "streaming_unavailable", "response streaming is unavailable")
 		return false
 	}
-	defer clearAskWriteDeadline(response)
+	defer clearStreamWriteDeadline(response)
 
 	response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	response.Header().Set("Cache-Control", "no-cache")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	response.WriteHeader(http.StatusOK)
 	flusher.Flush()
-	clearAskWriteDeadline(response)
+	clearStreamWriteDeadline(response)
 	startedAt := time.Now()
 	audit.event(request.Context(), prefix+"_started", appendAttributes(baseAttributes, slog.Int("status", http.StatusOK))...)
 	opening, openErr := codec.begin()
@@ -167,7 +112,7 @@ func streamAgentWith(response http.ResponseWriter, request *http.Request, audit 
 	finishReason := ""
 	lastIteration := 0
 	toolCalls := 0
-	var usage AskUsage
+	var usage llm.Usage
 	var activeToolName string
 	var activeToolStartedAt time.Time
 	var streamBytes int64
@@ -178,10 +123,10 @@ func streamAgentWith(response http.ResponseWriter, request *http.Request, audit 
 	write := func(frame func() error) error {
 		writeLock.Lock()
 		defer writeLock.Unlock()
-		if err := setAskWriteDeadline(response); err != nil {
+		if err := setStreamWriteDeadline(response); err != nil {
 			return err
 		}
-		defer clearAskWriteDeadline(response)
+		defer clearStreamWriteDeadline(response)
 		return frame()
 	}
 	stopKeepAlive := make(chan struct{})
@@ -189,7 +134,7 @@ func streamAgentWith(response http.ResponseWriter, request *http.Request, audit 
 	keepAlive.Add(1)
 	go func() {
 		defer keepAlive.Done()
-		ticker := time.NewTicker(askKeepAliveInterval)
+		ticker := time.NewTicker(streamKeepAliveInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -285,7 +230,7 @@ func streamAgentWith(response http.ResponseWriter, request *http.Request, audit 
 	}
 	close(stopKeepAlive)
 	keepAlive.Wait()
-	failureCode := askFailureCode(err, completed, writeFailed, request.Context().Err())
+	failureCode := streamFailureCode(err, completed, writeFailed, request.Context().Err())
 	if activeToolName != "" && failureCode == "" {
 		failureCode = "agent_incomplete"
 	}
@@ -339,7 +284,7 @@ func appendAttributes(base []slog.Attr, extra ...slog.Attr) []slog.Attr {
 	return append(attributes, extra...)
 }
 
-func askFailureCode(err error, completed bool, writeFailed bool, contextErr error) string {
+func streamFailureCode(err error, completed bool, writeFailed bool, contextErr error) string {
 	if writeFailed {
 		return "stream_write_failed"
 	}
@@ -374,8 +319,8 @@ func saturatingAdd(current int64, value int64) int64 {
 	return current + value
 }
 
-func setAskWriteDeadline(response http.ResponseWriter) error {
-	err := http.NewResponseController(response).SetWriteDeadline(time.Now().Add(askWriteTimeout))
+func setStreamWriteDeadline(response http.ResponseWriter) error {
+	err := http.NewResponseController(response).SetWriteDeadline(time.Now().Add(streamWriteTimeout))
 	if errors.Is(err, http.ErrNotSupported) {
 		return nil
 	}
@@ -385,73 +330,15 @@ func setAskWriteDeadline(response http.ResponseWriter) error {
 	return nil
 }
 
-func clearAskWriteDeadline(response http.ResponseWriter) {
+func clearStreamWriteDeadline(response http.ResponseWriter) {
 	_ = http.NewResponseController(response).SetWriteDeadline(time.Time{})
-}
-
-func decodeAskRequest(response http.ResponseWriter, request *http.Request) (AskRequest, int, *APIError) {
-	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		return AskRequest{}, http.StatusUnsupportedMediaType, &APIError{Code: "unsupported_media_type", Message: "Content-Type must be application/json"}
-	}
-	request.Body = http.MaxBytesReader(response, request.Body, maxAskRequestBytes)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	var askRequest AskRequest
-	if err := decoder.Decode(&askRequest); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			return AskRequest{}, http.StatusRequestEntityTooLarge, &APIError{Code: "request_too_large", Message: "request body is too large"}
-		}
-		return AskRequest{}, http.StatusBadRequest, &APIError{Code: "invalid_request", Message: "request body must be a JSON object containing a prompt"}
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return AskRequest{}, http.StatusBadRequest, &APIError{Code: "invalid_request", Message: "request body must contain one JSON object"}
-	}
-	if strings.TrimSpace(askRequest.Prompt) == "" {
-		return AskRequest{}, http.StatusBadRequest, &APIError{Code: "invalid_prompt", Message: "prompt must not be empty"}
-	}
-	if len(askRequest.Prompt) > maxPromptBytes {
-		return AskRequest{}, http.StatusRequestEntityTooLarge, &APIError{Code: "prompt_too_large", Message: "prompt is too large"}
-	}
-	return askRequest, 0, nil
-}
-
-func newAskEvent(event agent.Event) AskEvent {
-	streamEvent := AskEvent{Type: string(event.Type), Iteration: event.Iteration}
-	switch event.Type {
-	case agent.EventTextDelta:
-		streamEvent.TextDelta = event.TextDelta
-	case agent.EventToolStarted:
-		streamEvent.ToolName = event.ToolName
-	case agent.EventToolFinished:
-		streamEvent.ToolName = event.ToolName
-		toolError := event.ToolError
-		streamEvent.ToolError = &toolError
-	case agent.EventUsage:
-		streamEvent.Usage = &AskUsage{
-			InputTokens:  event.Usage.InputTokens,
-			OutputTokens: event.Usage.OutputTokens,
-			TotalTokens:  event.Usage.TotalTokens,
-		}
-	case agent.EventCompleted:
-		streamEvent.FinishReason = string(event.FinishReason)
-		streamEvent.TurnID = event.TurnID
-	case agent.EventConfirmationRequired:
-		c := event.Confirmation
-		streamEvent.Confirmation = &AskConfirmation{
-			ID: c.ID, TurnID: c.TurnID, Arguments: c.Arguments, ArgumentTypes: c.ArgumentTypes, ExpiresAt: c.ExpiresAt,
-			Tool: AskConfirmationTool{Name: c.ToolName, Title: c.ToolTitle, Destructive: c.Destructive},
-		}
-	}
-	return streamEvent
 }
 
 // writeSSEComment writes a comment line, which SSE clients ignore.
 func writeSSEComment(response io.Writer, flusher http.Flusher, streamBytes *int64) error {
 	frame := []byte(": keepalive\n\n")
-	if *streamBytes+int64(len(frame)) > maxAskStreamBytes {
-		return fmt.Errorf("API stream exceeds %d bytes", maxAskStreamBytes)
+	if *streamBytes+int64(len(frame)) > maxStreamBytes {
+		return fmt.Errorf("API stream exceeds %d bytes", maxStreamBytes)
 	}
 	written, err := response.Write(frame)
 	*streamBytes += int64(written)
@@ -464,8 +351,8 @@ func writeSSEComment(response io.Writer, flusher http.Flusher, streamBytes *int6
 
 // writeFrame writes frames of the stream, within its size.
 func writeFrame(response io.Writer, flusher http.Flusher, streamBytes *int64, frame []byte) error {
-	if *streamBytes+int64(len(frame)) > maxAskStreamBytes {
-		return fmt.Errorf("API stream exceeds %d bytes", maxAskStreamBytes)
+	if *streamBytes+int64(len(frame)) > maxStreamBytes {
+		return fmt.Errorf("API stream exceeds %d bytes", maxStreamBytes)
 	}
 	written, err := response.Write(frame)
 	*streamBytes += int64(written)

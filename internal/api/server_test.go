@@ -89,7 +89,7 @@ func TestRouteSelectsItsBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"oc3", "om3"} {
-		request := httptest.NewRequest(http.MethodPost, "/v1/"+name+"/conversations/"+testConversationID+"/turns", strings.NewReader(`{"prompt":"hello"}`))
+		request := httptest.NewRequest(http.MethodPost, "/v1/"+name+"/conversations/"+testConversationID+"/runs", strings.NewReader(runBody("hello")))
 		request.Header.Set("Authorization", "Bearer token")
 		request.Header.Set(testBackendHeader, "cluster-id")
 		request.Header.Set("Content-Type", "application/json")
