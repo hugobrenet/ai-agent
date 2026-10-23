@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -28,6 +29,49 @@ func (d Decision) Valid() bool {
 // rejectedToolResult is the tool result the model receives for an action the
 // user rejected: the call was not executed.
 var rejectedToolResult = json.RawMessage(`{"content":[{"type":"text","text":"The user rejected this action. It was not executed."}]}`)
+
+// noPendingConfirmation ends the system message of a new turn: the service
+// refuses a new turn while a confirmation is pending, so a prompt never
+// answers one, whatever it says.
+const noPendingConfirmation = "No confirmation is pending: the previous turn is complete."
+
+// confirmationTarget is the form of a path or node value the confirmation
+// state names; another value is left out.
+var confirmationTarget = regexp.MustCompile(`^[A-Za-z0-9._/#@:-]{1,128}$`)
+
+// confirmationState is the line the system message of a run ends with: the
+// state of the confirmation, which the agent knows and the model would have
+// to reconstitute. A resumed turn names the call the user answered, its
+// tool and the path and node it targets.
+func confirmationState(state *SuspendedTurn, decision Decision) string {
+	if decision == "" {
+		return noPendingConfirmation
+	}
+	call, err := state.PendingCall()
+	if err != nil {
+		return noPendingConfirmation
+	}
+	arguments := call.Arguments
+	if len(state.EditedArguments) > 0 {
+		arguments = state.EditedArguments
+	}
+	var fields map[string]any
+	_ = json.Unmarshal(arguments, &fields)
+	target := ""
+	for _, key := range []string{"path", "node"} {
+		if value, ok := fields[key].(string); ok && confirmationTarget.MatchString(value) {
+			target += fmt.Sprintf(" %s %s", key, value)
+		}
+	}
+	if target != "" {
+		target = " on" + target
+	}
+	answer := "approved"
+	if decision == DecisionReject {
+		answer = "rejected"
+	}
+	return fmt.Sprintf("The confirmation of %s%s was answered: %s. It covers that call only; no other confirmation is pending.", call.Name, target, answer)
+}
 
 // SuspendedTurn is the state of a turn waiting for the user to confirm a tool
 // call. It holds everything RunTurn needs to resume: the messages of the turn
