@@ -866,3 +866,35 @@ func TestSearchBoundsTheToolsAFormerSearchShowed(t *testing.T) {
 		t.Fatalf("tools = %v, want %v", tools, want)
 	}
 }
+
+// A search keeps the results the model asked, then those close to the best
+// one: the tool of a family that ranks past the limit, as
+// start_instance_standby did behind start_instance in real searches.
+func TestCloseResultsAddsTheResultsCloseToTheBest(t *testing.T) {
+	results := []toolsearch.Result{
+		{Name: "a", Score: 10}, {Name: "b", Score: 9}, {Name: "c", Score: 8},
+		{Name: "d", Score: 7.7}, {Name: "e", Score: 5.2}, {Name: "f", Score: 3},
+	}
+	names := func(results []toolsearch.Result) string {
+		var out []string
+		for _, result := range results {
+			out = append(out, result.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := names(closeResults(results, 2)); got != "a,b,c,d,e" {
+		t.Fatalf("limit 2: %s", got)
+	}
+	// A result under half the best one stops the additions.
+	if got := names(closeResults(results, 5)); got != "a,b,c,d,e" {
+		t.Fatalf("limit 5: %s", got)
+	}
+	if got := names(closeResults(results[:3], 5)); got != "a,b,c" {
+		t.Fatalf("fewer than the limit: %s", got)
+	}
+	// A clear search adds nothing.
+	clear := []toolsearch.Result{{Name: "a", Score: 10}, {Name: "b", Score: 4}, {Name: "c", Score: 3}}
+	if got := names(closeResults(clear, 1)); got != "a" {
+		t.Fatalf("clear: %s", got)
+	}
+}
