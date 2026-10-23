@@ -31,7 +31,17 @@ const (
 	maxSearchesPerTurn   = 3
 	defaultSearchResults = 5
 	maxSearchResults     = 10
-	maxHistoryTools      = 8
+	// closeSearchResults bounds the results a search adds beyond the limit
+	// the model asked, those scoring at least closeScoreRatio of the best
+	// one: a family of tools sharing their words, such as start_instance and
+	// start_instance_standby, ranks close, and the one asked fell past the
+	// fifth result in real searches of om3 and oc3. Measured on 34 searches
+	// of the model on the catalogs of both backends, on 2026-10-23: every
+	// tool asked shown, against 31 with 5 results, for about two more tools
+	// shown per search.
+	closeSearchResults = 5
+	closeScoreRatio    = 0.5
+	maxHistoryTools    = 8
 	// maxHistoryShownTools bounds the tools a search of the recent turns
 	// showed without the model calling them, apart from maxHistoryTools: a
 	// search of the last turn does not push out the tools called before.
@@ -389,10 +399,11 @@ func (s *toolSelection) run(call llm.ToolCall, titles map[string]string) llm.Too
 			return llm.ToolResult{CallID: call.ID, Content: textToolResult(string(text))}
 		}
 	}
-	results, err := s.index.Search(arguments.Query, arguments.Limit)
+	results, err := s.index.Search(arguments.Query, arguments.Limit+closeSearchResults)
 	if err != nil {
 		return fail("The query of search_tools has no searchable keyword, or exceeds " + strconv.Itoa(toolsearch.MaxQueryBytes) + " bytes. " + searchKeywordsGuidance)
 	}
+	results = closeResults(results, arguments.Limit)
 	// Only a valid search counts, whether it finds tools or not.
 	s.searches++
 	// A result scoring under scoreRatio of the best one is not shown: BM25
@@ -445,6 +456,27 @@ func (s *toolSelection) run(call llm.ToolCall, titles map[string]string) llm.Too
 	response.Hint = strings.Join(hints, " ")
 	text, _ := json.Marshal(response)
 	return llm.ToolResult{CallID: call.ID, Content: textToolResult(string(text))}
+}
+
+// closeResults keeps the first limit results, then those after them that
+// score at least closeScoreRatio of the best one, the results being sorted
+// by score.
+func closeResults(results []toolsearch.Result, limit int) []toolsearch.Result {
+	if len(results) <= limit {
+		return results
+	}
+	best := 0.0
+	for _, result := range results {
+		best = max(best, result.Score)
+	}
+	kept := results[:limit]
+	for _, result := range results[limit:] {
+		if result.Score < closeScoreRatio*best {
+			break
+		}
+		kept = append(kept, result)
+	}
+	return kept
 }
 
 // searchReply is the result of search_tools for the model. Its fields
