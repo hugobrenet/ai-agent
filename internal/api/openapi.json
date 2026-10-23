@@ -759,7 +759,7 @@
               "text/event-stream": {
                 "schema": {
                   "type": "string",
-                  "description": "Server-sent events of the AG-UI protocol: each event is written as `data: <event JSON>`, followed by an empty line, without an event name. The run starts with RUN_STARTED and ends with RUN_FINISHED, whose outcome is success or an interrupt for a confirmation, or RUN_ERROR. A RUN_ERROR carries a code: `tool_call_limit` (ask a narrower question), `request_timeout`, `tool_name_conflict`, or `agent_failed`."
+                  "description": "Server-sent events of the AG-UI protocol: each event is written as `data: <event JSON>`, followed by an empty line, without an event name. The run starts with RUN_STARTED and ends with RUN_FINISHED, whose outcome is success or an interrupt for a confirmation, or RUN_ERROR. A RUN_ERROR carries a code: `request_timeout`, `tool_name_conflict`, or `agent_failed`."
                 }
               }
             }

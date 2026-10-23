@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -224,16 +223,6 @@ func TestRunStreamsGenericRuntimeError(t *testing.T) {
 		t.Fatalf("unexpected error events %s", body)
 	}
 	if strings.Contains(body, sensitiveDetail) {
-		t.Fatal("stream exposes internal agent error")
-	}
-}
-
-func TestRunStreamsToolCallLimitError(t *testing.T) {
-	body, events := runErrorOf(t, fmt.Errorf("run LLM iteration 2: read stream: %w: requested more than 8 tools at once", agent.ErrToolCallLimit))
-	if eventTypes(events) != "RUN_STARTED,RUN_ERROR" || events[1]["code"] != "tool_call_limit" || !strings.Contains(events[1]["message"].(string), "narrower question") {
-		t.Fatalf("unexpected tool call limit events %s", body)
-	}
-	if strings.Contains(body, "iteration") {
 		t.Fatal("stream exposes internal agent error")
 	}
 }

@@ -109,7 +109,7 @@ const result = await agent.runAgent({ runId: crypto.randomUUID() }, {
 | `TOOL_CALL_RESULT` | Its result, the JSON the model read, or a note of its size beyond 64 KiB |
 | `CUSTOM` `opensvc.warning` | A note for the developer: content parts or a version the agent did not read |
 | `RUN_FINISHED` | The end: `result.turnId` for the feedback, `usage` for the tokens, `outcome` success, success with calls of tools of the client pending, or an interrupt |
-| `RUN_ERROR` | The run failed: `code` and `message`, such as `tool_call_limit` (ask a narrower question), `request_timeout`, `tool_name_conflict` |
+| `RUN_ERROR` | The run failed: `code` and `message`, such as `request_timeout`, `tool_name_conflict` |
 
 A snapshot holds what the model reads: the texts, the tool calls and their
 results as the history compaction leaves them, so a reloaded interface shows

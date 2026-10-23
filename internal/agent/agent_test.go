@@ -167,47 +167,69 @@ func TestAskReturnsFunctionalToolErrorToLLM(t *testing.T) {
 	}
 }
 
-func TestAskRejectsUnsafeToolRequests(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		calls []llm.ToolCall
-		want  string
-	}{
-		{name: "too many tools", calls: []llm.ToolCall{
-			{ID: "1", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-			{ID: "2", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-			{ID: "3", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-			{ID: "4", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-			{ID: "5", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-			{ID: "6", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-			{ID: "7", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-			{ID: "8", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-			{ID: "9", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)},
-		}, want: "more than 8 tools at once"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			session := &fakeSession{tools: []*mcp.Tool{{Name: "get_cluster_health", InputSchema: objectSchema()}}}
-			model := &scriptedLLM{t: t, steps: []llmStep{func(_ llm.Request, emit llm.EmitFunc) error {
-				for _, call := range test.calls {
-					callCopy := call
-					if err := emit(llm.Event{Type: llm.EventToolCall, ToolCall: &callCopy}); err != nil {
-						return err
-					}
+// refusalsOf returns the tool results of the last tool message of a request,
+// and the calls of the assistant message before it.
+func refusalsOf(t *testing.T, request llm.Request) ([]llm.ToolCall, []llm.ToolResult) {
+	t.Helper()
+	last := len(request.Messages) - 1
+	if last < 1 || request.Messages[last].Role != llm.RoleTool || request.Messages[last-1].Role != llm.RoleAssistant {
+		t.Fatalf("request does not end with tool results: %#v", request.Messages)
+	}
+	return request.Messages[last-1].ToolCalls, request.Messages[last].ToolResults
+}
+
+func TestAskRefusesAnAnswerAskingTooManyToolsAtOnce(t *testing.T) {
+	session := &fakeSession{tools: []*mcp.Tool{{Name: "get_cluster_health", InputSchema: objectSchema()}}}
+	model := &scriptedLLM{t: t, steps: []llmStep{
+		multipleToolCallStep("get_cluster_health", 12),
+		func(request llm.Request, emit llm.EmitFunc) error {
+			calls, results := refusalsOf(t, request)
+			// The calls past the bound are not kept: the stored answer stays within it.
+			if len(calls) != maxToolCallsPerTurn || len(results) != maxToolCallsPerTurn {
+				t.Fatalf("kept %d calls and %d results, want %d", len(calls), len(results), maxToolCallsPerTurn)
+			}
+			for index, result := range results {
+				if result.CallID != calls[index].ID || !result.IsError ||
+					!strings.Contains(string(result.Content), "asked for 12 tools at once") ||
+					!strings.Contains(string(result.Content), "at most 8 per answer, so none of them ran") {
+					t.Fatalf("result %d = %#v", index, result)
 				}
-				return emit(llm.Event{Type: llm.EventCompleted, FinishReason: llm.FinishReasonToolCalls})
-			}}}
-			agent := newTestAgent(t, model, session, 3)
-			_, err := agent.RunTurn(t.Context(), nil, "health", func(Event) error { return nil })
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Ask() error = %v, want containing %q", err, test.want)
 			}
-			if len(session.calls) != 0 {
-				t.Fatalf("unsafe request called MCP: %#v", session.calls)
+			if request.NoToolCall {
+				t.Fatal("the model may still ask for fewer tools")
 			}
-			if !session.closed {
-				t.Fatal("MCP session was not closed")
-			}
-		})
+			return emitEvents(emit,
+				llm.Event{Type: llm.EventTextDelta, TextDelta: "I will ask for fewer."},
+				llm.Event{Type: llm.EventCompleted, FinishReason: llm.FinishReasonCompleted},
+			)
+		},
+	}}
+	agent := newTestAgent(t, model, session, 3)
+	started := 0
+	var refused []RefusedCalls
+	result, err := agent.RunTurn(t.Context(), nil, "health", func(event Event) error {
+		switch event.Type {
+		case EventToolStarted:
+			started++
+		case EventToolCallsRefused:
+			refused = append(refused, *event.Refused)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v, want the refusal answered to the model", err)
+	}
+	if len(session.calls) != 0 || started != 0 {
+		t.Fatalf("an answer past the bound ran tools: %#v, %d started", session.calls, started)
+	}
+	if len(refused) != 1 || refused[0] != (RefusedCalls{Bound: "answer", Asked: 12, Ran: 0}) {
+		t.Fatalf("refused events = %#v", refused)
+	}
+	if text := result.Messages[len(result.Messages)-1].Text; text != "I will ask for fewer." {
+		t.Fatalf("answer = %q", text)
+	}
+	if !session.closed {
+		t.Fatal("MCP session was not closed")
 	}
 }
 
@@ -224,20 +246,75 @@ func TestAskEnforcesMaxIterationsBeforeCallingTool(t *testing.T) {
 	}
 }
 
-func TestAskEnforcesTotalToolCallLimit(t *testing.T) {
+func TestAskRefusesTheCallsPastTheBoundOfTheQuestion(t *testing.T) {
 	session := &fakeSession{tools: []*mcp.Tool{{Name: "get_cluster_health", InputSchema: objectSchema()}}}
-	steps := make([]llmStep, 0, maxToolCallsPerAsk/maxToolCallsPerTurn+1)
-	for iteration := 0; iteration <= maxToolCallsPerAsk/maxToolCallsPerTurn; iteration++ {
-		steps = append(steps, multipleToolCallStep("get_cluster_health", maxToolCallsPerTurn))
+	model := &scriptedLLM{t: t, steps: []llmStep{
+		multipleToolCallStep("get_cluster_health", maxToolCallsPerTurn),
+		multipleToolCallStep("get_cluster_health", 4),
+		// 12 ran: 6 more pass the bound of 16, none of them runs.
+		multipleToolCallStep("get_cluster_health", 6),
+		func(request llm.Request, emit llm.EmitFunc) error {
+			_, results := refusalsOf(t, request)
+			for _, result := range results {
+				if !result.IsError || !strings.Contains(string(result.Content), "already ran 12 tools") ||
+					!strings.Contains(string(result.Content), "so 4 more at most can run and none of these 6 ran") {
+					t.Fatalf("result = %#v", result)
+				}
+			}
+			return multipleToolCallStep("get_cluster_health", 4)(request, emit)
+		},
+		// Every tool the question may run ran: the model answers.
+		func(request llm.Request, emit llm.EmitFunc) error {
+			if !request.NoToolCall {
+				t.Fatal("the request after the last call of the question still takes calls")
+			}
+			return emitEvents(emit,
+				llm.Event{Type: llm.EventTextDelta, TextDelta: "Here is what I read."},
+				llm.Event{Type: llm.EventCompleted, FinishReason: llm.FinishReasonCompleted},
+			)
+		},
+	}}
+	agent := newTestAgent(t, model, session, 8)
+	var refused []RefusedCalls
+	if _, err := agent.RunTurn(t.Context(), nil, "health", func(event Event) error {
+		if event.Type == EventToolCallsRefused {
+			refused = append(refused, *event.Refused)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
 	}
-	model := &scriptedLLM{t: t, steps: steps}
-	agent := newTestAgent(t, model, session, len(steps)+1)
-	_, err := agent.RunTurn(t.Context(), nil, "health", func(Event) error { return nil })
-	if !errors.Is(err, ErrToolCallLimit) || !strings.Contains(err.Error(), "maximum of 16") {
-		t.Fatalf("Ask() error = %v, want total tool call limit", err)
+	if len(refused) != 1 || refused[0] != (RefusedCalls{Bound: "question", Asked: 6, Ran: 12}) {
+		t.Fatalf("refused events = %#v", refused)
 	}
 	if len(session.calls) != maxToolCallsPerAsk {
-		t.Fatalf("executed %d tools, want exactly %d before rejection", len(session.calls), maxToolCallsPerAsk)
+		t.Fatalf("executed %d tools, want exactly %d", len(session.calls), maxToolCallsPerAsk)
+	}
+}
+
+func TestCallLimitRefusal(t *testing.T) {
+	for _, test := range []struct {
+		asked, ran  int
+		bound, want string
+	}{
+		{asked: 8, ran: 8},
+		{asked: 1, ran: 15},
+		{asked: 9, ran: 0, bound: "answer", want: "asked for 9 tools at once"},
+		{asked: 2, ran: 15, bound: "question", want: "so 1 more at most can run"},
+	} {
+		bound, refusal := callLimitRefusal(test.asked, test.ran)
+		if bound != test.bound {
+			t.Errorf("callLimitRefusal(%d, %d) bound = %q, want %q", test.asked, test.ran, bound, test.bound)
+		}
+		if test.want == "" {
+			if refusal != nil {
+				t.Errorf("callLimitRefusal(%d, %d) = %s, want none", test.asked, test.ran, refusal)
+			}
+			continue
+		}
+		if !strings.Contains(string(refusal), test.want) {
+			t.Errorf("callLimitRefusal(%d, %d) = %s, want containing %q", test.asked, test.ran, refusal, test.want)
+		}
 	}
 }
 

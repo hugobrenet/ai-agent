@@ -113,7 +113,7 @@ func TestOpenAPIDocumentsTheConversationErrorCodes(t *testing.T) {
 		}
 	}
 	for _, code := range []string{"unauthorized", "authentication_unavailable", "too_many_requests", "unsupported_media_type", "request_too_large",
-		"invalid_prompt", "prompt_too_large", "invalid_decision", "streaming_unavailable", "tool_call_limit"} {
+		"invalid_prompt", "prompt_too_large", "invalid_decision", "streaming_unavailable"} {
 		if !bytes.Contains(openAPIDocument, []byte("`"+code+"`")) {
 			t.Errorf("error code %s is not documented", code)
 		}

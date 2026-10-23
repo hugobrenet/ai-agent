@@ -324,6 +324,9 @@ func (e *Encoder) Encode(event agent.Event) ([]Event, error) {
 	case agent.EventToolFinished:
 		content := toolResult(event.ToolResult)
 		return []Event{e.stamp(Event{Type: ToolCallResult, MessageID: event.ToolCallID + "-result", ToolCallID: event.ToolCallID, Role: "tool", Content: &content})}, nil
+	case agent.EventToolCallsRefused:
+		// None of the calls ran: the client is shown none of them.
+		return nil, nil
 	case agent.EventUsage:
 		if event.Usage != nil {
 			e.usage.InputTokens += event.Usage.InputTokens
