@@ -22,6 +22,9 @@ const (
 	// EventClientToolsPending ends a turn that waits for the client to
 	// answer the calls of its tools, once the suspended turn is stored.
 	EventClientToolsPending EventType = "client_tools_pending"
+	// EventToolCallsRefused reports a model answer past a bound of the tool
+	// calls, none of which ran: for the audit, not for the client.
+	EventToolCallsRefused EventType = "tool_calls_refused"
 )
 
 type Event struct {
@@ -45,6 +48,18 @@ type Event struct {
 	// PendingCalls are the calls of tools of the client the turn waits on,
 	// in the order they were made.
 	PendingCalls []string
+	// Refused describes the answer of a tool_calls_refused event.
+	Refused *RefusedCalls
+}
+
+// RefusedCalls is a model answer refused for the bound it passed: "answer",
+// more than maxToolCallsPerTurn calls at once, or "question", more than
+// maxToolCallsPerAsk in all.
+type RefusedCalls struct {
+	Bound string
+	// Asked is the number of calls of the answer, Ran the number the
+	// question had run before it.
+	Asked, Ran int
 }
 
 type EmitFunc func(Event) error
@@ -83,6 +98,12 @@ func (e Event) Validate() error {
 	case EventClientToolsPending:
 		if len(e.PendingCalls) == 0 || e.TextDelta != "" || e.ToolName != "" || e.Usage != nil || e.FinishReason != "" || e.ToolError {
 			return fmt.Errorf("invalid client tools pending event")
+		}
+	case EventToolCallsRefused:
+		r := e.Refused
+		if r == nil || (r.Bound != "answer" && r.Bound != "question") || r.Asked <= 0 || r.Ran < 0 ||
+			e.TextDelta != "" || e.ToolName != "" || e.Usage != nil || e.FinishReason != "" || e.ToolError {
+			return fmt.Errorf("invalid tool calls refused event")
 		}
 	default:
 		return fmt.Errorf("unsupported agent event type %q", e.Type)

@@ -40,6 +40,8 @@ func TestEncoderOrdersATurn(t *testing.T) {
 		agent.Event{Type: agent.EventToolStarted, ToolName: "list_nodes", ToolCallID: "call-1", ToolArguments: json.RawMessage(`{"limit":5}`), Iteration: 1},
 		agent.Event{Type: agent.EventToolFinished, ToolName: "list_nodes", ToolCallID: "call-1", ToolResult: json.RawMessage(`{"nodes":[]}`), Iteration: 1},
 		agent.Event{Type: agent.EventUsage, Usage: &llm.Usage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}, Iteration: 1},
+		// Refused calls never ran: the client sees none of them.
+		agent.Event{Type: agent.EventToolCallsRefused, Refused: &agent.RefusedCalls{Bound: "answer", Asked: 9}, Iteration: 2},
 		agent.Event{Type: agent.EventTextDelta, TextDelta: "No node.", Iteration: 2},
 		agent.Event{Type: agent.EventCompleted, TurnID: "t-1", Iteration: 2},
 	)

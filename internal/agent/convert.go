@@ -12,11 +12,9 @@ import (
 	"github.com/opensvc/ai-agent/internal/llm"
 )
 
-// ErrToolCallLimit reports a turn that needs more tool calls than the agent
-// runs: more than maxToolCallsPerTurn in one model answer, or more than
-// maxToolCallsPerAsk in the whole turn.
-var ErrToolCallLimit = errors.New("tool call limit exceeded")
-
+// The bounds of the tool calls: an answer of the model asking for more than
+// maxToolCallsPerTurn, or a question running more than maxToolCallsPerAsk,
+// runs none of the calls of that answer, each answered with the bound.
 const (
 	maxToolCallsPerTurn     = 8
 	maxToolCallsPerAsk      = 16

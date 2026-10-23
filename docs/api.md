@@ -114,8 +114,12 @@ Only one turn runs at a time in a conversation.
 - **Failures.** Canceled, failed, timed-out and interrupted turns are not
   added to the model context and their partial output is not stored.
 - **Tool calls.** A turn runs at most 8 tool calls per model answer and 16 in
-  all. Beyond, it fails with `RUN_ERROR` `tool_call_limit`: ask a narrower
-  question.
+  all. A model answer asking for more runs none of its calls: each is answered
+  with a tool error naming the bound, and the model asks for fewer or answers
+  with what it has. Once 16 ran, the next model request takes no call. The
+  client is shown none of the refused calls; the audit records the answer as
+  `tool_calls_refused`, with the `bound` it passed, `answer` or `question`,
+  `calls_asked` and `calls_ran`.
 - **Last iteration.** The last model request of a turn, the
   `OPENSVC_AI_AGENT_MAX_ITERATIONS`th, declares the tools but takes no call of
   them (`tool_choice` none): the model answers with what the turn read,
@@ -194,7 +198,7 @@ in milliseconds:
 | tool result | `TOOL_CALL_RESULT` with the JSON result the model read, or a note of its size beyond 64 KiB |
 | completion | `RUN_FINISHED`, `outcome` `{"type":"success"}`, `result` `{"turnId": …}` for the feedback |
 | confirmation | the call as a tool call, then `RUN_FINISHED`, `outcome` `interrupt` |
-| failure | `RUN_ERROR` with a `code`, `tool_call_limit`, `request_timeout`, `tool_name_conflict` or `agent_failed`, and a `message` for the developer |
+| failure | `RUN_ERROR` with a `code`, `request_timeout`, `tool_name_conflict` or `agent_failed`, and a `message` for the developer |
 
 `RUN_FINISHED` and `RUN_ERROR` carry `usage`, one `TokenUsage`
 `{inputTokens, outputTokens, totalTokens}` summing the model calls of the

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +34,7 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 			{Type: agent.EventToolStarted, ToolName: "get_cluster_health", Iteration: 1},
 			{Type: agent.EventToolFinished, ToolName: "get_cluster_health", ToolError: true, Iteration: 1},
 			{Type: agent.EventUsage, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}, Iteration: 1},
+			{Type: agent.EventToolCallsRefused, Refused: &agent.RefusedCalls{Bound: "answer", Asked: 12, Ran: 1}, Iteration: 2},
 			{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, Iteration: 2},
 		} {
 			if err := emit(event); err != nil {
@@ -65,7 +65,7 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 	}
 
 	events := decodeAuditEvents(t, output.String())
-	wantEvents := []string{"conversation_run_started", "tool_started", "tool_finished", "llm_usage", "conversation_run_completed"}
+	wantEvents := []string{"conversation_run_started", "tool_started", "tool_finished", "llm_usage", "tool_calls_refused", "conversation_run_completed"}
 	if len(events) != len(wantEvents) {
 		t.Fatalf("audit events = %#v", events)
 	}
@@ -86,7 +86,10 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 	if events[3]["total_tokens"] != float64(12) {
 		t.Fatalf("usage audit = %#v", events[3])
 	}
-	completed := events[4]
+	if refused := events[4]; refused["bound"] != "answer" || refused["calls_asked"] != float64(12) || refused["calls_ran"] != float64(1) || refused["iteration"] != float64(2) {
+		t.Fatalf("refused calls audit = %#v", refused)
+	}
+	completed := events[5]
 	if completed["iterations"] != float64(2) || completed["tool_calls"] != float64(1) || completed["total_tokens"] != float64(12) {
 		t.Fatalf("completed audit = %#v", completed)
 	}
@@ -213,7 +216,6 @@ func TestStreamFailureCode(t *testing.T) {
 		{name: "canceled context", contextErr: context.Canceled, want: "request_canceled"},
 		{name: "cleanup", err: errors.New("close"), completed: true, want: "agent_cleanup_failed"},
 		{name: "agent", err: errors.New("failed"), want: "agent_failed"},
-		{name: "tool call limit", err: fmt.Errorf("run LLM iteration 2: %w", agent.ErrToolCallLimit), want: "tool_call_limit"},
 		{name: "incomplete", want: "agent_incomplete"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

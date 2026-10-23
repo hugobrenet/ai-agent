@@ -180,6 +180,13 @@ func streamRun(response http.ResponseWriter, request *http.Request, audit auditL
 			audit.event(request.Context(), "tool_finished", attributes...)
 			activeToolName = ""
 			activeToolStartedAt = time.Time{}
+		case agent.EventToolCallsRefused:
+			audit.event(request.Context(), "tool_calls_refused",
+				slog.Int("iteration", event.Iteration),
+				slog.String("bound", event.Refused.Bound),
+				slog.Int("calls_asked", event.Refused.Asked),
+				slog.Int("calls_ran", event.Refused.Ran),
+			)
 		case agent.EventUsage:
 			usage.InputTokens = saturatingAdd(usage.InputTokens, event.Usage.InputTokens)
 			usage.OutputTokens = saturatingAdd(usage.OutputTokens, event.Usage.OutputTokens)
@@ -268,9 +275,6 @@ func streamRun(response http.ResponseWriter, request *http.Request, audit auditL
 		if errors.Is(err, context.DeadlineExceeded) {
 			code = "request_timeout"
 			message = "the agent request timed out"
-		} else if errors.Is(err, agent.ErrToolCallLimit) {
-			code = "tool_call_limit"
-			message = "the question needs more tool calls than the agent runs in one answer; ask a narrower question"
 		} else if errors.Is(err, agent.ErrClientToolConflict) {
 			code = "tool_name_conflict"
 			message = "a tool of the client is named as a tool of the agent; rename it"
@@ -301,9 +305,6 @@ func streamFailureCode(err error, completed bool, writeFailed bool, contextErr e
 	if err != nil {
 		if completed {
 			return "agent_cleanup_failed"
-		}
-		if errors.Is(err, agent.ErrToolCallLimit) {
-			return "tool_call_limit"
 		}
 		return "agent_failed"
 	}

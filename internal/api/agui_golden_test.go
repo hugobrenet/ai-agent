@@ -126,14 +126,6 @@ func TestGoldenAGUIStreams(t *testing.T) {
 			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-c","role":"user"},{"id":"turn-c:2","role":"assistant"}],"tools":[],"resume":[{"interruptId":"confirmation-1","status":"resolved","payload":{"approved":false}}]}`,
 		},
 		{
-			name: "tool_call_limit",
-			service: prompt(&testTurnExecution{turnID: "turn-l", run: func(_ context.Context, emit agent.EmitFunc) error {
-				_ = emit(agent.Event{Type: agent.EventTextDelta, TextDelta: "Checking every node", Iteration: 1})
-				return agent.ErrToolCallLimit
-			}}),
-			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-l","role":"user","content":"Check everything"}],"tools":[]}`,
-		},
-		{
 			name: "agent_failed",
 			service: prompt(&testTurnExecution{turnID: "turn-f", run: func(context.Context, agent.EmitFunc) error {
 				return errors.New("the model provider failed")

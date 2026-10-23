@@ -377,7 +377,12 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				selection.shown = append(selection.shown, tool.Name)
 			}
 		}
-		request := llm.Request{Messages: messages, Tools: requestTools, NoToolCall: iteration == a.config.MaxIterations}
+		// The question that ran every tool it may asks for the answer too.
+		lastCall := iteration == a.config.MaxIterations || state.TotalToolCalls >= maxToolCallsPerAsk
+		request := llm.Request{Messages: messages, Tools: requestTools, NoToolCall: lastCall}
+		// The calls past the bound of an answer are counted, not kept: the
+		// answer is refused as a whole, with its size.
+		extraCalls := 0
 		if err := a.llm.Stream(llmContext, request, func(event llm.Event) error {
 			if err := event.Validate(); err != nil {
 				return fmt.Errorf("validate LLM event: %w", err)
@@ -388,7 +393,8 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				return emitAgentEvent(emit, Event{Type: EventTextDelta, TextDelta: event.TextDelta, Iteration: iteration})
 			case llm.EventToolCall:
 				if len(calls) >= maxToolCallsPerTurn {
-					return fmt.Errorf("%w: LLM iteration %d requested more than %d tools at once", ErrToolCallLimit, iteration, maxToolCallsPerTurn)
+					extraCalls++
+					return nil
 				}
 				call := *event.ToolCall
 				call.Arguments = append(json.RawMessage(nil), event.ToolCall.Arguments...)
@@ -426,12 +432,6 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		if finishReason != llm.FinishReasonToolCalls {
 			return result, fmt.Errorf("LLM iteration %d emitted tool calls with finish reason %q", iteration, finishReason)
 		}
-		if len(calls) > maxToolCallsPerTurn {
-			return result, fmt.Errorf("LLM iteration %d requested %d tools, maximum is %d", iteration, len(calls), maxToolCallsPerTurn)
-		}
-		if state.TotalToolCalls+len(calls) > maxToolCallsPerAsk {
-			return result, fmt.Errorf("%w: agent tool call count would exceed maximum of %d", ErrToolCallLimit, maxToolCallsPerAsk)
-		}
 		if iteration == a.config.MaxIterations {
 			return result, fmt.Errorf("agent reached maximum of %d iterations before a final answer", a.config.MaxIterations)
 		}
@@ -442,6 +442,20 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			if len(call.Arguments) > maxToolArguments {
 				return result, fmt.Errorf("tool %q arguments exceed %d bytes", call.Name, maxToolArguments)
 			}
+		}
+		// An answer past a bound runs none of its calls: each is answered
+		// with the bound, for the model to ask less or to answer.
+		if bound, refusal := callLimitRefusal(len(calls)+extraCalls, state.TotalToolCalls); refusal != nil {
+			refused := &RefusedCalls{Bound: bound, Asked: len(calls) + extraCalls, Ran: state.TotalToolCalls}
+			if err := emitAgentEvent(emit, Event{Type: EventToolCallsRefused, Refused: refused, Iteration: iteration}); err != nil {
+				return result, err
+			}
+			results := make([]llm.ToolResult, 0, len(calls))
+			for _, call := range calls {
+				results = append(results, llm.ToolResult{CallID: call.ID, Content: refusal, IsError: true})
+			}
+			state.Calls, state.Results, state.Text = calls, results, turnText.String()
+			continue
 		}
 		state.TotalToolCalls += len(calls)
 		state.Calls, state.Results, state.Text = calls, nil, turnText.String()
@@ -456,4 +470,20 @@ func emitAgentEvent(emit EmitFunc, event Event) error {
 		return fmt.Errorf("consume agent event: %w", err)
 	}
 	return nil
+}
+
+// callLimitRefusal is the bound a model answer asking for `asked` tools
+// passes, the question having run `ran`, and the answer to each of its calls:
+// "answer", more than maxToolCallsPerTurn at once, or "question", more than
+// maxToolCallsPerAsk in all. Nil within the bounds.
+func callLimitRefusal(asked, ran int) (string, json.RawMessage) {
+	switch {
+	case asked > maxToolCallsPerTurn:
+		return "answer", textToolResult(fmt.Sprintf("Not run: this answer asked for %d tools at once, and the agent runs at most %d per answer, so none of them ran. "+
+			"Ask for %d at most, or use a tool that reads many objects in one call.", asked, maxToolCallsPerTurn, maxToolCallsPerTurn))
+	case ran+asked > maxToolCallsPerAsk:
+		return "question", textToolResult(fmt.Sprintf("Not run: this question already ran %d tools, and the agent runs at most %d per question, so %d more at most can run and none of these %d ran. "+
+			"Ask for fewer, or answer with what you have.", ran, maxToolCallsPerAsk, maxToolCallsPerAsk-ran, asked))
+	}
+	return "", nil
 }
