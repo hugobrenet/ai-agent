@@ -21,3 +21,18 @@ func TestSystemPromptGroundsToolArguments(t *testing.T) {
 		}
 	}
 }
+
+// An approval answers the question asked, on the target named: on
+// 2026-10-23, a yes given after the work was done led a model to stop, then
+// purge, the object whose storage of one node it had just freed.
+func TestSystemPromptScopesApprovals(t *testing.T) {
+	for _, instruction := range []string{
+		"If your last message asked no question, a yes, go ahead, ok or any approval authorizes nothing: say the work is done and call no tool that changes state. An approval answers only the last question you asked.",
+		"An action asked on one node acts on that node: it does not become an action on the object, nor on its other nodes. A stronger action than the one asked, a stop before an unprovision, a purge instead of an unprovision, is a new question to ask, never a step you add.",
+		"Do not infer what a tool does from its name: read its description before deciding it needs a preparation step.",
+	} {
+		if !strings.Contains(SystemPrompt, instruction) {
+			t.Errorf("system prompt is missing instruction %q", instruction)
+		}
+	}
+}

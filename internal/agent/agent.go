@@ -215,7 +215,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		return turn
 	}
 	messages := make([]llm.Message, 0, len(history)+len(state.Messages)+3)
-	messages = append(messages, llm.Message{Role: llm.RoleSystem, Text: systemPrompt})
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Text: systemPrompt + "\n" + confirmationState(state, decision)})
 	messages = append(messages, history...)
 	messages = append(messages, state.Messages...)
 	llmContext := auth.WithoutAuthentication(ctx)
