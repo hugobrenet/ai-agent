@@ -35,6 +35,9 @@ type Backend struct {
 	Name          string
 	Conversations ConversationService
 	Authenticator Authenticator
+	// Tools lists the tools of the MCP of the backend, as the user; nil, the
+	// backend lists none.
+	Tools ToolLister
 }
 
 // Authenticator establishes the identity of a request to one backend, through
@@ -95,7 +98,7 @@ type backendRoute struct {
 	handler http.Handler
 }
 
-func backendRoutes(conversations ConversationService, limiter *askLimiter, audit auditLogger) []backendRoute {
+func backendRoutes(conversations ConversationService, tools ToolLister, limiter *askLimiter, audit auditLogger) []backendRoute {
 	return []backendRoute{
 		{"POST", "/conversations", serveCreateConversation(conversations, audit)},
 		{"GET", "/conversations", serveListConversations(conversations, audit)},
@@ -105,6 +108,7 @@ func backendRoutes(conversations ConversationService, limiter *askLimiter, audit
 		{"DELETE", "/conversations/{id}", serveDeleteConversation(conversations, audit)},
 		{"POST", "/conversations/{id}/runs", serveConversationRun(conversations, limiter, audit)},
 		{"GET", "/capabilities", http.HandlerFunc(serveCapabilities)},
+		{"GET", "/tools", serveTools(tools, audit)},
 		{"PUT", "/conversations/{id}/turns/{turn_id}/feedback", servePutFeedback(conversations, audit)},
 		{"DELETE", "/conversations/{id}/turns/{turn_id}/feedback", serveDeleteFeedback(conversations, audit)},
 	}
@@ -112,7 +116,7 @@ func backendRoutes(conversations ConversationService, limiter *askLimiter, audit
 
 func registerBackend(mux *http.ServeMux, backend Backend, limiter *askLimiter, audit auditLogger) {
 	prefix := "/v1/" + backend.Name
-	for _, route := range backendRoutes(backend.Conversations, limiter, audit) {
+	for _, route := range backendRoutes(backend.Conversations, backend.Tools, limiter, audit) {
 		mux.Handle(route.method+" "+prefix+route.path, requireAccessToken(backend.Authenticator, audit, route.handler))
 	}
 }

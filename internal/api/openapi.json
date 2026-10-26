@@ -31,6 +31,10 @@
     {
       "name": "service",
       "description": "Liveness and this document, without authentication."
+    },
+    {
+      "name": "tools",
+      "description": "The tools the assistant may call."
     }
   ],
   "paths": {
@@ -883,6 +887,64 @@
           }
         }
       }
+    },
+    "/v1/{backend}/tools": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Backend"
+        },
+        {
+          "$ref": "#/components/parameters/ClusterID"
+        },
+        {
+          "$ref": "#/components/parameters/Node"
+        }
+      ],
+      "get": {
+        "operationId": "listTools",
+        "tags": [
+          "tools"
+        ],
+        "summary": "The tools of the MCP of the backend the model may be offered: the catalog of the deployment, read with the token of the caller, the same for every user; the rights of the user apply when a tool is called. The tools for the client only, such as the previews, are left out.",
+        "responses": {
+          "200": {
+            "description": "The tools, in the order of the MCP.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "The backend lists no tools.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The tools of the MCP could not be read: tools_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/AuthenticationUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1598,6 +1660,53 @@
           "ended_at": {
             "type": "integer",
             "description": "Milliseconds since the epoch, on the clock of the agent, when the run ended; absent if not recorded."
+          }
+        }
+      },
+      "ToolList": {
+        "type": "object",
+        "required": [
+          "tools"
+        ],
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tool"
+            }
+          }
+        }
+      },
+      "Tool": {
+        "type": "object",
+        "required": [
+          "name",
+          "title",
+          "summary",
+          "read_only",
+          "needs_confirmation"
+        ],
+        "description": "A tool the assistant may call.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the tool."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its human title, its name when it declares none; at most 200 bytes, cut on a character with an ellipsis past them."
+          },
+          "summary": {
+            "type": "string",
+            "description": "The first sentence of its description, up to a period followed by a space or a line break; at most 512 bytes, cut on a character with an ellipsis past them; empty when it has none."
+          },
+          "read_only": {
+            "type": "boolean",
+            "description": "The tool only reads."
+          },
+          "needs_confirmation": {
+            "type": "boolean",
+            "description": "A call of the tool waits for the confirmation of the user: a tool not read-only, unless it declares itself not destructive."
           }
         }
       }

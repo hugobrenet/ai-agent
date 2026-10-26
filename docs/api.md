@@ -35,6 +35,7 @@ The routes of a backend, here `om3`; `oc3` has the same routes under
 | `DELETE /v1/om3/conversations/{id}` | Delete it |
 | `POST /v1/om3/conversations/{id}/runs` | Send a prompt, or answer a pending action, streamed in AG-UI; see [Runs](#runs) |
 | `GET /v1/om3/capabilities` | What the runs route can do, as an AG-UI `AgentCapabilities` |
+| `GET /v1/om3/tools` | The tools the assistant may call for the caller; see [Tools](#tools) |
 | `PUT /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Give or replace the feedback on a turn |
 | `DELETE /v1/om3/conversations/{id}/turns/{turn_id}/feedback` | Withdraw it |
 
@@ -387,6 +388,22 @@ undeclared, `humanInTheLoop`
 `approvals`, `interrupts` and `approveWithEdits`, and `multimodal`
 `input` text only. `HttpAgent` does not read it: a client subclassing it
 implements `getCapabilities()` with it.
+
+### Tools
+
+`GET /v1/{backend}/tools` lists the tools of the MCP the model may be
+offered, for a client to show what the assistant can do. The agent opens a
+session with the token of the caller, as for a run, but the list is the
+catalog of the deployment: the MCP serves it whole to every user, without
+the actions when they are disabled for the deployment, and the rights of the
+user apply when a tool is called, not to the list. The tools for the client
+only, such as the previews, are left out. Each tool gives its `name`, its
+`title`, at most 200 bytes, its `summary`, the first sentence of its
+description, at most 512 bytes, past which both are cut on a character and
+end with an ellipsis, `read_only`, and
+`needs_confirmation`, whether a call of it waits for the confirmation of the
+user. The answer is not cached (`Cache-Control: no-store`); an MCP that does
+not answer gives 502 `tools_unavailable`.
 
 `go test -tags agui_conformance ./internal/api/` runs the official client,
 `@ag-ui/client` at the version `internal/api/testdata/agui` pins, 1.0.3,
