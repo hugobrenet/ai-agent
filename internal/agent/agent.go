@@ -174,17 +174,24 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	if result.MCP.ToolsSHA256, err = toolCatalogHash(mcpTools); err != nil {
 		return result, err
 	}
-	tools, _, err := convertTools(mcpTools)
+	// The tools for the client only, such as the previews, are never
+	// offered to the model; the confirmation of a call calls them.
+	allTools := make(map[string]*mcp.Tool, len(mcpTools))
+	for _, tool := range mcpTools {
+		allTools[tool.Name] = tool
+	}
+	offeredTools := modelTools(mcpTools)
+	tools, _, err := convertTools(offeredTools)
 	if err != nil {
 		return result, err
 	}
-	toolsByName := make(map[string]*mcp.Tool, len(mcpTools))
-	titles := make(map[string]string, len(mcpTools))
-	for _, tool := range mcpTools {
+	toolsByName := make(map[string]*mcp.Tool, len(offeredTools))
+	titles := make(map[string]string, len(offeredTools))
+	for _, tool := range offeredTools {
 		toolsByName[tool.Name] = tool
 		titles[tool.Name] = toolTitle(tool)
 	}
-	selection, err := a.selectTools(mcpTools, tools, result.MCP.ToolsSHA256, history, state)
+	selection, err := a.selectTools(offeredTools, tools, result.MCP.ToolsSHA256, history, state)
 	if err != nil {
 		return result, err
 	}
@@ -296,6 +303,8 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 			}
 			if callDecision != DecisionApprove && requiresConfirmation(tool) {
 				state.ToolTitle, state.ArgumentTypes, state.InputSchema = toolTitle(tool), argumentTypes(tool), editableSchema(tool)
+				state.Preview, state.PreviewError = preview(ctx, session, allTools, tool, call.Arguments)
+				state.PreviewArguments = nil
 				return true, nil
 			}
 			// The user approved the call with arguments of their own, in place
@@ -333,6 +342,22 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		return false, nil
 	}
 
+	// A preview asked again runs nothing: the pending call is told with the
+	// arguments the user edited, and the turn waits again.
+	if decision == DecisionPreview {
+		call, err := state.PendingCall()
+		if err != nil {
+			return result, err
+		}
+		tool, ok := toolsByName[call.Name]
+		if !ok || len(state.EditedArguments) == 0 {
+			return result, fmt.Errorf("the pending call %q has no preview to compute again", call.Name)
+		}
+		state.Preview, state.PreviewError = preview(ctx, session, allTools, tool, state.EditedArguments)
+		state.PreviewArguments, state.EditedArguments = state.EditedArguments, nil
+		snapshot := *state
+		return finish(TurnResult{Suspended: &snapshot}), nil
+	}
 	for {
 		if len(state.Calls) > 0 {
 			suspended, err := executeCalls()

@@ -179,9 +179,11 @@ authentication headers of the backend:
   `{"approved": true}` approves the call, `{"approved": false}` rejects it,
   and `cancelled` rejects it. With an approval, `editedArgs` are the
   arguments the user edited, a full replacement of those of the call; see
-  [Edited arguments](#edited-arguments). Any other member of the payload,
-  or `editedArgs` with a rejection, returns 400 `invalid_decision`. The
-  messages of a resume are not read.
+  [Edited arguments](#edited-arguments). `{"action": "preview",
+  "editedArgs": {…}}` decides nothing: it asks the preview of the call again
+  with the edited arguments; see [Previews](#previews). Any other member of
+  the payload, or `editedArgs` with a rejection, returns 400
+  `invalid_decision`. The messages of a resume are not read.
 
 Errors before the stream are JSON errors, `{"error": {"code", "message"}}`,
 the codes the OpenAPI description lists. The stream is `text/event-stream`,
@@ -213,7 +215,8 @@ The interrupt of a confirmation is
 schema of the tool, when the user may edit the call; `expiresAt` is the
 expiry of the confirmation, and `metadata` gives `turnId`, `tool` (`name`,
 `title`, `destructive`), `editable` and `argumentTypes`, the media types of
-the text arguments, as the conversation read gives them in its
+the text arguments, and `preview`, `previewError` and `previewArguments`, see
+[Previews](#previews), as the conversation read gives them in its
 `pending_confirmation` after a reload. A resumed run gives the result of the
 confirmed call against its `toolCallId`, without its start again; a
 rejected one, a result telling the call did not run.
@@ -246,6 +249,31 @@ the signal AG-UI gives a client that it may show an edit form, and
   which sent the edit, shows the arguments the call ran with.
 - **Audit.** `confirmation_decided` records `arguments_edited`, the hash
   and the size of the edited arguments, never their content.
+
+### Previews
+
+A tool the user confirms may name, in its `_meta`, the tool of the MCP that
+tells what its call would do: `opensvc/preview_tool`, called with the
+arguments of the call, or with `{"tool": <name>, "arguments": {…}}` when
+`opensvc/preview_wraps_arguments` is `true`. Before it asks for the
+confirmation, the agent calls it as the user, within 5 seconds, and gives
+the structured content of its result in the `metadata` of the interrupt as
+`preview`, at most 256 KiB: a summary, the keys changed with their current
+and computed values, the sections deleted, a content written, as the MCP
+documents them. A preview that fails blocks nothing: `previewError` gives
+why, at most 1 KiB, and the client shows the arguments. A tool naming no
+preview has neither.
+
+- **A preview asked again.** After an edit, the resume payload
+  `{"action": "preview", "editedArgs": {…}}`, the full arguments checked as
+  for an approval, runs nothing: the run ends on a new interrupt of the
+  same call, a new `id`, without its tool call again, whose `preview` is of
+  the edited arguments, which `previewArguments` gives back. The call the
+  confirmation binds to stays the one the model proposed; approve with the
+  edit as before. `confirmation_decided` records the decision `preview`.
+- **Hidden tools.** A tool whose `_meta` holds `opensvc/hidden: true`, and a
+  tool another names as its preview, are never offered to the model nor
+  returned by `search_tools`.
 
 ### Messages snapshot
 

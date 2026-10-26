@@ -196,6 +196,79 @@ func TestGoldenAGUIStreams(t *testing.T) {
 			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[],"tools":[],"resume":[{"interruptId":"confirmation-1","status":"resolved","payload":{"approved":true,"editedArgs":{"path":"web"}}}]}`,
 		},
 		{
+			// The sentence of an action, which the client says in its own
+			// language from its key and params.
+			name: "confirmation_preview_action",
+			service: prompt(&testTurnExecution{turnID: "turn-p", run: emitEvents(
+				agent.Event{Type: agent.EventConfirmationRequired, Iteration: 1, Confirmation: &agent.Confirmation{
+					ID: "confirmation-p", TurnID: "turn-p", ToolName: "stop_instance", ToolTitle: "Stop instance", Destructive: true,
+					ToolCallID: "call-p", Arguments: json.RawMessage(`{"path":"test/svc/web","node":"dev5n1","rids":["fs#1"]}`), ExpiresAt: confirmationExpiry,
+					Preview: json.RawMessage(`{"provenance":{"source":"opensvc_daemon","observed_at":"2026-10-26T09:00:00Z"},"summary":{"text":"Stop test/svc/web on dev5n1 (fs#1)","key":"stop_instance","params":{"node":"dev5n1","path":"test/svc/web","rids":"fs#1"}}}`),
+				}},
+			)}),
+			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-p","role":"user","content":"Stop fs#1 of web on dev5n1"}],"tools":[]}`,
+		},
+		{
+			// The keys a configuration update changes, read now, and the
+			// sections it deletes.
+			name: "confirmation_preview_config",
+			service: prompt(&testTurnExecution{turnID: "turn-u", run: emitEvents(
+				agent.Event{Type: agent.EventConfirmationRequired, Iteration: 1, Confirmation: &agent.Confirmation{
+					ID: "confirmation-u", TurnID: "turn-u", ToolName: "update_object_config", ToolTitle: "Update object configuration", Destructive: true,
+					ToolCallID: "call-u", Arguments: json.RawMessage(`{"path":"test/svc/web","set":["env.list+=b","cluster.secret=x"],"unset":["env.absent"],"delete":["fs#2"]}`), ExpiresAt: confirmationExpiry,
+					InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"set":{"type":"array","items":{"type":"string"}},"unset":{"type":"array","items":{"type":"string"}},"delete":{"type":"array","items":{"type":"string"}}},"required":["path"]}`),
+					Preview: json.RawMessage(`{"provenance":{"source":"opensvc_daemon","observed_at":"2026-10-26T09:00:00Z"},"summary":{"text":"Update the configuration of test/svc/web: 2 set, 1 unset, 1 sections deleted","key":"config_update","params":{"deletes":"1","path":"test/svc/web","sets":"2","unsets":"1"}},` +
+						`"changes":[{"key":"env.absent","op":"unset","before":"","after":"","after_computed_by_mcp":true,"note":"not set","note_keys":["not_set"]},{"key":"env.list","op":"+=","value":"b","before":"a","after":"a b","after_computed_by_mcp":true},{"key":"cluster.secret","op":"=","after_computed_by_mcp":false,"note":"secret: values not shown","note_keys":["secret"]}],` +
+						`"deleted":[{"section":"fs#2","keys":["fs#2.dev","fs#2.type"]}],"read_at":"2026-10-26T09:00:00Z","secrets_omitted":1}`),
+				}},
+			)}),
+			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-u","role":"user","content":"Add b to env.list of web"}],"tools":[]}`,
+		},
+		{
+			// The configuration file an object is created from, as given.
+			name: "confirmation_preview_create",
+			service: prompt(&testTurnExecution{turnID: "turn-n", run: emitEvents(
+				agent.Event{Type: agent.EventConfirmationRequired, Iteration: 1, Confirmation: &agent.Confirmation{
+					ID: "confirmation-n", TurnID: "turn-n", ToolName: "create_object", ToolTitle: "Create object", Destructive: true,
+					ToolCallID: "call-n", Arguments: json.RawMessage(`{"path":"test/svc/new","config":"[DEFAULT]\nnodes = dev5n1\n\n[fs#1]\ntype = flag\n","set":["env.a=1"]}`), ExpiresAt: confirmationExpiry,
+					Preview: json.RawMessage(`{"provenance":{"source":"opensvc_daemon","observed_at":"2026-10-26T09:00:00Z"},"summary":{"text":"Create test/svc/new, a svc of 2 sections","key":"object_create","params":{"kind":"svc","path":"test/svc/new","sections":"2"}},` +
+						`"changes":[{"key":"env.a","op":"=","value":"1","after_computed_by_mcp":false,"note":"applied after the configuration file","note_keys":["applied_after_file"]}],"content":{"media_type":"text/x-ini","text":"[DEFAULT]\nnodes = dev5n1\n\n[fs#1]\ntype = flag\n"}}`),
+				}},
+			)}),
+			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-n","role":"user","content":"Create new with a flag"}],"tools":[]}`,
+		},
+		{
+			// A preview that failed blocks nothing: the client shows the
+			// arguments, and why.
+			name: "confirmation_preview_error",
+			service: prompt(&testTurnExecution{turnID: "turn-e", run: emitEvents(
+				agent.Event{Type: agent.EventConfirmationRequired, Iteration: 1, Confirmation: &agent.Confirmation{
+					ID: "confirmation-e", TurnID: "turn-e", ToolName: "update_object_config", ToolTitle: "Update object configuration", Destructive: true,
+					ToolCallID: "call-e", Arguments: json.RawMessage(`{"path":"test/svc/web","set":["env.a=1"]}`), ExpiresAt: confirmationExpiry,
+					PreviewError: "the preview was refused: get object config: OpenSVC daemon returned HTTP 404",
+				}},
+			)}),
+			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-e","role":"user","content":"Set env.a of web"}],"tools":[]}`,
+		},
+		{
+			// The user edited the arguments and asks what the call would do
+			// with them: nothing runs, the call waits again under a new
+			// interrupt, with the preview of the arguments edited.
+			name: "resume_preview",
+			service: conversationServiceFuncs{pending: pending, confirmEdited: func(_ context.Context, _ auth.Identity, _, _, _ string, decision agent.Decision, edited json.RawMessage) (conversation.TurnExecution, error) {
+				if decision != agent.DecisionPreview || string(edited) != `{"path":"api","yaml":"app#1:\n  start: /bin/true\n"}` {
+					return nil, errors.New("unexpected preview")
+				}
+				again := *confirmation
+				again.ID, again.PreviewArguments = "confirmation-2", edited
+				again.Preview = json.RawMessage(`{"provenance":{"source":"opensvc_daemon","observed_at":"2026-10-26T09:00:00Z"},"summary":{"text":"Update api","key":"config_update","params":{"path":"api"}}}`)
+				return &testTurnExecution{turnID: "turn-c", run: emitEvents(
+					agent.Event{Type: agent.EventConfirmationRequired, Iteration: 1, Confirmation: &again},
+				)}, nil
+			}},
+			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[{"id":"u-c","role":"user"},{"id":"turn-c:2","role":"assistant"}],"tools":[],"resume":[{"interruptId":"confirmation-1","status":"resolved","payload":{"action":"preview","editedArgs":{"path":"api","yaml":"app#1:\n  start: /bin/true\n"}}}]}`,
+		},
+		{
 			name:    "confirmation_not_pending",
 			service: resume(&testTurnExecution{run: emitEvents()}),
 			request: `{"threadId":"conversation-id","runId":"run-1","protocolVersion":"1.0","messages":[],"tools":[],"resume":[{"interruptId":"confirmation-0","status":"resolved","payload":{"approved":true}}]}`,

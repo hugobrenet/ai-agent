@@ -158,6 +158,32 @@ func (input RunAgentInput) Prompt() (string, []string, error) {
 // a resolved entry, and the arguments the user edited, a full replacement of
 // those of the call, with an approval only; a cancelled entry rejects the
 // call. Any other member of the payload is refused.
+// PreviewRequest reads a resolved resume that asks the preview of the call
+// again with edited arguments, {"action": "preview", "editedArgs": {…}}:
+// the arguments, and whether the resume is one.
+func (entry ResumeEntry) PreviewRequest() (editedArgs json.RawMessage, ok bool, err error) {
+	if entry.Status != ResumeResolved {
+		return nil, false, nil
+	}
+	var probe struct {
+		Action *string `json:"action"`
+	}
+	if json.Unmarshal(entry.Payload, &probe) != nil || probe.Action == nil {
+		return nil, false, nil
+	}
+	var payload struct {
+		Action     string          `json:"action"`
+		EditedArgs json.RawMessage `json:"editedArgs"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(entry.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil || payload.Action != "preview" ||
+		!bytes.HasPrefix(bytes.TrimSpace(payload.EditedArgs), []byte("{")) {
+		return nil, true, errors.New(`a preview asked again takes the payload {"action": "preview", "editedArgs": {…}}, the full arguments of the call`)
+	}
+	return payload.EditedArgs, true, nil
+}
+
 func (entry ResumeEntry) Approval() (approved bool, editedArgs json.RawMessage, err error) {
 	switch entry.Status {
 	case ResumeCancelled:

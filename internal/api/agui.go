@@ -121,7 +121,13 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 		switch {
 		case len(input.Resume) > 0:
 			entry := input.Resume[0]
-			approved, edited, err := entry.Approval()
+			// A preview asked again answers nothing: the call waits again,
+			// told with the edited arguments.
+			edited, previewing, err := entry.PreviewRequest()
+			approved := false
+			if err == nil && !previewing {
+				approved, edited, err = entry.Approval()
+			}
 			if err != nil {
 				reject(http.StatusBadRequest, &APIError{Code: "invalid_decision", Message: err.Error()})
 				return
@@ -148,7 +154,10 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 				return
 			}
 			decision := agent.DecisionReject
-			if approved {
+			switch {
+			case previewing:
+				decision = agent.DecisionPreview
+			case approved:
 				decision = agent.DecisionApprove
 			}
 			attributes = append(attributes, slog.String("turn_id", boundedAuditID(pending.TurnID)), slog.String("decision", string(decision)))
@@ -169,7 +178,7 @@ func serveConversationRun(service ConversationService, limiter *askLimiter, audi
 				return
 			}
 			audit.event(request.Context(), "confirmation_decided", attributes...)
-			if approved {
+			if approved || previewing {
 				codec.encoder.Resume(call)
 			} else {
 				codec.opening = append(codec.opening, codec.encoder.Rejected(call)...)
