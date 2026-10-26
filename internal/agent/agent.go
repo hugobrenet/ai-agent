@@ -405,12 +405,19 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		// The question that ran every tool it may asks for the answer too.
 		lastCall := iteration == a.config.MaxIterations || state.TotalToolCalls >= maxToolCallsPerAsk
 		request := llm.Request{Messages: messages, Tools: requestTools, NoToolCall: lastCall}
+		// The model call is timed on the clock of the agent: until its first
+		// event, the wait of the provider, and until its usage, the whole call.
+		modelStart := time.Now()
+		var firstEvent time.Duration
 		// The calls past the bound of an answer are counted, not kept: the
 		// answer is refused as a whole, with its size.
 		extraCalls := 0
 		if err := a.llm.Stream(llmContext, request, func(event llm.Event) error {
 			if err := event.Validate(); err != nil {
 				return fmt.Errorf("validate LLM event: %w", err)
+			}
+			if firstEvent == 0 {
+				firstEvent = max(time.Since(modelStart), time.Nanosecond)
 			}
 			switch event.Type {
 			case llm.EventTextDelta:
@@ -426,7 +433,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 				calls = append(calls, call)
 			case llm.EventUsage:
 				usage := *event.Usage
-				return emitAgentEvent(emit, Event{Type: EventUsage, Usage: &usage, Iteration: iteration})
+				return emitAgentEvent(emit, Event{Type: EventUsage, Usage: &usage, Iteration: iteration, ModelDuration: time.Since(modelStart), ModelFirstEvent: firstEvent})
 			case llm.EventCompleted:
 				if completion {
 					return fmt.Errorf("LLM emitted multiple completion events")

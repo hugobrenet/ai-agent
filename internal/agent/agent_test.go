@@ -547,3 +547,31 @@ func TestTheLastIterationAsksForAnAnswer(t *testing.T) {
 		t.Fatalf("result = %+v, %v, last request no tool call %v with %d tools", result, err, last.NoToolCall, len(last.Tools))
 	}
 }
+
+func TestAskTimesEachModelCall(t *testing.T) {
+	session := &fakeSession{tools: []*mcp.Tool{{Name: "get_cluster_health", InputSchema: objectSchema()}}}
+	model := &scriptedLLM{t: t, steps: []llmStep{func(_ llm.Request, emit llm.EmitFunc) error {
+		// The provider waits before its first event, then streams.
+		time.Sleep(30 * time.Millisecond)
+		if err := emit(llm.Event{Type: llm.EventTextDelta, TextDelta: "Healthy."}); err != nil {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+		return emitEvents(emit,
+			llm.Event{Type: llm.EventUsage, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
+			llm.Event{Type: llm.EventCompleted, FinishReason: llm.FinishReasonCompleted},
+		)
+	}}}
+	var usage Event
+	if _, err := newTestAgent(t, model, session, 3).RunTurn(t.Context(), nil, "health", func(event Event) error {
+		if event.Type == EventUsage {
+			usage = event
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if usage.ModelFirstEvent < 30*time.Millisecond || usage.ModelDuration < 50*time.Millisecond || usage.ModelDuration < usage.ModelFirstEvent {
+		t.Fatalf("first event %v, duration %v", usage.ModelFirstEvent, usage.ModelDuration)
+	}
+}
