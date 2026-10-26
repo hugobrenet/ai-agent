@@ -284,3 +284,35 @@ func TestTheSystemMessageTellsTheConfirmationState(t *testing.T) {
 		t.Fatalf("edited = %q", got)
 	}
 }
+
+func TestArgumentsHashBindsTheValuesWhateverTheirForm(t *testing.T) {
+	shown := json.RawMessage(`{"path": "web", "set": ["env.x={{node}} <b>gras</b> & co"], "wait_seconds": 10}`)
+	// The suspended turn goes through json.Marshal, as the store keeps it.
+	stored, err := json.Marshal(struct {
+		Arguments json.RawMessage `json:"arguments"`
+	}{shown})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back struct {
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(stored, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(back.Arguments), `\u003cb\u003e`) {
+		t.Fatalf("the store no longer escapes the arguments: %s", back.Arguments)
+	}
+	if ArgumentsHash(back.Arguments) != ArgumentsHash(shown) {
+		t.Fatal("the hash of the arguments changed on their way through the store")
+	}
+	for _, other := range []string{
+		`{"path":"web","set":["env.x={{node}} <b>gras</b> & co"],"wait_seconds":11}`,
+		`{"path":"web","set":["env.x={{node}} <b>gras</b> &co"],"wait_seconds":10}`,
+		`{"path":"web","set":["env.x={{node}} <b>gras</b> & co"],"wait_seconds":10.0}`,
+	} {
+		if ArgumentsHash(json.RawMessage(other)) == ArgumentsHash(shown) {
+			t.Errorf("%s has the hash of the arguments shown", other)
+		}
+	}
+}
