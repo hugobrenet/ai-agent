@@ -45,6 +45,12 @@ Every audit line of the agent carries it as `request_id`, and the agent
 forwards it to the MCP of the backend, whose audit lines carry it too: one ID
 follows a request from the agent to its tool calls.
 
+Each model call of a run has its audit line `llm_usage`: its `iteration`, its
+tokens, and its timing on the clock of the agent, `duration_ms` from the
+request to the usage the provider reports, and `first_event_ms` to the first
+event of its stream, the wait of the provider before it answers. A slow run
+tells there whether the provider or the tools took the time.
+
 `GET /openapi.json` returns the OpenAPI 3.1 description of these routes, their
 bodies, errors and stream events, without authentication. The source is
 `internal/api/openapi.json`, embedded in the binary; a test keeps its routes

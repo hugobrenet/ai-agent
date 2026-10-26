@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/opensvc/ai-agent/internal/llm"
 )
@@ -50,6 +51,11 @@ type Event struct {
 	PendingCalls []string
 	// Refused describes the answer of a tool_calls_refused event.
 	Refused *RefusedCalls
+	// ModelDuration and ModelFirstEvent time the model call of a usage
+	// event, on the clock of the agent: from the request to the usage, and
+	// to the first event of its stream.
+	ModelDuration   time.Duration
+	ModelFirstEvent time.Duration
 }
 
 // RefusedCalls is a model answer refused for the bound it passed: "answer",

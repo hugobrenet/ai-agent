@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opensvc/ai-agent/internal/agent"
 	"github.com/opensvc/ai-agent/internal/auth"
@@ -33,7 +34,7 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 			{Type: agent.EventTextDelta, TextDelta: textMarker, Iteration: 1},
 			{Type: agent.EventToolStarted, ToolName: "get_cluster_health", Iteration: 1},
 			{Type: agent.EventToolFinished, ToolName: "get_cluster_health", ToolError: true, Iteration: 1},
-			{Type: agent.EventUsage, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}, Iteration: 1},
+			{Type: agent.EventUsage, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}, Iteration: 1, ModelDuration: 1500 * time.Millisecond, ModelFirstEvent: 900 * time.Millisecond},
 			{Type: agent.EventToolCallsRefused, Refused: &agent.RefusedCalls{Bound: "answer", Asked: 12, Ran: 1}, Iteration: 2},
 			{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, Iteration: 2},
 		} {
@@ -83,7 +84,7 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 	if events[2]["tool_name"] != "get_cluster_health" || events[2]["tool_error"] != true {
 		t.Fatalf("tool audit = %#v", events[2])
 	}
-	if events[3]["total_tokens"] != float64(12) {
+	if events[3]["total_tokens"] != float64(12) || events[3]["duration_ms"] != float64(1500) || events[3]["first_event_ms"] != float64(900) {
 		t.Fatalf("usage audit = %#v", events[3])
 	}
 	if refused := events[4]; refused["bound"] != "answer" || refused["calls_asked"] != float64(12) || refused["calls_ran"] != float64(1) || refused["iteration"] != float64(2) {
