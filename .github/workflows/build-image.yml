@@ -1,0 +1,91 @@
+name: build image
+
+# The image of the OpenSVC AI agent, after the workflow of oc3: built on every push and
+# pull request to main, pushed to the registry and signed only when a release
+# is published, tagged with its version.
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ "main" ]
+  release:
+    types: [ published ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: opensvc/ai-agent
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # The identity challenge of sigstore/fulcio, to sign the image.
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install cosign
+        if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 #v4.1.2
+        with:
+          cosign-release: 'v3.1.3'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set build time
+        run: echo "BUILDTIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+
+      # The version of the binary: the tag of a release, else the commit.
+      - name: Set build VERSION
+        run: echo "VERSION=$(git describe --tags --always)" >> $GITHUB_ENV
+
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          push: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          no-cache: true
+          build-args: |
+            BUILDTIME=${{ env.BUILDTIME }}
+            VERSION=${{ env.VERSION }}
+
+      # Keyless signature of the pushed digest, logged in the public Rekor
+      # transparency log.
+      - name: Sign the published Docker image
+        if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}

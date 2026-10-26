@@ -1,0 +1,19 @@
+# What the image build needs only: the module and its Go sources, with the
+# files they embed. The git directory is out: the version comes in as a build
+# argument.
+.git
+.github
+.dockerignore
+Dockerfile
+bin
+docs
+notes
+deploy
+# At the root only: the Markdown files the binaries embed stay.
+*.md
+**/testdata
+**/*_test.go
+.env
+.env.*
+**/*.key
+**/*.pem
