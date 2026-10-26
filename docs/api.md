@@ -138,6 +138,23 @@ Only one turn runs at a time in a conversation.
   nothing else is written, the stream sends an SSE comment, `: keepalive`,
   every 10 s, which clients ignore and which keeps idle proxies from closing
   it.
+- **History.** `GET …/messages` gives the messages of the completed turns,
+  the most recent last, by pages of at most 1 MiB. The last assistant message
+  of a turn carries its `steps`, the calls of its tools in their order: `id`,
+  `tool`, `arguments` (`null` with `arguments_omitted` past 16 KiB, or past
+  192 KiB for the turn), `status` (`completed`, `failed` for an error of the
+  tool, `rejected` by the user, `interrupted` without result),
+  `result_excerpt`, the first 4 KiB of the result, cut on a character, with
+  `result_truncated`, `refusal`, the text of an error of the tool, at most
+  16 KiB, `edited_arguments` when the user edited the call they approved, and
+  `started_at` and `ended_at`; `steps_omitted` past 64 steps, or all of them
+  when the message holds in no page with its steps. It carries the
+  `runs` of the turn too, `started_at` and `ended_at`, the waits for a
+  decision left out, and its `usage`, `total_tokens`. Times are milliseconds
+  of the clock of the agent, the timestamps the stream carried; a turn
+  stored before they were has none, its steps in their order. A turn waiting
+  on a confirmation is not in the history: its steps come back with the
+  snapshot of the run that resumes it.
 - **Busy.** A prompt while a turn runs, or while an action waits for a
   decision, returns 409 `conversation_busy`.
 - **Expiry.** A conversation expires after its configured lifetime, counted

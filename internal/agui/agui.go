@@ -163,6 +163,9 @@ type Encoder struct {
 	// terminal event; seen tells whether any call reported some.
 	usage Usage
 	seen  bool
+	// at is the time of the agent event being encoded, zero for an event
+	// the agent did not stamp: the AG-UI events it gives carry it.
+	at time.Time
 }
 
 func (e *Encoder) runUsage() []Usage {
@@ -182,8 +185,14 @@ func NewEncoder(threadID, runID string) *Encoder {
 // start, arguments and end are not emitted again, only its result.
 func (e *Encoder) Resume(toolCallID string) { e.resumed = toolCallID }
 
+// stamp gives an event the time of the agent event it comes from, the one
+// the audit and the history carry, else the time of the encoder.
 func (e *Encoder) stamp(event Event) Event {
-	event.Timestamp = e.now().UnixMilli()
+	at := e.at
+	if at.IsZero() {
+		at = e.now()
+	}
+	event.Timestamp = at.UnixMilli()
 	return event
 }
 
@@ -305,6 +314,8 @@ func (e *Encoder) Encode(event agent.Event) ([]Event, error) {
 	if e.ended {
 		return nil, fmt.Errorf("AG-UI run already finished")
 	}
+	e.at = event.At
+	defer func() { e.at = time.Time{} }()
 	switch event.Type {
 	case agent.EventTextDelta:
 		var events []Event

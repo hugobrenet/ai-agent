@@ -10,8 +10,9 @@ import (
 	"github.com/opensvc/ai-agent/internal/conversation"
 )
 
-// ListMessages reads only display text. Raw tool payloads are deliberately not
-// selected, and the model's bounded-history window is not applied to display.
+// ListMessages reads the display messages of the completed turns, the last
+// assistant message of a turn carrying its steps. The model's bounded-history
+// window is not applied to display.
 func (s *Store) ListMessages(ctx context.Context, owner conversation.Owner, id string, query conversation.MessageQuery) (conversation.MessagePage, error) {
 	if err := validateOwnerAndID(owner, id); err != nil {
 		return conversation.MessagePage{}, err
@@ -27,6 +28,13 @@ func (s *Store) ListMessages(ctx context.Context, owner conversation.Owner, id s
 	defer func() { _ = tx.Rollback() }()
 	if err := requireConversation(ctx, tx, owner, id); err != nil {
 		return conversation.MessagePage{}, err
+	}
+	// The messages of the page first, the most recent first; the steps of
+	// their turns once the rows are closed.
+	type candidate struct {
+		item                          conversation.DisplayMessage
+		turnSequence, messageSequence int64
+		textValid                     bool
 	}
 	rows, err := tx.QueryContext(ctx, `
 SELECT t.sequence, t.id, t.prompt_id, m.sequence, m.role,
@@ -44,16 +52,8 @@ LIMIT ?`, conversation.MaxMessagePageBytes, id, beforeTurn, beforeTurn, beforeMe
 		return conversation.MessagePage{}, fmt.Errorf("query display messages: %w", err)
 	}
 	defer rows.Close()
-	page := conversation.MessagePage{Messages: make([]conversation.DisplayMessage, 0, limit)}
-	// Reserve envelope/cursor space; JSON escaping is measured, not estimated.
-	remaining := conversation.MaxMessagePageBytes - 256
-	var oldest string
-	more := false
+	var candidates []candidate
 	for rows.Next() {
-		if len(page.Messages) == limit {
-			more = true
-			break
-		}
 		var turnSequence, messageSequence, startedAt int64
 		var completedAt sql.NullInt64
 		var text, rating, expected sql.NullString
@@ -82,11 +82,56 @@ LIMIT ?`, conversation.MaxMessagePageBytes, id, beforeTurn, beforeTurn, beforeMe
 		if item.Role == "assistant" {
 			item.CreatedAt = fromUnixNano(completedAt.Int64)
 		}
+		candidates = append(candidates, candidate{item: item, turnSequence: turnSequence, messageSequence: messageSequence, textValid: text.Valid})
+	}
+	if err := rows.Err(); err != nil {
+		return conversation.MessagePage{}, fmt.Errorf("iterate display messages: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return conversation.MessagePage{}, fmt.Errorf("close display messages: %w", err)
+	}
+	page := conversation.MessagePage{Messages: make([]conversation.DisplayMessage, 0, limit)}
+	// Reserve envelope/cursor space; JSON escaping is measured, not estimated.
+	remaining := conversation.MaxMessagePageBytes - 256
+	var oldest string
+	more := false
+	stepped := map[string]bool{}
+	for _, candidate := range candidates {
+		if len(page.Messages) == limit {
+			more = true
+			break
+		}
+		item := candidate.item
+		// The most recent first: the first assistant message of a turn met
+		// is its last one, which carries its steps; unless the turn is the
+		// one the cursor cuts, its later messages on the page before.
+		cut := query.Before != "" && candidate.turnSequence == beforeTurn
+		if item.Role == "assistant" && !stepped[item.TurnID] && !cut {
+			stepped[item.TurnID] = true
+			turn, err := getTurn(ctx, tx, id, item.TurnID)
+			if err != nil {
+				return conversation.MessagePage{}, err
+			}
+			messages, err := turnMessages(ctx, tx, item.TurnID)
+			if err != nil {
+				return conversation.MessagePage{}, err
+			}
+			item.Steps, item.StepsOmitted, item.Runs, item.Usage = conversation.DisplayTurn(messages, turn.Timing)
+		}
 		encoded, err := json.Marshal(item)
 		if err != nil {
 			return conversation.MessagePage{}, fmt.Errorf("encode display message: %w", err)
 		}
-		if !text.Valid || len(encoded)+1 > remaining {
+		// A message that holds in no page with its steps is served without
+		// them, counted as omitted, rather than leaving the history unread.
+		if len(page.Messages) == 0 && candidate.textValid && len(encoded)+1 > remaining && len(item.Steps) > 0 {
+			item.StepsOmitted += len(item.Steps)
+			item.Steps = nil
+			if encoded, err = json.Marshal(item); err != nil {
+				return conversation.MessagePage{}, fmt.Errorf("encode display message: %w", err)
+			}
+		}
+		if !candidate.textValid || len(encoded)+1 > remaining {
 			if len(page.Messages) == 0 {
 				return conversation.MessagePage{}, conversation.ErrMessageTooLarge
 			}
@@ -95,13 +140,7 @@ LIMIT ?`, conversation.MaxMessagePageBytes, id, beforeTurn, beforeTurn, beforeMe
 		}
 		page.Messages = append(page.Messages, item)
 		remaining -= len(encoded) + 1
-		oldest = fmt.Sprintf("%d:%d", turnSequence, messageSequence)
-	}
-	if err := rows.Err(); err != nil {
-		return conversation.MessagePage{}, fmt.Errorf("iterate display messages: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return conversation.MessagePage{}, fmt.Errorf("close display messages: %w", err)
+		oldest = fmt.Sprintf("%d:%d", candidate.turnSequence, candidate.messageSequence)
 	}
 	if err := tx.Commit(); err != nil {
 		return conversation.MessagePage{}, fmt.Errorf("commit list messages transaction: %w", err)

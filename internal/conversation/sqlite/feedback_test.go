@@ -216,7 +216,7 @@ func TestServiceFeedbackSnapshotsTheTurn(t *testing.T) {
 	second := first
 	second.ShownTools = append([]string(nil), first.ShownTools...)
 	second.MCPVersion = strings.Repeat("v", 300)
-	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", now.Add(2*time.Second), now.Add(time.Hour), toolTranscript(), second); err != nil {
+	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", now.Add(2*time.Second), now.Add(time.Hour), toolTranscript(), second, conversation.TurnTiming{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -277,7 +277,7 @@ func TestTurnRunsSkipAnUnchangedResumption(t *testing.T) {
 	if _, err := store.ClaimConfirmation(t.Context(), testOwner, item.ID, "turn-1", "confirmation-1", testNow.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", testNow.Add(2*time.Second), testNow.Add(time.Hour), toolTranscript(), run); err != nil {
+	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", testNow.Add(2*time.Second), testNow.Add(time.Hour), toolTranscript(), run, conversation.TurnTiming{}); err != nil {
 		t.Fatal(err)
 	}
 	turn, _, err := store.TurnMessages(t.Context(), testOwner, item.ID, "turn-1")

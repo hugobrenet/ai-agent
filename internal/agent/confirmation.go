@@ -32,7 +32,11 @@ func (d Decision) Valid() bool {
 
 // rejectedToolResult is the tool result the model receives for an action the
 // user rejected: the call was not executed.
-var rejectedToolResult = json.RawMessage(`{"content":[{"type":"text","text":"The user rejected this action. It was not executed."}]}`)
+var rejectedToolResult = json.RawMessage(`{"content":[{"type":"text","text":"` + RejectedToolResultText + `"}]}`)
+
+// RejectedToolResultText is the text of the result of a call the user
+// rejected, which the history keeps.
+const RejectedToolResultText = "The user rejected this action. It was not executed."
 
 // noPendingConfirmation ends the system message of a new turn: the service
 // refuses a new turn while a confirmation is pending, so a prompt never

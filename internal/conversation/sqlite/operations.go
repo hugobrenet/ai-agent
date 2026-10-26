@@ -237,7 +237,7 @@ VALUES (?, ?, ?, 'running', '', ?, NULL)`, turn.ID, turn.ConversationID, turn.Se
 	return turn, nil
 }
 
-func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conversationID string, turnID string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, run conversation.TurnRun) error {
+func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conversationID string, turnID string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, run conversation.TurnRun, timing conversation.TurnTiming) error {
 	if err := validateOwnerAndID(owner, conversationID); err != nil {
 		return err
 	}
@@ -278,6 +278,10 @@ func (s *Store) CompleteTurn(ctx context.Context, owner conversation.Owner, conv
 	if err != nil {
 		return err
 	}
+	encodedTiming, err := encodeTiming(timing)
+	if err != nil {
+		return err
+	}
 	var messageCount int
 	if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(*)
@@ -310,8 +314,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE turns
-SET status = 'completed', error_code = '', completed_at = ?, runs_json = ?
-WHERE id = ? AND conversation_id = ? AND status = 'running'`, toUnixNano(completedAt), runs, turnID, conversationID); err != nil {
+SET status = 'completed', error_code = '', completed_at = ?, runs_json = ?, timing_json = ?
+WHERE id = ? AND conversation_id = ? AND status = 'running'`, toUnixNano(completedAt), runs, encodedTiming, turnID, conversationID); err != nil {
 		return fmt.Errorf("complete conversation turn: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -576,11 +580,11 @@ WHERE id = ? AND backend = ? AND cluster_id = ? AND issuer = ? AND subject = ?`,
 func getTurn(ctx context.Context, tx *sql.Tx, conversationID string, turnID string) (conversation.Turn, error) {
 	var item conversation.Turn
 	var status string
-	var runs []byte
+	var runs, timing []byte
 	var startedAt int64
 	var completedAt sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
-SELECT id, conversation_id, sequence, status, error_code, started_at, completed_at, runs_json, prompt_id
+SELECT id, conversation_id, sequence, status, error_code, started_at, completed_at, runs_json, prompt_id, timing_json
 FROM turns
 WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 		&item.ID,
@@ -592,6 +596,7 @@ WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 		&completedAt,
 		&runs,
 		&item.PromptID,
+		&timing,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.Turn{}, conversation.ErrNotFound
@@ -601,6 +606,11 @@ WHERE id = ? AND conversation_id = ?`, turnID, conversationID).Scan(
 	if err := decodeStrictJSON(runs, &item.Runs); err != nil {
 		return conversation.Turn{}, fmt.Errorf("decode turn runs: %w", err)
 	}
+	timingValue, err := decodeTiming(timing)
+	if err != nil {
+		return conversation.Turn{}, err
+	}
+	item.Timing = timingValue
 	item.Status = conversation.TurnStatus(status)
 	item.StartedAt = fromUnixNano(startedAt)
 	if completedAt.Valid {
@@ -677,6 +687,37 @@ const maxRunShownTools = 256
 
 // encodeRuns adds run to the runs of a turn, unless it equals the last one,
 // with its texts announced by servers bounded.
+// encodeTiming encodes the times of a turn, empty when it has none.
+func encodeTiming(timing conversation.TurnTiming) ([]byte, error) {
+	if timing.Empty() {
+		return []byte{}, nil
+	}
+	if err := timing.Validate(); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(timing)
+	if err != nil {
+		return nil, fmt.Errorf("encode turn timing: %w", err)
+	}
+	return encoded, nil
+}
+
+// decodeTiming decodes the times of a turn, none for a turn stored before
+// they were.
+func decodeTiming(data []byte) (conversation.TurnTiming, error) {
+	var timing conversation.TurnTiming
+	if len(data) == 0 {
+		return timing, nil
+	}
+	if err := decodeStrictJSON(data, &timing); err != nil {
+		return conversation.TurnTiming{}, fmt.Errorf("decode turn timing: %w", err)
+	}
+	if err := timing.Validate(); err != nil {
+		return conversation.TurnTiming{}, err
+	}
+	return timing, nil
+}
+
 func encodeRuns(runs []conversation.TurnRun, run conversation.TurnRun) ([]byte, error) {
 	for _, field := range []*string{&run.AgentVersion, &run.Model, &run.SystemPromptSHA256, &run.MCPServer, &run.MCPVersion, &run.ToolsSHA256} {
 		*field = boundedText(*field, 256)

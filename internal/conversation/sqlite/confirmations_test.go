@@ -61,7 +61,7 @@ func TestStoreSuspendsAndResumesATurnOnce(t *testing.T) {
 		t.Fatalf("a claimed confirmation is still pending: %+v", got)
 	}
 	messages := []llm.Message{{Role: llm.RoleUser, Text: "stop web"}, {Role: llm.RoleAssistant, Text: "stopped"}}
-	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", testNow.Add(6*time.Second), testNow.Add(time.Hour), messages, conversation.TurnRun{}); err != nil {
+	if err := store.CompleteTurn(t.Context(), testOwner, item.ID, "turn-1", testNow.Add(6*time.Second), testNow.Add(time.Hour), messages, conversation.TurnRun{}, conversation.TurnTiming{}); err != nil {
 		t.Fatalf("the resumed turn did not complete: %v", err)
 	}
 }
@@ -180,14 +180,15 @@ func TestStoreCancelsASuspendedTurn(t *testing.T) {
 	}
 }
 
-// A database of the version 5 is converted, its conversations kept.
+// A database of the version 5 is converted, through the version 6, its
+// conversations kept.
 func TestOpenConvertsTheVersion5(t *testing.T) {
 	store, path := openTestStore(t, Config{})
 	item := testConversation("conversation-1", testOwner, testNow)
 	if err := store.CreateConversation(t.Context(), item); err != nil {
 		t.Fatal(err)
 	}
-	for _, statement := range []string{"ALTER TABLE turns DROP COLUMN prompt_id", "PRAGMA user_version = 5"} {
+	for _, statement := range []string{"ALTER TABLE turns DROP COLUMN timing_json", "ALTER TABLE turns DROP COLUMN prompt_id", "PRAGMA user_version = 5"} {
 		if _, err := store.db.ExecContext(t.Context(), statement); err != nil {
 			t.Fatal(err)
 		}
@@ -207,8 +208,8 @@ func TestOpenConvertsTheVersion5(t *testing.T) {
 	if err := reopened.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM conversations WHERE id = ?", item.ID).Scan(&conversations); err != nil || conversations != 1 {
 		t.Fatalf("conversations = %d, %v", conversations, err)
 	}
-	if _, err := reopened.db.ExecContext(t.Context(), "SELECT prompt_id FROM turns"); err != nil {
-		t.Fatalf("no prompt_id: %v", err)
+	if _, err := reopened.db.ExecContext(t.Context(), "SELECT prompt_id, timing_json FROM turns"); err != nil {
+		t.Fatalf("no prompt_id or timing_json: %v", err)
 	}
 }
 
@@ -230,7 +231,7 @@ func TestStoreNamesThePromptWithTheIDOfTheClient(t *testing.T) {
 			t.Fatalf("%s: recorded %v, %v", turnID, recorded, err)
 		}
 		messages := []llm.Message{{Role: llm.RoleUser, Text: "question"}, {Role: llm.RoleAssistant, Text: "answer"}}
-		if err := store.CompleteTurn(t.Context(), testOwner, item.ID, turnID, at.Add(time.Second), at.Add(time.Hour), messages, conversation.TurnRun{}); err != nil {
+		if err := store.CompleteTurn(t.Context(), testOwner, item.ID, turnID, at.Add(time.Second), at.Add(time.Hour), messages, conversation.TurnRun{}, conversation.TurnTiming{}); err != nil {
 			t.Fatal(err)
 		}
 	}

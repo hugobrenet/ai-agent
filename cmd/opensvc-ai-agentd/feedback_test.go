@@ -35,7 +35,7 @@ func TestFeedbackExportLeavesOutIdentityAndToolResults(t *testing.T) {
 		{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "call-1", Content: json.RawMessage(`{"total":484}`)}}},
 		{Role: llm.RoleAssistant, Text: "484 nodes"},
 	}
-	if err := store.CompleteTurn(t.Context(), owner, "conversation-1", "turn-1", now, now.Add(time.Hour), messages, conversation.TurnRun{}); err != nil {
+	if err := store.CompleteTurn(t.Context(), owner, "conversation-1", "turn-1", now, now.Add(time.Hour), messages, conversation.TurnRun{}, conversation.TurnTiming{}); err != nil {
 		t.Fatal(err)
 	}
 	turn, stored, err := store.TurnMessages(t.Context(), owner, "conversation-1", "turn-1")

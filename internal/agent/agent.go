@@ -44,6 +44,9 @@ type Config struct {
 	// which a result is not shown. 0 means DefaultSearchScoreRatio, a
 	// negative value shows every result.
 	SearchScoreRatio float64
+	// Now is the clock the events of a turn are stamped with, At; nil means
+	// time.Now. The stream, the audit and the history carry its times.
+	Now func() time.Time
 }
 
 type Agent struct {
@@ -104,6 +107,9 @@ func New(llmClient llm.Client, connectMCP MCPConnectFunc, config Config) (*Agent
 	if config.Timeout <= 0 {
 		return nil, fmt.Errorf("agent timeout must be positive")
 	}
+	if config.Now == nil {
+		config.Now = time.Now
+	}
 	return &Agent{llm: llmClient, connectMCP: connectMCP, config: config, indexes: &indexCache{}}, nil
 }
 
@@ -145,9 +151,17 @@ func (a *Agent) ResumeTurn(ctx context.Context, history []llm.Message, suspended
 // run drives the turn held by state until the model answers, or until a tool
 // call requires a confirmation. decision applies to the first call left to
 // run, the one a suspended turn waits on.
-func (a *Agent) run(ctx context.Context, history []llm.Message, state *SuspendedTurn, decision Decision, emit EmitFunc) (result TurnResult, err error) {
-	if emit == nil {
+func (a *Agent) run(ctx context.Context, history []llm.Message, state *SuspendedTurn, decision Decision, consume EmitFunc) (result TurnResult, err error) {
+	if consume == nil {
 		return result, fmt.Errorf("agent event consumer is nil")
+	}
+	// Each event is stamped once, as it is emitted: the stream, the audit
+	// and the history all carry this time.
+	emit := func(event Event) error {
+		if event.At.IsZero() {
+			event.At = a.config.Now()
+		}
+		return consume(event)
 	}
 	history, err = prepareHistory(history)
 	if err != nil {

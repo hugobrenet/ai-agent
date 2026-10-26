@@ -1231,6 +1231,37 @@
           "feedback": {
             "$ref": "#/components/schemas/Feedback",
             "description": "On an assistant message, the feedback of the user on its turn, if any."
+          },
+          "steps": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/components/schemas/DisplayStep"
+            },
+            "description": "On the last assistant message of a turn, the calls of its tools."
+          },
+          "steps_omitted": {
+            "type": "integer",
+            "description": "The steps left out: past 64, or all of them when the message holds in no page with them."
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DisplayRun"
+            },
+            "description": "On the last assistant message of a turn, its runs. Absent for a turn stored before the times were."
+          },
+          "usage": {
+            "type": "object",
+            "required": [
+              "total_tokens"
+            ],
+            "properties": {
+              "total_tokens": {
+                "type": "integer"
+              }
+            },
+            "description": "On the last assistant message of a turn, its tokens."
           }
         }
       },
@@ -1488,6 +1519,87 @@
         "type": "object",
         "description": "The AG-UI AgentCapabilities of the agent: identity, transport, tools, humanInTheLoop and multimodal groups.",
         "additionalProperties": true
+      },
+      "DisplayStep": {
+        "type": "object",
+        "required": [
+          "id",
+          "tool",
+          "arguments",
+          "status",
+          "result_excerpt",
+          "result_truncated",
+          "refusal"
+        ],
+        "description": "One call of a tool of a turn, in the order of the turn.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "arguments": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The arguments of the call; null past 16 KiB, or past 192 KiB for the turn, with arguments_omitted."
+          },
+          "arguments_omitted": {
+            "type": "boolean"
+          },
+          "started_at": {
+            "type": "integer",
+            "description": "Milliseconds since the epoch, on the clock of the agent: the timestamp the stream carried. Absent for a turn stored before the times were."
+          },
+          "ended_at": {
+            "type": "integer",
+            "description": "Milliseconds since the epoch, on the clock of the agent: the timestamp the stream carried. Absent for a turn stored before the times were."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed",
+              "rejected",
+              "interrupted"
+            ],
+            "description": "failed: an error of the tool; rejected: by the user, the call did not run; interrupted: no result."
+          },
+          "result_excerpt": {
+            "type": "string",
+            "description": "The first 4 KiB of the result, cut on a character."
+          },
+          "result_truncated": {
+            "type": "boolean"
+          },
+          "refusal": {
+            "type": "string",
+            "description": "The text of an error of the tool, at most 16 KiB."
+          },
+          "edited_arguments": {
+            "type": "object",
+            "description": "The arguments the call ran with, when the user edited it before approving it."
+          }
+        }
+      },
+      "DisplayRun": {
+        "type": "object",
+        "required": [
+          "started_at"
+        ],
+        "description": "A run of a turn, the waits for a decision left out.",
+        "properties": {
+          "started_at": {
+            "type": "integer",
+            "description": "Milliseconds since the epoch, on the clock of the agent, when the run started."
+          },
+          "ended_at": {
+            "type": "integer",
+            "description": "Milliseconds since the epoch, on the clock of the agent, when the run ended; absent if not recorded."
+          }
+        }
       }
     }
   }

@@ -38,31 +38,9 @@ func (s *Store) TurnMessages(ctx context.Context, owner conversation.Owner, conv
 	if err != nil {
 		return conversation.Turn{}, nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `
-SELECT role, text, tool_calls_json, tool_results_json
-FROM messages WHERE turn_id = ? ORDER BY sequence`, turnID)
+	messages, err := turnMessages(ctx, tx, turnID)
 	if err != nil {
-		return conversation.Turn{}, nil, fmt.Errorf("read turn messages: %w", err)
-	}
-	defer rows.Close()
-	var messages []llm.Message
-	for rows.Next() {
-		var role, text string
-		var callData, resultData []byte
-		if err := rows.Scan(&role, &text, &callData, &resultData); err != nil {
-			return conversation.Turn{}, nil, fmt.Errorf("scan turn message: %w", err)
-		}
-		message, err := decodeMessage(role, text, callData, resultData)
-		if err != nil {
-			return conversation.Turn{}, nil, err
-		}
-		messages = append(messages, message)
-	}
-	if err := rows.Err(); err != nil {
-		return conversation.Turn{}, nil, fmt.Errorf("iterate turn messages: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return conversation.Turn{}, nil, fmt.Errorf("close turn messages: %w", err)
+		return conversation.Turn{}, nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return conversation.Turn{}, nil, fmt.Errorf("commit turn messages transaction: %w", err)
@@ -256,4 +234,32 @@ func scanFeedback(scanner rowScanner, withTurn bool) (conversation.FeedbackRecor
 	record.Snapshot, record.Context = snapshot, agentContext
 	record.CreatedAt, record.UpdatedAt, record.ExpiresAt = fromUnixNano(createdAt), fromUnixNano(updatedAt), fromUnixNano(expiresAt)
 	return record, nil
+}
+
+// turnMessages reads the messages of a turn, in their order.
+func turnMessages(ctx context.Context, tx *sql.Tx, turnID string) ([]llm.Message, error) {
+	rows, err := tx.QueryContext(ctx, `
+SELECT role, text, tool_calls_json, tool_results_json
+FROM messages WHERE turn_id = ? ORDER BY sequence`, turnID)
+	if err != nil {
+		return nil, fmt.Errorf("read turn messages: %w", err)
+	}
+	defer rows.Close()
+	var messages []llm.Message
+	for rows.Next() {
+		var role, text string
+		var callData, resultData []byte
+		if err := rows.Scan(&role, &text, &callData, &resultData); err != nil {
+			return nil, fmt.Errorf("scan turn message: %w", err)
+		}
+		message, err := decodeMessage(role, text, callData, resultData)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate turn messages: %w", err)
+	}
+	return messages, nil
 }

@@ -307,3 +307,23 @@ func TestRunAgentInputVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestEncoderStampsTheTimeOfTheAgent(t *testing.T) {
+	encoder := NewEncoder("c-1", "r-1")
+	encoder.now = func() time.Time { return time.UnixMilli(5) }
+	at := time.UnixMilli(1_760_000_000_400)
+	events, err := encoder.Encode(agent.Event{Type: agent.EventToolStarted, ToolName: "list_nodes", ToolCallID: "call-1", ToolArguments: json.RawMessage(`{}`), Iteration: 1, At: at})
+	if err != nil || len(events) != 3 {
+		t.Fatalf("events = %+v, %v", events, err)
+	}
+	for _, event := range events {
+		if event.Timestamp != 1_760_000_000_400 {
+			t.Fatalf("%s stamped %d, not the time of the agent", event.Type, event.Timestamp)
+		}
+	}
+	// An event the agent did not stamp takes the time of the encoder.
+	unstamped, _ := encoder.Encode(agent.Event{Type: agent.EventToolFinished, ToolName: "list_nodes", ToolCallID: "call-1", Iteration: 1})
+	if unstamped[0].Timestamp != 5 {
+		t.Fatalf("unstamped = %d", unstamped[0].Timestamp)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -353,6 +354,7 @@ func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identit
 	return &PreparedTurn{
 		service: s, owner: item.Owner, conversationID: item.ID, turnID: turnID,
 		history: history, historyIDs: historyIDs[len(historyIDs)-len(history):], historyStats: stats, promptID: s.turnPromptID(ctx, item.Owner, item.ID, turnID), resume: &state, decision: decision,
+		timing: pending.Timing,
 	}, nil
 }
 
@@ -441,6 +443,7 @@ func (s *Service) PrepareClientResults(ctx context.Context, identity auth.Identi
 	return &PreparedTurn{
 		service: s, owner: item.Owner, conversationID: item.ID, turnID: pending.TurnID,
 		history: history, historyIDs: historyIDs[len(historyIDs)-len(history):], historyStats: stats, promptID: s.turnPromptID(ctx, item.Owner, item.ID, pending.TurnID), resume: &state,
+		timing: pending.Timing,
 	}, nil
 }
 
@@ -493,8 +496,86 @@ type PreparedTurn struct {
 	historyStats *HistoryStats
 	resume       *agent.SuspendedTurn
 	decision     agent.Decision
-	mu           sync.Mutex
-	claimed      bool
+	// timing are the times of the turn: those of its earlier runs, then
+	// this one's, recorded as its events go.
+	timing  TurnTiming
+	mu      sync.Mutex
+	claimed bool
+}
+
+// msOf is a time in milliseconds since the epoch, as the timing keeps it.
+func msOf(at time.Time) int64 { return at.UnixMilli() }
+
+// startRun records the start of a run, at its claim. A turn records at most
+// MaxTurnRuns runs: past it, the last one goes on.
+func (t *PreparedTurn) startRun(at time.Time) {
+	t.timing.Calls = maps.Clone(t.timing.Calls)
+	t.timing.Runs = slices.Clone(t.timing.Runs)
+	if len(t.timing.Runs) < MaxTurnRuns {
+		t.timing.Runs = append(t.timing.Runs, TimingRun{StartedAt: msOf(at)})
+	}
+}
+
+// endRun records the end of the run, at its suspension or its completion.
+func (t *PreparedTurn) endRun(at time.Time) {
+	if last := len(t.timing.Runs) - 1; last >= 0 {
+		t.timing.Runs[last].EndedAt = max(msOf(at), t.timing.Runs[last].StartedAt)
+	}
+}
+
+// record notes the times of an event of the run, on the clock of the agent:
+// the start and the end of each call of a tool, with the arguments the user
+// edited the call they approved with, and the tokens of the model calls.
+func (t *PreparedTurn) record(event agent.Event, edited string, editedArguments json.RawMessage) {
+	at := event.At
+	if at.IsZero() {
+		at = t.service.now()
+	}
+	call := func(id string) (TimingCall, bool) {
+		if id == "" {
+			return TimingCall{}, false
+		}
+		value, ok := t.timing.Calls[id]
+		if !ok && len(t.timing.Calls) >= maxTimingCalls {
+			return TimingCall{}, false
+		}
+		return value, true
+	}
+	switch event.Type {
+	case agent.EventToolStarted:
+		value, ok := call(event.ToolCallID)
+		if !ok {
+			return
+		}
+		// A start already given, the one of the run of a decision, stays.
+		if value.StartedAt == 0 {
+			value.StartedAt = msOf(at)
+		}
+		if event.ToolCallID == edited {
+			value.RanWith = editedArguments
+		}
+		if t.timing.Calls == nil {
+			t.timing.Calls = map[string]TimingCall{}
+		}
+		t.timing.Calls[event.ToolCallID] = value
+	case agent.EventToolFinished:
+		value, ok := call(event.ToolCallID)
+		if !ok {
+			return
+		}
+		value.EndedAt = msOf(at)
+		if t.timing.Calls == nil {
+			t.timing.Calls = map[string]TimingCall{}
+		}
+		t.timing.Calls[event.ToolCallID] = value
+	case agent.EventUsage:
+		if event.Usage != nil {
+			if t.timing.Usage == nil {
+				t.timing.Usage = &TimingUsage{}
+			}
+			t.timing.Usage.TotalTokens += event.Usage.TotalTokens
+		}
+	}
 }
 
 func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
@@ -505,8 +586,27 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 		err := errors.New("conversation event consumer is nil")
 		return errors.Join(err, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "consumer_invalid"))
 	}
+	runStart := t.service.now().UTC()
+	t.startRun(runStart)
+	// The call a decision answers starts with the run that decides it, as
+	// the stream shows it: the run emits its start later, once ready, and
+	// emits none for a call the user rejected. Its arguments are those the
+	// user edited, if any.
+	edited, editedArguments := "", json.RawMessage(nil)
+	if t.resume != nil && (t.decision == agent.DecisionApprove || t.decision == agent.DecisionReject) {
+		if call, err := t.resume.PendingCall(); err == nil && (t.timing.Calls[call.ID].StartedAt == 0) && len(t.timing.Calls) < maxTimingCalls {
+			if t.timing.Calls == nil {
+				t.timing.Calls = map[string]TimingCall{}
+			}
+			t.timing.Calls[call.ID] = TimingCall{StartedAt: msOf(runStart)}
+		}
+		if call, err := t.resume.PendingCall(); err == nil && t.decision == agent.DecisionApprove && len(t.resume.EditedArguments) > 0 {
+			edited, editedArguments = call.ID, t.resume.EditedArguments
+		}
+	}
 	var completedEvent *agent.Event
 	forward := func(event agent.Event) error {
+		t.record(event, edited, editedArguments)
 		if event.Type == agent.EventCompleted {
 			if completedEvent != nil {
 				return errors.New("conversation runner emitted multiple completion events")
@@ -555,11 +655,12 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 		return errors.Join(err, t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "agent_incomplete"))
 	}
 	completedAt := t.service.now().UTC()
+	t.endRun(completedAt)
 	finalizeCtx, cancel := context.WithTimeout(context.Background(), t.service.config.FinalizeTimeout)
 	completeErr := t.service.store.CompleteTurn(
 		finalizeCtx, t.owner, t.conversationID, t.turnID, completedAt,
 		completedAt.Add(t.service.config.Lifetime), result.Messages,
-		t.service.config.Agent.run(result.MCP, result.Exposure, t.historyStats),
+		t.service.config.Agent.run(result.MCP, result.Exposure, t.historyStats), t.timing,
 	)
 	cancel()
 	if completeErr != nil {
@@ -594,11 +695,14 @@ func (t *PreparedTurn) suspend(state agent.SuspendedTurn, run TurnRun, emit agen
 		return errors.Join(fmt.Errorf("generate confirmation ID: %w", err), t.service.failTurn(t.owner, t.conversationID, t.turnID, TurnFailed, "agent_incomplete"))
 	}
 	createdAt := t.service.now().UTC()
+	// The run ends where the wait for the decision starts.
+	t.endRun(createdAt)
 	pending := PendingConfirmation{
 		ConversationID: t.conversationID, TurnID: t.turnID, ConfirmationID: confirmationID,
 		ToolName: call.Name, ToolTitle: state.ToolTitle, Arguments: call.Arguments,
 		ArgumentsHash: agent.ArgumentsHash(call.Arguments), State: encoded,
 		CreatedAt: createdAt, ExpiresAt: createdAt.Add(t.service.config.ConfirmationLifetime), Run: run,
+		Timing: t.timing,
 	}
 	suspendCtx, cancel := context.WithTimeout(context.Background(), t.service.config.FinalizeTimeout)
 	suspendErr := t.service.store.SuspendTurn(suspendCtx, t.owner, pending)
