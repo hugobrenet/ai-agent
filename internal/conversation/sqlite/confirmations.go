@@ -45,6 +45,10 @@ func (s *Store) SuspendTurn(ctx context.Context, owner conversation.Owner, pendi
 	if err != nil {
 		return err
 	}
+	timing, err := encodeTiming(pending.Timing)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO confirmations(turn_id, confirmation_id, tool_name, tool_title, arguments_json, arguments_hash, state_json, created_at, expires_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -57,8 +61,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		return fmt.Errorf("insert confirmation: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-UPDATE turns SET status = 'awaiting_confirmation', runs_json = ?
-WHERE id = ? AND conversation_id = ? AND status = 'running'`, runs, pending.TurnID, pending.ConversationID); err != nil {
+UPDATE turns SET status = 'awaiting_confirmation', runs_json = ?, timing_json = ?
+WHERE id = ? AND conversation_id = ? AND status = 'running'`, runs, timing, pending.TurnID, pending.ConversationID); err != nil {
 		return fmt.Errorf("suspend conversation turn: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE conversations SET updated_at = ? WHERE id = ?", toUnixNano(pending.CreatedAt), pending.ConversationID); err != nil {
@@ -128,6 +132,8 @@ WHERE id = ? AND conversation_id = ? AND status = 'awaiting_confirmation'`, turn
 	if err := tx.Commit(); err != nil {
 		return conversation.PendingConfirmation{}, fmt.Errorf("commit claimed confirmation: %w", err)
 	}
+	// The resumed run goes on with the times of the turn so far.
+	pending.Timing = turn.Timing
 	return pending, nil
 }
 

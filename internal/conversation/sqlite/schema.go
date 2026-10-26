@@ -7,12 +7,13 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 // migrations convert a database of a version to the next one: the only
 // conversions the store makes, each one that keeps the conversations.
 var migrations = map[int]string{
 	5: "ALTER TABLE turns ADD COLUMN prompt_id TEXT NOT NULL DEFAULT ''",
+	6: "ALTER TABLE turns ADD COLUMN timing_json BLOB NOT NULL DEFAULT ''",
 }
 
 //go:embed schema.sql

@@ -181,6 +181,7 @@ func (f turnRunnerFunc) ResumeTurn(context.Context, []llm.Message, agent.Suspend
 
 type serviceTestStore struct {
 	item              Conversation
+	completedTiming   TurnTiming
 	history           []llm.Message
 	beginErr          error
 	completed         bool
@@ -241,7 +242,8 @@ func (s *serviceTestStore) BeginTurn(context.Context, Owner, string, string, tim
 	}
 	return Turn{ID: "turn-id", ConversationID: s.item.ID, Sequence: 1, Status: TurnRunning, StartedAt: serviceTestNow}, nil
 }
-func (s *serviceTestStore) CompleteTurn(_ context.Context, _ Owner, _ string, _ string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, _ TurnRun) error {
+func (s *serviceTestStore) CompleteTurn(_ context.Context, _ Owner, _ string, _ string, completedAt time.Time, expiresAt time.Time, messages []llm.Message, _ TurnRun, timing TurnTiming) error {
+	s.completedTiming = timing
 	s.completed = true
 	s.completedMessages = append([]llm.Message(nil), messages...)
 	s.item.UpdatedAt = completedAt

@@ -56,6 +56,8 @@ type Event struct {
 	// to the first event of its stream.
 	ModelDuration   time.Duration
 	ModelFirstEvent time.Duration
+	// At is when the agent emitted the event, on its clock.
+	At time.Time
 }
 
 // RefusedCalls is a model answer refused for the bound it passed: "answer",

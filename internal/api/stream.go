@@ -165,7 +165,7 @@ func streamRun(response http.ResponseWriter, request *http.Request, audit auditL
 		case agent.EventToolStarted:
 			toolCalls++
 			activeToolName = event.ToolName
-			activeToolStartedAt = time.Now()
+			activeToolStartedAt = eventTime(event)
 			audit.event(request.Context(), "tool_started",
 				slog.String("tool_name", event.ToolName),
 				slog.Int("iteration", event.Iteration),
@@ -173,7 +173,7 @@ func streamRun(response http.ResponseWriter, request *http.Request, audit auditL
 		case agent.EventToolFinished:
 			duration := int64(0)
 			if activeToolName == event.ToolName && !activeToolStartedAt.IsZero() {
-				duration = time.Since(activeToolStartedAt).Milliseconds()
+				duration = eventTime(event).Sub(activeToolStartedAt).Milliseconds()
 			}
 			attributes := []slog.Attr{
 				slog.String("tool_name", event.ToolName),
@@ -385,4 +385,13 @@ func writeJSONError(response http.ResponseWriter, status int, code string, messa
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(ErrorResponse{Error: APIError{Code: code, Message: message}})
+}
+
+// eventTime is when the agent emitted an event, the time the stream and the
+// history carry; now for an event it did not stamp.
+func eventTime(event agent.Event) time.Time {
+	if event.At.IsZero() {
+		return time.Now()
+	}
+	return event.At
 }

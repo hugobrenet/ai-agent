@@ -37,7 +37,7 @@ type Store interface {
 	BeginTurn(context.Context, Owner, string, string, time.Time) (Turn, error)
 	// CompleteTurn stores the messages of a turn and adds its last run to
 	// the runs of the turn, unless it equals the previous one.
-	CompleteTurn(context.Context, Owner, string, string, time.Time, time.Time, []llm.Message, TurnRun) error
+	CompleteTurn(context.Context, Owner, string, string, time.Time, time.Time, []llm.Message, TurnRun, TurnTiming) error
 	FailTurn(context.Context, Owner, string, string, TurnStatus, string, time.Time) error
 	SuspendTurn(context.Context, Owner, PendingConfirmation) error
 	ClaimConfirmation(context.Context, Owner, string, string, string, time.Time) (PendingConfirmation, error)

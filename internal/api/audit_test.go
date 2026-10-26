@@ -32,8 +32,8 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 		}
 		for _, event := range []agent.Event{
 			{Type: agent.EventTextDelta, TextDelta: textMarker, Iteration: 1},
-			{Type: agent.EventToolStarted, ToolName: "get_cluster_health", Iteration: 1},
-			{Type: agent.EventToolFinished, ToolName: "get_cluster_health", ToolError: true, Iteration: 1},
+			{Type: agent.EventToolStarted, ToolName: "get_cluster_health", Iteration: 1, At: time.UnixMilli(1_760_000_000_100)},
+			{Type: agent.EventToolFinished, ToolName: "get_cluster_health", ToolError: true, Iteration: 1, At: time.UnixMilli(1_760_000_000_340)},
 			{Type: agent.EventUsage, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}, Iteration: 1, ModelDuration: 1500 * time.Millisecond, ModelFirstEvent: 900 * time.Millisecond},
 			{Type: agent.EventToolCallsRefused, Refused: &agent.RefusedCalls{Bound: "answer", Asked: 12, Ran: 1}, Iteration: 2},
 			{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, Iteration: 2},
@@ -81,7 +81,8 @@ func TestAuditRecordsTurnLifecycleWithoutSensitiveData(t *testing.T) {
 			t.Fatalf("audit identity = %#v", events[index])
 		}
 	}
-	if events[2]["tool_name"] != "get_cluster_health" || events[2]["tool_error"] != true {
+	// The duration of a tool, on the times the agent stamped its events with.
+	if events[2]["tool_name"] != "get_cluster_health" || events[2]["tool_error"] != true || events[2]["duration_ms"] != float64(240) {
 		t.Fatalf("tool audit = %#v", events[2])
 	}
 	if events[3]["total_tokens"] != float64(12) || events[3]["duration_ms"] != float64(1500) || events[3]["first_event_ms"] != float64(900) {

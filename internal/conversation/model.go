@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strconv"
 	"time"
@@ -74,6 +75,69 @@ type Turn struct {
 	// Runs are the executions of the turn: one, plus one per resumption
 	// after a confirmation that ran on a different agent or MCP server.
 	Runs []TurnRun
+	// Timing are the times of the turn, empty for a turn stored before
+	// they were.
+	Timing TurnTiming
+}
+
+// TurnTiming are the times of a turn on the clock of the agent, in
+// milliseconds since the epoch, the ones its stream carried: each run, from
+// its claim to its end, the waits for a decision left out; each call of a
+// tool, by its ID, from its start to its result, with the arguments it ran
+// with when the user edited them; and the tokens of its model calls.
+type TurnTiming struct {
+	Runs  []TimingRun           `json:"runs,omitempty"`
+	Calls map[string]TimingCall `json:"calls,omitempty"`
+	Usage *TimingUsage          `json:"usage,omitempty"`
+}
+
+type TimingRun struct {
+	StartedAt int64 `json:"started_at"`
+	EndedAt   int64 `json:"ended_at,omitempty"`
+}
+
+type TimingCall struct {
+	StartedAt int64           `json:"started_at,omitempty"`
+	EndedAt   int64           `json:"ended_at,omitempty"`
+	RanWith   json.RawMessage `json:"ran_with,omitempty"`
+}
+
+type TimingUsage struct {
+	TotalTokens int64 `json:"total_tokens"`
+}
+
+const (
+	// maxTimingCalls bounds the calls a turn times: 16 a run, at most 32 runs.
+	maxTimingCalls = 512
+	// maxTimingRanWithBytes bounds the edited arguments a call ran with.
+	maxTimingRanWithBytes = 256 << 10
+	maxTimingCallIDBytes  = 256
+)
+
+// Validate checks the bounds of the times of a turn.
+func (t TurnTiming) Validate() error {
+	if len(t.Runs) > MaxTurnRuns || len(t.Calls) > maxTimingCalls {
+		return fmt.Errorf("%w: turn timing holds too many runs or calls", ErrInvalid)
+	}
+	for _, run := range t.Runs {
+		if run.StartedAt <= 0 || (run.EndedAt != 0 && run.EndedAt < run.StartedAt) {
+			return fmt.Errorf("%w: invalid turn run timing", ErrInvalid)
+		}
+	}
+	for id, call := range t.Calls {
+		if id == "" || len(id) > maxTimingCallIDBytes || len(call.RanWith) > maxTimingRanWithBytes || call.StartedAt < 0 || call.EndedAt < 0 {
+			return fmt.Errorf("%w: invalid tool call timing", ErrInvalid)
+		}
+	}
+	if t.Usage != nil && t.Usage.TotalTokens < 0 {
+		return fmt.Errorf("%w: invalid turn usage", ErrInvalid)
+	}
+	return nil
+}
+
+// Empty tells a turn stored without times.
+func (t TurnTiming) Empty() bool {
+	return len(t.Runs) == 0 && len(t.Calls) == 0 && t.Usage == nil
 }
 
 // MaxTurnRuns bounds the executions recorded on a turn.
@@ -147,6 +211,8 @@ type PendingConfirmation struct {
 	// Run describes the execution that suspended the turn; it is added to
 	// the runs of the turn.
 	Run TurnRun
+	// Timing are the times of the turn so far, stored with it.
+	Timing TurnTiming
 }
 
 // maxPromptIDBytes bounds the ID a client gives the message of the user.
