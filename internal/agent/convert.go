@@ -100,12 +100,17 @@ func encodeToolResult(result *mcp.CallToolResult) (json.RawMessage, error) {
 	if content == nil {
 		content = []mcp.Content{}
 	}
+	// isError is kept as the MCP gives it, false included: a client, and the
+	// model, tell a refusal of the tool by it rather than by a missing
+	// structured content.
 	payload := struct {
 		Content           []mcp.Content `json:"content"`
 		StructuredContent any           `json:"structuredContent,omitempty"`
+		IsError           bool          `json:"isError"`
 	}{
 		Content:           content,
 		StructuredContent: result.StructuredContent,
+		IsError:           result.IsError,
 	}
 	if structured, ok := duplicatedStructuredContent(result); ok {
 		payload.Content, payload.StructuredContent = []mcp.Content{}, structured

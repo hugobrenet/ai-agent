@@ -105,7 +105,7 @@ func TestEncodeToolResultSendsADuplicatedStructuredContentOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"content":[],"structuredContent":` + text + `}`; string(encoded) != want {
+	if want := `{"content":[],"structuredContent":` + text + `,"isError":false}`; string(encoded) != want {
 		t.Fatalf("encoded = %s\nwant      %s", encoded, want)
 	}
 }
@@ -168,4 +168,19 @@ func must(data []byte, err error) []byte {
 		panic(err)
 	}
 	return data
+}
+
+func TestEncodeToolResultKeepsIsError(t *testing.T) {
+	refused, err := encodeToolResult(&mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "node n9 is not a node of the cluster"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(refused) != `{"content":[{"type":"text","text":"node n9 is not a node of the cluster"}],"isError":true}` {
+		t.Fatalf("refused = %s", refused)
+	}
+	// A success says so too: a client reads the signal, never its absence.
+	done, err := encodeToolResult(&mcp.CallToolResult{StructuredContent: map[string]any{"ok": true}})
+	if err != nil || !strings.Contains(string(done), `"isError":false`) {
+		t.Fatalf("done = %s, %v", done, err)
+	}
 }
