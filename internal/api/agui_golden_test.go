@@ -109,7 +109,7 @@ func TestGoldenAGUIStreams(t *testing.T) {
 			name: "resume_approved",
 			service: resume(&testTurnExecution{turnID: "turn-c", run: emitEvents(
 				agent.Event{Type: agent.EventToolStarted, ToolName: "update_object_config", ToolCallID: "call-7", ToolArguments: confirmation.Arguments, Iteration: 1},
-				agent.Event{Type: agent.EventToolFinished, ToolName: "update_object_config", ToolCallID: "call-7", ToolResult: json.RawMessage(`{"content":[{"type":"text","text":"updated"}]}`), Iteration: 1},
+				agent.Event{Type: agent.EventToolFinished, ToolName: "update_object_config", ToolCallID: "call-7", ToolResult: json.RawMessage(`{"content":[],"structuredContent":{"outcome":"written"}}`), Iteration: 1},
 				agent.Event{Type: agent.EventTextDelta, TextDelta: "Done: web starts with /bin/true.", Iteration: 2},
 				usageEvent(400, 15),
 				agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-c", Iteration: 2},
@@ -140,7 +140,7 @@ func TestGoldenAGUIStreams(t *testing.T) {
 				history: []llm.Message{
 					{Role: llm.RoleUser, Text: "How many nodes?"},
 					{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "list_nodes", Arguments: json.RawMessage(`{}`)}}},
-					{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "call-1", Content: json.RawMessage(`{"content":[{"type":"text","text":"n1 n2"}]}`)}}},
+					{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "call-1", Content: json.RawMessage(`{"content":[],"structuredContent":{"nodes":["n1","n2"]}}`)}}},
 					{Role: llm.RoleAssistant, Text: "Two nodes."},
 				},
 				historyIDs: []string{"u-1", "turn-1:2", "turn-1:3", "turn-1:4"},
@@ -179,7 +179,7 @@ func TestGoldenAGUIStreams(t *testing.T) {
 				return &testTurnExecution{turnID: "turn-c", run: emitEvents(
 					agent.Event{Type: agent.EventToolStarted, ToolName: "update_object_config", ToolCallID: "call-7", ToolArguments: edited, Iteration: 1},
 					agent.Event{Type: agent.EventToolFinished, ToolName: "update_object_config", ToolCallID: "call-7", Iteration: 1,
-						ToolResult: json.RawMessage(`{"content":[{"type":"text","text":"The user edited the arguments before approving; the call ran with: {\"path\":\"web\",\"yaml\":\"app#1:\\n  start: /bin/false\\n\"}"},{"type":"text","text":"updated"}]}`)},
+						ToolResult: json.RawMessage(`{"content":[{"type":"text","text":"The user edited the arguments before approving; the call ran with: {\"path\":\"web\",\"yaml\":\"app#1:\\n  start: /bin/false\\n\"}"}],"structuredContent":{"outcome":"written"}}`)},
 					agent.Event{Type: agent.EventTextDelta, TextDelta: "Done: web starts with /bin/false, as you set it.", Iteration: 2},
 					agent.Event{Type: agent.EventCompleted, FinishReason: llm.FinishReasonCompleted, TurnID: "turn-c", Iteration: 2},
 				)}, nil

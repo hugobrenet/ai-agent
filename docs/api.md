@@ -197,7 +197,7 @@ in milliseconds:
 | a client out of phase | `MESSAGES_SNAPSHOT` after `RUN_STARTED`; see below |
 | text of one model answer | `TEXT_MESSAGE_START` (`messageId` `<turn ID>:<2 × iteration>`, the ID the turn stores the answer with, role `assistant`), `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` before a tool call or the end |
 | tool call, of the MCP or of the agent | `TOOL_CALL_START` (`toolCallId`, `toolCallName`, `parentMessageId` the message of its answer), `TOOL_CALL_ARGS` with the JSON arguments whole, `TOOL_CALL_END` |
-| tool result | `TOOL_CALL_RESULT` with the JSON result the model read, or a note of its size beyond 64 KiB |
+| tool result | `TOOL_CALL_RESULT` with the JSON result the model read, `{"content", "structuredContent", "isError"}`, `isError` `true` for a refusal of the MCP tool and `false` otherwise, or a note of its size beyond 64 KiB |
 | completion | `RUN_FINISHED`, `outcome` `{"type":"success"}`, `result` `{"turnId": …}` for the feedback |
 | confirmation | the call as a tool call, then `RUN_FINISHED`, `outcome` `interrupt` |
 | failure | `RUN_ERROR` with a `code`, `request_timeout`, `tool_name_conflict` or `agent_failed`, and a `message` for the developer |
