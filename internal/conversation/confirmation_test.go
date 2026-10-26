@@ -99,3 +99,38 @@ func TestServiceRefusesAnInvalidDecisionOrATamperedCall(t *testing.T) {
 		t.Fatalf("a call not matching its confirmation resumed: %v failed=%v code=%q", err, store.failed, store.failureCode)
 	}
 }
+
+// htmlRunner suspends a turn on a call whose arguments hold the characters
+// json.Marshal escapes, and spaces it compacts.
+type htmlRunner struct{ confirmationRunner }
+
+func (r *htmlRunner) RunTurn(context.Context, []llm.Message, string, agent.EmitFunc) (agent.TurnResult, error) {
+	state := suspendedStopTurn()
+	state.Calls[0].Arguments = json.RawMessage(`{"path": "web", "set": ["env.x={{node}} <b>gras</b> & co"]}`)
+	return agent.TurnResult{Suspended: &state}, nil
+}
+
+func TestServiceApprovesACallWhoseArgumentsTheStoreRewrites(t *testing.T) {
+	store := newServiceTestStore()
+	runner := &htmlRunner{}
+	service := newTestService(t, store, runner)
+	execution, err := service.PrepareTurn(t.Context(), serviceTestIdentity(), store.item.ID, "set env.x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request *agent.Confirmation
+	if err := execution.Run(t.Context(), func(event agent.Event) error { request = event.Confirmation; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := service.PrepareConfirmation(t.Context(), serviceTestIdentity(), store.item.ID, request.TurnID, request.ID, agent.DecisionApprove, nil)
+	if err != nil || store.failed {
+		t.Fatalf("approval refused: %v, failed %v %s", err, store.failed, store.failureCode)
+	}
+	if err := resumed.Run(t.Context(), func(agent.Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	var arguments map[string]any
+	if err := json.Unmarshal(runner.resumedCall.Arguments, &arguments); err != nil || arguments["set"].([]any)[0] != "env.x={{node}} <b>gras</b> & co" {
+		t.Fatalf("resumed with %s", runner.resumedCall.Arguments)
+	}
+}

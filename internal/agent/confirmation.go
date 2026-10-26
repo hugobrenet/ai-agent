@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -148,10 +149,33 @@ func (s SuspendedTurn) validate(maxIterations int) error {
 	return nil
 }
 
-// ArgumentsHash binds a confirmation to the exact arguments shown to the user.
+// ArgumentsHash binds a confirmation to the exact arguments shown to the
+// user: to their values, whatever their JSON form. The suspended turn is
+// stored through json.Marshal, which compacts the arguments of its calls and
+// escapes <, > and & in them: the hash of the bytes would change on the way,
+// and a call holding them could never be approved.
 func ArgumentsHash(arguments json.RawMessage) string {
-	sum := sha256.Sum256(arguments)
+	sum := sha256.Sum256(canonicalArguments(arguments))
 	return hex.EncodeToString(sum[:])
+}
+
+// canonicalArguments is one JSON form of the values of arguments: object keys
+// sorted, no space, no HTML escape, numbers as written. Arguments that do not
+// decode are kept as they are.
+func canonicalArguments(arguments json.RawMessage) []byte {
+	decoder := json.NewDecoder(bytes.NewReader(arguments))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil || decoder.More() {
+		return arguments
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return arguments
+	}
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
 }
 
 // Confirmation describes a tool call waiting for the decision of the user.
