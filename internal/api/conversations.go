@@ -135,6 +135,9 @@ func serveGetConversation(service ConversationService, audit auditLogger) http.H
 				envelope.PendingConfirmation.ArgumentTypes = state.ArgumentTypes
 				envelope.PendingConfirmation.InputSchema = state.InputSchema
 				envelope.PendingConfirmation.Editable = len(state.InputSchema) > 0
+				envelope.PendingConfirmation.Preview = state.Preview
+				envelope.PendingConfirmation.PreviewError = state.PreviewError
+				envelope.PendingConfirmation.PreviewArguments = state.PreviewArguments
 			}
 		}
 		audit.event(request.Context(), "conversation_read", slog.String("conversation_id", boundedAuditID(id)))

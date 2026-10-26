@@ -196,7 +196,11 @@ When `editable` is `true`, the `responseSchema` gives `editedArgs`, the
 input schema of the tool: show the arguments in a form built from it, its
 labels and descriptions from the schema, the values the model proposed
 filled in, and approve with `{"approved": true, "editedArgs": {…}}`, the
-full arguments, only when the user changed a value. Check the form against
+full arguments, only when the user changed a value. The `metadata` of the
+interrupt may give `preview`, what the call would do as the MCP tells it,
+or `previewError`: show it above the arguments; after an edit,
+`{"action": "preview", "editedArgs": {…}}` asks it again for the edited
+arguments, nothing running, the call waiting again under a new interrupt. Check the form against
 the schema before sending it; the agent checks it again, and an edit it
 refuses returns 400 `invalid_edited_arguments` with the violation, the
 confirmation still waiting. Edited arguments with a rejection, or any other
@@ -220,8 +224,9 @@ another interrupt when the model calls a further destructive tool.
 
 - `GET /v1/om3/conversations/{id}` returns `pending_confirmation`, the
   confirmation with its `id`, `turn_id`, `tool`, `arguments`,
-  `argument_types`, `editable`, `input_schema` and `expires_at`, while it
-  waits: show it again after a page reload, editable when it was, and answer
+  `argument_types`, `editable`, `input_schema`, `expires_at`, and `preview`,
+  `preview_error` and `preview_arguments` when the interrupt gave them,
+  while it waits: show it again after a page reload, editable when it was, and answer
   it with its `id` as the `interruptId`.
 - A prompt returns 409 `conversation_busy` until the user decides or the
   confirmation expires; an expired one no longer blocks the conversation.

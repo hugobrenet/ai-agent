@@ -1182,6 +1182,18 @@
           "input_schema": {
             "type": "object",
             "description": "The input schema of the tool, when the call is editable: the schema of `editedArgs`."
+          },
+          "preview": {
+            "type": "object",
+            "description": "What the call would do, as the preview tool of the MCP the tool names in its _meta tells it: a summary, the keys changed, the sections deleted, a content written. Absent for a tool naming no preview."
+          },
+          "preview_error": {
+            "type": "string",
+            "description": "Why the preview could not be had; the confirmation stands, the arguments shown."
+          },
+          "preview_arguments": {
+            "type": "object",
+            "description": "The edited arguments the preview is of, after a preview asked again; absent when it is of the arguments of the call."
           }
         },
         "description": "A tool call waiting for the decision of the user, which a run resumes with its `id` as the interruptId."
@@ -1400,20 +1412,44 @@
                   ]
                 },
                 "payload": {
-                  "type": "object",
-                  "required": [
-                    "approved"
-                  ],
-                  "additionalProperties": false,
-                  "properties": {
-                    "approved": {
-                      "type": "boolean"
-                    },
-                    "editedArgs": {
+                  "oneOf": [
+                    {
                       "type": "object",
-                      "description": "With an approval, the full arguments the user edited, a replacement of those of the call, valid against the input schema of the tool. Only for an interrupt whose metadata is editable."
+                      "required": [
+                        "approved"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "approved": {
+                          "type": "boolean"
+                        },
+                        "editedArgs": {
+                          "type": "object",
+                          "description": "With an approval, the full arguments the user edited, a replacement of those of the call, valid against the input schema of the tool. Only for an interrupt whose metadata is editable."
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "action",
+                        "editedArgs"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "preview"
+                          ]
+                        },
+                        "editedArgs": {
+                          "type": "object",
+                          "description": "The full arguments the user edited: the preview of the call is asked again for them; nothing runs, and the call waits again under a new interrupt."
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }

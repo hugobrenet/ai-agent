@@ -21,10 +21,13 @@ type Decision string
 const (
 	DecisionApprove Decision = "approve"
 	DecisionReject  Decision = "reject"
+	// DecisionPreview asks the preview of the pending call again, with the
+	// arguments the user edited: nothing runs, and the turn waits again.
+	DecisionPreview Decision = "preview"
 )
 
 func (d Decision) Valid() bool {
-	return d == DecisionApprove || d == DecisionReject
+	return d == DecisionApprove || d == DecisionReject || d == DecisionPreview
 }
 
 // rejectedToolResult is the tool result the model receives for an action the
@@ -106,6 +109,13 @@ type SuspendedTurn struct {
 	// by their ID, and ClientResults their answers, given to resume it.
 	ClientCalls   []string         `json:"client_calls,omitempty"`
 	ClientResults []llm.ToolResult `json:"client_results,omitempty"`
+	// Preview tells what the pending call would do, as the preview tool of
+	// the server gives it, or PreviewError why it could not; PreviewArguments
+	// are the arguments the user edited it was computed for, absent when it
+	// is of the arguments of the call.
+	Preview          json.RawMessage `json:"preview,omitempty"`
+	PreviewError     string          `json:"preview_error,omitempty"`
+	PreviewArguments json.RawMessage `json:"preview_arguments,omitempty"`
 }
 
 // PendingCall returns the call waiting for confirmation.
@@ -134,6 +144,9 @@ func (s SuspendedTurn) validate(maxIterations int) error {
 	}
 	if len(s.InputSchema) > maxEditableSchemaBytes || len(s.EditedArguments) > maxToolArguments {
 		return fmt.Errorf("suspended turn input schema or edited arguments are too large")
+	}
+	if len(s.Preview) > maxPreviewBytes || len(s.PreviewError) > maxPreviewErrorBytes+len("…") || len(s.PreviewArguments) > maxToolArguments {
+		return fmt.Errorf("suspended turn preview is too large")
 	}
 	if len(s.EditedArguments) > 0 && len(s.InputSchema) == 0 {
 		return fmt.Errorf("suspended turn holds edited arguments for a call that takes no edits")
@@ -195,6 +208,11 @@ type Confirmation struct {
 	// the arguments before approving them.
 	InputSchema json.RawMessage
 	ExpiresAt   time.Time
+	// Preview, PreviewError and PreviewArguments are those of the
+	// suspended turn.
+	Preview          json.RawMessage
+	PreviewError     string
+	PreviewArguments json.RawMessage
 }
 
 // requiresConfirmation tells whether a tool call must be confirmed by the

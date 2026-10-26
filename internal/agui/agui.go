@@ -352,8 +352,11 @@ func (e *Encoder) Encode(event agent.Event) ([]Event, error) {
 			return nil, fmt.Errorf("AG-UI confirmation without its call")
 		}
 		events := e.closeText()
-		// The client sees the call waiting, then the run ends on it.
-		events = append(events, e.toolCall(c.ToolCallID, c.ToolName, c.Arguments, event.Iteration)...)
+		// The client sees the call waiting, then the run ends on it; a call
+		// waiting again, for a preview asked again, it has seen.
+		if c.ToolCallID != e.resumed {
+			events = append(events, e.toolCall(c.ToolCallID, c.ToolName, c.Arguments, event.Iteration)...)
+		}
 		title := c.ToolTitle
 		if title == "" {
 			title = c.ToolName
@@ -361,6 +364,17 @@ func (e *Encoder) Encode(event agent.Event) ([]Event, error) {
 		metadata := map[string]any{"turnId": c.TurnID, "tool": map[string]any{"name": c.ToolName, "title": c.ToolTitle, "destructive": c.Destructive}, "editable": len(c.InputSchema) > 0}
 		if len(c.ArgumentTypes) > 0 {
 			metadata["argumentTypes"] = c.ArgumentTypes
+		}
+		// What the call would do, as the server tells it, or why it could
+		// not: the client shows the arguments without it.
+		if len(c.Preview) > 0 {
+			metadata["preview"] = c.Preview
+		}
+		if c.PreviewError != "" {
+			metadata["previewError"] = c.PreviewError
+		}
+		if len(c.PreviewArguments) > 0 {
+			metadata["previewArguments"] = c.PreviewArguments
 		}
 		// A call the user may edit takes, beside the approval, the full
 		// arguments it runs with, against the input schema of the tool: its

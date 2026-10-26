@@ -303,9 +303,11 @@ func (s *Service) PrepareTurn(ctx context.Context, identity auth.Identity, conve
 // edited, when not nil, are the arguments the user approved the call with,
 // in place of those the model proposed: they are checked against the input
 // schema of the tool before the confirmation is used, so that an invalid
-// edit leaves it waiting for the user to correct it.
+// edit leaves it waiting for the user to correct it. With the decision
+// preview, they are the arguments the preview is computed again for: the
+// confirmation is replaced by a new one, nothing runs.
 func (s *Service) PrepareConfirmation(ctx context.Context, identity auth.Identity, conversationID string, turnID string, confirmationID string, decision agent.Decision, edited json.RawMessage) (TurnExecution, error) {
-	if !decision.Valid() || (edited != nil && decision != agent.DecisionApprove) {
+	if !decision.Valid() || (edited != nil && decision == agent.DecisionReject) || (edited == nil && decision == agent.DecisionPreview) {
 		return nil, fmt.Errorf("%w: invalid confirmation decision", ErrInvalid)
 	}
 	item, waiting, waitState, err := s.pendingWait(ctx, identity, conversationID)
@@ -525,6 +527,14 @@ func (t *PreparedTurn) Run(ctx context.Context, emit agent.EmitFunc) error {
 	} else {
 		result, runErr = t.service.runner.RunTurn(ctx, t.history, t.prompt, forward)
 	}
+	// A preview asked again that fails leaves the call waiting, as it was:
+	// it decided nothing.
+	if runErr != nil && t.decision == agent.DecisionPreview && ctx.Err() == nil {
+		state := *t.resume
+		state.Preview, state.PreviewArguments, state.EditedArguments = nil, nil, nil
+		state.PreviewError = "the preview could not be computed again"
+		return t.suspend(state, t.service.config.Agent.run(result.MCP, result.Exposure, t.historyStats), emit)
+	}
 	if runErr != nil {
 		status, code := turnFailure(runErr, ctx.Err())
 		return errors.Join(runErr, t.service.failTurn(t.owner, t.conversationID, t.turnID, status, code))
@@ -605,6 +615,7 @@ func (t *PreparedTurn) suspend(state agent.SuspendedTurn, run TurnRun, emit agen
 	if err := emit(agent.Event{Type: agent.EventConfirmationRequired, Iteration: state.Iteration, Confirmation: &agent.Confirmation{
 		ID: confirmationID, TurnID: t.turnID, ToolName: call.Name, ToolTitle: state.ToolTitle, Destructive: true,
 		ToolCallID: call.ID, Arguments: call.Arguments, ArgumentTypes: state.ArgumentTypes, InputSchema: state.InputSchema, ExpiresAt: pending.ExpiresAt,
+		Preview: state.Preview, PreviewError: state.PreviewError, PreviewArguments: state.PreviewArguments,
 	}}); err != nil {
 		return fmt.Errorf("emit stored confirmation request: %w", err)
 	}

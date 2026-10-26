@@ -130,6 +130,30 @@ func TestToolResultIsBounded(t *testing.T) {
 	}
 }
 
+func TestResumeEntryPreviewRequest(t *testing.T) {
+	for _, test := range []struct {
+		payload string
+		ok      bool
+		edited  string
+		err     bool
+	}{
+		{payload: `{"action":"preview","editedArgs":{"path":"api"}}`, ok: true, edited: `{"path":"api"}`},
+		{payload: `{"approved":true}`},
+		{payload: `{"action":"preview"}`, ok: true, err: true},
+		{payload: `{"action":"preview","editedArgs":[1]}`, ok: true, err: true},
+		{payload: `{"action":"run","editedArgs":{}}`, ok: true, err: true},
+		{payload: `{"action":"preview","editedArgs":{},"approved":true}`, ok: true, err: true},
+	} {
+		edited, ok, err := ResumeEntry{Status: ResumeResolved, Payload: json.RawMessage(test.payload)}.PreviewRequest()
+		if ok != test.ok || (err != nil) != test.err || (!test.err && string(edited) != test.edited) {
+			t.Errorf("%s: %s %v %v", test.payload, edited, ok, err)
+		}
+	}
+	if _, ok, _ := (ResumeEntry{Status: ResumeCancelled, Payload: json.RawMessage(`{"action":"preview"}`)}).PreviewRequest(); ok {
+		t.Error("a cancelled resume is a preview")
+	}
+}
+
 func TestRunAgentInputPromptAndApproval(t *testing.T) {
 	for raw, want := range map[string]string{
 		`{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","value":"https://x"}},{"type":"text","text":"what is it?"}]}]}`: "what is it?",

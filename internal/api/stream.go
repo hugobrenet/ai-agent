@@ -48,6 +48,13 @@ type Confirmation struct {
 	Editable    bool            `json:"editable"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 	ExpiresAt   time.Time       `json:"expires_at"`
+	// Preview tells what the call would do, as the preview tool of the
+	// server gives it, or PreviewError why it could not; PreviewArguments
+	// are the edited arguments it was computed for, absent when it is of
+	// the arguments of the call.
+	Preview          json.RawMessage `json:"preview,omitempty"`
+	PreviewError     string          `json:"preview_error,omitempty"`
+	PreviewArguments json.RawMessage `json:"preview_arguments,omitempty"`
 }
 
 type ConfirmationTool struct {
