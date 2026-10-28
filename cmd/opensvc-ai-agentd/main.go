@@ -87,7 +87,7 @@ func main() {
 			Agent: conversation.NewAgentInfo(buildinfo.Version(), llmConfig.Model),
 		}
 		backend, service, err := newBackend(spec, model, conversationStore, agent.Config{
-			SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout,
+			Backend: spec.name, SystemPrompt: spec.systemPrompt, MaxIterations: agentConfig.MaxIterations, Timeout: agentConfig.Timeout,
 			SearchThreshold: agentConfig.SearchThreshold, SearchScoreRatio: agentConfig.SearchScoreRatio,
 		}, serviceConfig)
 		if err != nil {
