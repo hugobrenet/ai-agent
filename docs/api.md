@@ -340,7 +340,7 @@ not on the clusters or the collector.
   digits, underscores or hyphens, the names the model providers take, a
   description of at most 4 KiB and parameters, a JSON schema object, of at
   most 64 KiB, 256 KiB in all, or 400 `invalid_tools`. A name of a tool of
-  the agent, `search_tools` or `read_resource`, is refused there; a name of
+  the agent, `search_tools`, `read_resource` or `load_skill`, is refused there; a name of
   a tool of the MCP ends the run with `RUN_ERROR` `tool_name_conflict`, the
   turn reading the catalog of the MCP: a tool of the client must not take
   the place of one, such as a destructive tool the agent confirms. They are
@@ -430,6 +430,44 @@ and a call of it, such as one waiting behind a confirmed call when the
 turn resumes, is answered with a tool error. The listing is one more MCP
 request per turn, resumptions included: the session is opened per turn,
 and nothing caches it.
+
+## Skills
+
+When the MCP of a backend declares the MCP Skills extension,
+`io.modelcontextprotocol/skills`, the agent lists its skills with
+`skills/list` at the start of each turn, and offers the model a tool of its
+own, `load_skill`, in every request of the turn. A skill is a procedure for
+a task, an Agent Skill whose `SKILL.md` the MCP serves as a resource. The
+description of `load_skill` holds one line per skill, its name and its
+description cut to 300 bytes, at most 8 skills; the prompt does not grow
+with the skills. The files of the skills are left out of `read_resource`:
+loading, never reading the file, activates a skill.
+
+A load reads the `SKILL.md` from the MCP, unless its manifest gives it
+beyond 64 KiB, and checks it against the entry `skills/list` gave: its
+size, its SHA-256 digest and its frontmatter, field by field. The agent
+reads the frontmatter in the form the specification gives it: strings,
+plain, quoted or in a literal (`|`) or folded (`>`) block, and one level of
+map of such strings. Any other YAML refuses the skill with the reason, any
+difference with the listing too, a tool error for the model, not a failed
+turn. A skill whose name is not the last segment of the path of its
+`SKILL.md` is not listed. The model gets the body of the skill, the
+frontmatter apart, with its origin, the backend of the agent, such as
+`om3`, never the name the server gives itself. The tools the skill names in its `metadata` key
+`opensvc/tools`, at most 24, are listed right after `search_tools`, where
+the tools a search finds go, and stay listed when the turn resumes after a
+confirmation; those the backend does not serve, such as actions it
+disables, are named to the model. `allowed-tools` is never read. The text of a
+skill loaded in an earlier turn is not kept, but its tools stay listed in
+the next turns, at most 8, before the core tools, as the tools a search of
+a recent turn showed: taken from the listing of the turn, never from the
+history, so that a skill no longer served, or a refused load, carries
+nothing. Only the `SKILL.md` reaches the
+model: the other files of a skill, such as a `references/` page, are served
+neither by `load_skill` nor by `read_resource`, which leaves out the files
+of every skill listed. A server without the extension, or
+whose listing fails, leaves the turn without the tool; an MCP tool named
+`load_skill` fails the turn.
 
 A text read is a tool result: in the next turns, the history keeps no
 string longer than 256 bytes, so that a reference is read again in the
@@ -558,7 +596,9 @@ and the tool calls with their arguments, error flag and the start of their
 results, each truncated. It also records what executed the turn, as the
 turn recorded it while it ran: the agent version, the model, a hash of the
 system prompt actually sent, whether the tool catalog was searched and the
-tools shown to the model, and the MCP server, with the name and version it announced
+tools shown to the model, the skills it loaded, each with the URI of its
+`SKILL.md` and the SHA-256 digest of the text the model was given, and the
+MCP server, with the name and version it announced
 and a hash of the tools it listed, which changes with any tool name,
 description, schema or annotation. A turn resumed after a confirmation on a
 different agent or MCP records one run per execution. The feedback holds no

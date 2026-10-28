@@ -91,17 +91,17 @@ func TestReadResourceBoundsItsDescription(t *testing.T) {
 	for index := 0; index < maxListedResources+5; index++ {
 		session.resources = append(session.resources, &mcp.Resource{URI: "oc3://docs/" + strconv.Itoa(index), MIMEType: "text/markdown", Description: strings.Repeat("x", 1000)})
 	}
-	shelf, err := newResourceShelf(t.Context(), session, map[string]llm.Tool{})
+	shelf, err := newResourceShelf(t.Context(), session, map[string]llm.Tool{}, nil)
 	if err != nil || shelf.tool == nil || len(shelf.uris) != maxListedResources || len(shelf.tool.Description) > 600+maxListedResources*(maxResourceSummaryBytes+20) {
 		t.Fatalf("shelf lists %d resources in %d bytes", len(shelf.uris), len(shelf.tool.Description))
 	}
 	// The name is the agent's: a tool of the MCP of the same name is refused.
-	if _, err := newResourceShelf(t.Context(), session, map[string]llm.Tool{ReadResourceToolName: {Name: ReadResourceToolName}}); err == nil {
+	if _, err := newResourceShelf(t.Context(), session, map[string]llm.Tool{ReadResourceToolName: {Name: ReadResourceToolName}}, nil); err == nil {
 		t.Fatal("a tool of the MCP named read_resource was accepted")
 	}
 	// A turn listing no resource answers a call of read_resource, such as
 	// one waiting behind a confirmed call, with a tool error.
-	empty, err := newResourceShelf(t.Context(), &fakeSession{}, map[string]llm.Tool{})
+	empty, err := newResourceShelf(t.Context(), &fakeSession{}, map[string]llm.Tool{}, nil)
 	if err != nil || empty.tool != nil || !empty.known(ReadResourceToolName) {
 		t.Fatalf("empty shelf = %+v, %v", empty, err)
 	}

@@ -161,6 +161,10 @@ type TurnRun struct {
 	ShownTools       []string `json:"shown_tools"`
 	// ShownToolsOmitted counts the tools shown left out of ShownTools.
 	ShownToolsOmitted int `json:"shown_tools_omitted,omitempty"`
+	// Skills are the skills the run loaded, the digest of each the one of
+	// the text the model was given: a change of a skill shows here, as one
+	// of the prompt or of the tools does.
+	Skills []RunSkill `json:"skills,omitempty"`
 	// History describes the history sent to the model.
 	History *HistoryStats `json:"history,omitempty"`
 }
@@ -170,7 +174,16 @@ func (r TurnRun) Equal(other TurnRun) bool {
 	return r.AgentVersion == other.AgentVersion && r.Model == other.Model && r.SystemPromptSHA256 == other.SystemPromptSHA256 &&
 		r.MCPServer == other.MCPServer && r.MCPVersion == other.MCPVersion && r.ToolsSHA256 == other.ToolsSHA256 &&
 		r.ToolSearch == other.ToolSearch && r.SearchScoreRatio == other.SearchScoreRatio && slices.Equal(r.ShownTools, other.ShownTools) && r.ShownToolsOmitted == other.ShownToolsOmitted &&
+		slices.Equal(r.Skills, other.Skills) &&
 		(r.History == nil) == (other.History == nil) && (r.History == nil || *r.History == *other.History)
+}
+
+// RunSkill is a skill a run loaded: its name, the URI of its SKILL.md and
+// the "sha256:<hex>" digest of the text loaded.
+type RunSkill struct {
+	Name   string `json:"name"`
+	URI    string `json:"uri"`
+	SHA256 string `json:"sha256"`
 }
 
 // AgentInfo describes the agent of a backend: its version and its model.
@@ -192,6 +205,7 @@ func (a AgentInfo) run(mcp agent.MCPServer, exposure agent.Exposure, history *Hi
 		AgentVersion: a.Version, Model: a.Model, SystemPromptSHA256: exposure.SystemPromptSHA256,
 		MCPServer: mcp.Name, MCPVersion: mcp.Version, ToolsSHA256: mcp.ToolsSHA256,
 		ToolSearch: exposure.ToolSearch, SearchScoreRatio: exposure.SearchScoreRatio, ShownTools: exposure.ShownTools,
+		Skills: runSkills(exposure.Skills),
 	}
 }
 
@@ -240,4 +254,12 @@ func MessageID(turnID, promptID string, sequence int64) string {
 		return promptID
 	}
 	return turnID + ":" + strconv.FormatInt(sequence, 10)
+}
+
+func runSkills(loaded []agent.LoadedSkill) []RunSkill {
+	var skills []RunSkill
+	for _, skill := range loaded {
+		skills = append(skills, RunSkill{Name: skill.Name, URI: skill.URI, SHA256: skill.Digest})
+	}
+	return skills
 }
