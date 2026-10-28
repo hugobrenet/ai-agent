@@ -85,6 +85,9 @@ func (c *Client) Connect(ctx context.Context) (*Session, error) {
 		&mcp.Implementation{Name: clientName, Version: clientVersion},
 		&mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{}},
 	)
+	if err := registerSkillMethods(client); err != nil {
+		return nil, fmt.Errorf("connect MCP: %w", err)
+	}
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:             c.endpoint,
 		HTTPClient:           c.httpClient,

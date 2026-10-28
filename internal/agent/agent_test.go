@@ -424,6 +424,12 @@ type fakeSession struct {
 	resources []*mcp.Resource
 	texts     map[string]string
 	reads     []string
+	// skills are the skills the server lists.
+	skills []Skill
+}
+
+func (s *fakeSession) ListSkills(context.Context) ([]Skill, error) {
+	return s.skills, nil
 }
 
 func (s *fakeSession) ListResources(context.Context) ([]*mcp.Resource, error) {

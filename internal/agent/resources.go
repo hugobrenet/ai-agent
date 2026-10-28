@@ -34,10 +34,12 @@ type resourceShelf struct {
 }
 
 // newResourceShelf lists the resources of the session for read_resource, at
-// most maxListedResources. The name is the agent's: a tool of the MCP of the
-// same name is refused, as search_tools is. A listing that fails leaves the
-// turn without the tool, a call of it answered with a tool error.
-func newResourceShelf(ctx context.Context, session MCPSession, catalog map[string]llm.Tool) (*resourceShelf, error) {
+// most maxListedResources, but those of skillFiles: a skill is loaded by
+// load_skill, which checks it, never read as a reference text. The name is
+// the agent's: a tool of the MCP of the same name is refused, as
+// search_tools is. A listing that fails leaves the turn without the tool, a
+// call of it answered with a tool error.
+func newResourceShelf(ctx context.Context, session MCPSession, catalog map[string]llm.Tool, skillFiles map[string]bool) (*resourceShelf, error) {
 	shelf := &resourceShelf{names: map[string]string{}}
 	if _, taken := catalog[ReadResourceToolName]; taken {
 		return nil, fmt.Errorf("MCP tool %q conflicts with the resource reading of the agent", ReadResourceToolName)
@@ -48,7 +50,7 @@ func newResourceShelf(ctx context.Context, session MCPSession, catalog map[strin
 	}
 	var lines []string
 	for _, resource := range resources {
-		if resource == nil || resource.URI == "" || len(shelf.uris) == maxListedResources {
+		if resource == nil || resource.URI == "" || skillFiles[resource.URI] || len(shelf.uris) == maxListedResources {
 			continue
 		}
 		if resource.MIMEType != "" && !strings.HasPrefix(resource.MIMEType, "text/") {

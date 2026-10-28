@@ -31,6 +31,10 @@ type MCPSession interface {
 type MCPConnectFunc func(context.Context) (MCPSession, error)
 
 type Config struct {
+	// Backend names the backend the agent serves, such as om3: the origin
+	// the agent gives the skills of its MCP, rather than the name the
+	// server gives itself.
+	Backend string
 	// SystemPrompt instructs the model for the backend the agent serves.
 	SystemPrompt  string
 	MaxIterations int
@@ -80,6 +84,9 @@ type Exposure struct {
 	// every result is shown or the catalog is not searched.
 	SearchScoreRatio float64
 	ShownTools       []string
+	// Skills are the skills the turn loaded, with the digest of the text the
+	// model was given.
+	Skills []LoadedSkill
 }
 
 // MCPServer is the MCP server of a turn: the name and version it announced,
@@ -209,9 +216,15 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 	if err != nil {
 		return result, err
 	}
-	// The resources of the MCP are read with read_resource, offered in every
-	// request of the turn when the server has some.
-	shelf, err := newResourceShelf(ctx, session, selection.catalog)
+	// The skills of the MCP are loaded with load_skill, and its resources
+	// read with read_resource, each offered in every request of the turn
+	// when the server has some. The files of the skills are load_skill's.
+	skills, err := newSkillShelf(ctx, session, selection.catalog)
+	if err != nil {
+		return result, err
+	}
+	skills.carryTools(history, selection)
+	shelf, err := newResourceShelf(ctx, session, selection.catalog, skills.files)
 	if err != nil {
 		return result, err
 	}
@@ -232,6 +245,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		turn.Exposure = Exposure{
 			SystemPromptSHA256: hex.EncodeToString(promptSum[:]), ToolSearch: selection.search,
 			SearchScoreRatio: selection.scoreRatio, ShownTools: slices.Clone(selection.shown),
+			Skills: slices.Clone(skills.loaded),
 		}
 		return turn
 	}
@@ -269,6 +283,21 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 					state.ClientCalls = append(state.ClientCalls, pending.ID)
 				}
 				return true, nil
+			}
+			if skills.known(call.Name) {
+				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: call.Arguments, Iteration: state.Iteration}); err != nil {
+					return false, err
+				}
+				loadResult := skills.load(ctx, session, a.config.Backend, call, selection)
+				// The tools a skill showed stay shown when the turn resumes.
+				if selection.search {
+					state.ActiveTools = slices.Clone(selection.active)
+				}
+				if err := emitAgentEvent(emit, Event{Type: EventToolFinished, ToolName: call.Name, ToolError: loadResult.IsError, ToolCallID: call.ID, ToolResult: loadResult.Content, Iteration: state.Iteration}); err != nil {
+					return false, err
+				}
+				state.Results = append(state.Results, loadResult)
+				continue
 			}
 			if shelf.known(call.Name) {
 				if err := emitAgentEvent(emit, Event{Type: EventToolStarted, ToolName: call.Name, ToolCallID: call.ID, ToolArguments: call.Arguments, Iteration: state.Iteration}); err != nil {
@@ -404,6 +433,12 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, state *Suspended
 		// The last iteration asks for the answer: a turn that would need
 		// more calls tells what it has and what is left, rather than fail.
 		requestTools := selection.tools()
+		if skills.tool != nil {
+			requestTools = append(requestTools, *skills.tool)
+			if !slices.Contains(selection.shown, LoadSkillToolName) {
+				selection.shown = append(selection.shown, LoadSkillToolName)
+			}
+		}
 		if shelf.tool != nil {
 			requestTools = append(requestTools, *shelf.tool)
 			if !slices.Contains(selection.shown, ReadResourceToolName) {

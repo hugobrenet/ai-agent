@@ -105,7 +105,7 @@ const result = await agent.runAgent({ runId: crypto.randomUUID() }, {
 | `RUN_STARTED` | The run is under way |
 | `MESSAGES_SNAPSHOT` | The thread as the agent holds it, sent to a client that lacks its last stored turn, such as another tab; `@ag-ui/client` merges it |
 | `TEXT_MESSAGE_START`, `_CONTENT`, `_END` | The answer of the assistant, streamed; one message per answer of the model |
-| `TOOL_CALL_START`, `_ARGS`, `_END` | A tool the agent calls, with its arguments; `search_tools` and `read_resource` are tools of the agent itself, which an interface may show apart, or not at all |
+| `TOOL_CALL_START`, `_ARGS`, `_END` | A tool the agent calls, with its arguments; `search_tools`, `read_resource` and `load_skill` are tools of the agent itself, which an interface may show apart, or not at all |
 | `TOOL_CALL_RESULT` | Its result, the JSON the model read, or a note of its size beyond 64 KiB |
 | `CUSTOM` `opensvc.warning` | A note for the developer: content parts or a version the agent did not read |
 | `RUN_FINISHED` | The end: `result.turnId` for the feedback, `usage` for the tokens, `outcome` success, success with calls of tools of the client pending, or an interrupt |
