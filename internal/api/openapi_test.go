@@ -105,7 +105,7 @@ func TestOpenAPIReferencesResolve(t *testing.T) {
 func TestOpenAPIDocumentsTheConversationErrorCodes(t *testing.T) {
 	for _, err := range []error{
 		conversation.ErrConfirmationExpired, conversation.ErrNotPending, conversation.ErrMessageTooLarge, conversation.ErrExpired,
-		conversation.ErrNotFound, conversation.ErrBusy, conversation.ErrLimit, conversation.ErrInvalid, errors.New("unexpected"),
+		conversation.ErrNotFound, conversation.ErrBusy, conversation.ErrUserLimit, conversation.ErrLimit, conversation.ErrInvalid, errors.New("unexpected"),
 	} {
 		_, code, _ := conversationError(err)
 		if !bytes.Contains(openAPIDocument, []byte("`"+code+"`")) {

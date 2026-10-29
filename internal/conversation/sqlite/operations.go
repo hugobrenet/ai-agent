@@ -33,6 +33,13 @@ func (s *Store) CreateConversation(ctx context.Context, item conversation.Conver
 		return fmt.Errorf("begin create conversation transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	var owned int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM conversations WHERE issuer = ? AND subject = ?", item.Owner.Issuer, item.Owner.Subject).Scan(&owned); err != nil {
+		return fmt.Errorf("count the conversations of the user: %w", err)
+	}
+	if owned >= s.config.MaxUserConversations {
+		return fmt.Errorf("%w: a user holds at most %d conversations", conversation.ErrUserLimit, s.config.MaxUserConversations)
+	}
 	var count int
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM conversations").Scan(&count); err != nil {
 		return fmt.Errorf("count conversations: %w", err)

@@ -128,7 +128,7 @@
             }
           },
           "409": {
-            "description": "The caller reached the conversation limit. Codes: `conversation_limit`.",
+            "description": "The caller reached the conversation quota of a user, or the instance its conversation limit. Codes: `conversation_quota`, `conversation_limit`.",
             "content": {
               "application/json": {
                 "schema": {

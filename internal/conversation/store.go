@@ -9,11 +9,15 @@ import (
 )
 
 var (
-	ErrNotFound        = errors.New("conversation not found")
-	ErrBusy            = errors.New("conversation has a running turn or a turn awaiting confirmation")
-	ErrExpired         = errors.New("conversation expired")
-	ErrConflict        = errors.New("conversation store conflict")
-	ErrLimit           = errors.New("conversation store limit exceeded")
+	ErrNotFound = errors.New("conversation not found")
+	ErrBusy     = errors.New("conversation has a running turn or a turn awaiting confirmation")
+	ErrExpired  = errors.New("conversation expired")
+	ErrConflict = errors.New("conversation store conflict")
+	ErrLimit    = errors.New("conversation store limit exceeded")
+	// ErrUserLimit is the quota of conversations of one user reached: the
+	// user deletes some, or waits for them to expire; the others are not
+	// held back.
+	ErrUserLimit       = errors.New("conversation quota of the user reached")
 	ErrInvalid         = errors.New("invalid conversation store input")
 	ErrMessageTooLarge = errors.New("conversation display message exceeds page size")
 	// ErrNotPending refuses a decision on a turn that waits on no such

@@ -62,3 +62,32 @@ func TestLoadConversationFeedbackRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConversationLimits(t *testing.T) {
+	env := map[string]string{
+		"OPENSVC_AI_CONVERSATION_MAX":              "2000",
+		"OPENSVC_AI_CONVERSATION_MAX_PER_USER":     "100",
+		"OPENSVC_AI_CONVERSATION_MAX_DATABASE_MIB": "1024",
+	}
+	config, err := loadConversation(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MaxConversations != 2000 || config.MaxUserConversations != 100 || config.MaxDatabaseBytes != 1<<30 {
+		t.Fatalf("limits = %+v", config)
+	}
+	config, err = loadConversation(func(string) string { return "" })
+	if err != nil || config.MaxConversations != 0 || config.MaxUserConversations != 0 || config.MaxDatabaseBytes != 0 {
+		t.Fatalf("unset limits = %+v, %v", config, err)
+	}
+	for name, value := range map[string]map[string]string{
+		"not a number":       {"OPENSVC_AI_CONVERSATION_MAX": "many"},
+		"zero":               {"OPENSVC_AI_CONVERSATION_MAX_PER_USER": "0"},
+		"database too small": {"OPENSVC_AI_CONVERSATION_MAX_DATABASE_MIB": "16"},
+		"quota over limit":   {"OPENSVC_AI_CONVERSATION_MAX": "10", "OPENSVC_AI_CONVERSATION_MAX_PER_USER": "11"},
+	} {
+		if _, err := loadConversation(func(key string) string { return value[key] }); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
