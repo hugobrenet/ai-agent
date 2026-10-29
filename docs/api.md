@@ -161,6 +161,15 @@ Only one turn runs at a time in a conversation.
 - **Expiry.** A conversation expires after its configured lifetime, counted
   from its creation and then from its last completed turn; an expired
   conversation returns 410.
+- **Quotas.** A user, their OpenID issuer and subject, holds at most
+  `OPENSVC_AI_CONVERSATION_MAX_PER_USER` conversations, 128 by default, on
+  every backend and cluster together; beyond, a creation returns 409
+  `conversation_quota`, until the user deletes one or one expires. The other
+  users are not held back. The instance holds at most
+  `OPENSVC_AI_CONVERSATION_MAX` conversations, 4096 by default, and
+  `OPENSVC_AI_CONVERSATION_MAX_DATABASE_MIB` of stored messages, 256 MiB by
+  default; beyond, 409 `conversation_limit`. The expired conversations are
+  deleted before each creation counts.
 
 ## Runs
 

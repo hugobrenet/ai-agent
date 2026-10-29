@@ -13,7 +13,11 @@ import (
 )
 
 const (
-	DefaultMaxConversations     = 1024
+	DefaultMaxConversations = 4096
+	// DefaultMaxUserConversations bounds the conversations of one user,
+	// its OpenID issuer and subject, every backend and cluster together:
+	// one user does not fill the store of the others.
+	DefaultMaxUserConversations = 128
 	DefaultMaxTurns             = 128
 	DefaultMaxMessages          = 256
 	DefaultMaxConversationBytes = 32 << 20
@@ -23,6 +27,7 @@ const (
 type Config struct {
 	Path                 string
 	MaxConversations     int
+	MaxUserConversations int
 	MaxTurns             int
 	MaxMessages          int
 	MaxConversationBytes int64
@@ -103,6 +108,9 @@ func validateConfig(config Config) (Config, error) {
 	if config.MaxConversations == 0 {
 		config.MaxConversations = DefaultMaxConversations
 	}
+	if config.MaxUserConversations == 0 {
+		config.MaxUserConversations = min(DefaultMaxUserConversations, config.MaxConversations)
+	}
 	if config.MaxTurns == 0 {
 		config.MaxTurns = DefaultMaxTurns
 	}
@@ -118,8 +126,11 @@ func validateConfig(config Config) (Config, error) {
 	if config.MaxFeedback == 0 {
 		config.MaxFeedback = DefaultMaxFeedback
 	}
-	if config.MaxConversations < 1 || config.MaxTurns < 1 || config.MaxMessages < 1 || config.MaxConversationBytes < 1 || config.MaxDatabaseBytes < 1 || config.MaxFeedback < 1 {
+	if config.MaxConversations < 1 || config.MaxUserConversations < 1 || config.MaxTurns < 1 || config.MaxMessages < 1 || config.MaxConversationBytes < 1 || config.MaxDatabaseBytes < 1 || config.MaxFeedback < 1 {
 		return Config{}, fmt.Errorf("conversation SQLite limits must be positive")
+	}
+	if config.MaxUserConversations > config.MaxConversations {
+		return Config{}, fmt.Errorf("conversation SQLite per-user conversation limit exceeds the conversation limit")
 	}
 	if config.MaxConversationBytes > config.MaxDatabaseBytes {
 		return Config{}, fmt.Errorf("conversation SQLite per-conversation byte limit exceeds database byte limit")

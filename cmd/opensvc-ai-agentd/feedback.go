@@ -46,7 +46,12 @@ func runFeedback(args []string, output io.Writer) error {
 		return fmt.Errorf("load conversation configuration: %w", err)
 	}
 	ctx := context.Background()
-	store, err := conversationsqlite.Open(ctx, conversationsqlite.Config{Path: conversationConfig.DatabasePath})
+	store, err := conversationsqlite.Open(ctx, conversationsqlite.Config{
+		Path:                 conversationConfig.DatabasePath,
+		MaxConversations:     conversationConfig.MaxConversations,
+		MaxUserConversations: conversationConfig.MaxUserConversations,
+		MaxDatabaseBytes:     conversationConfig.MaxDatabaseBytes,
+	})
 	if err != nil {
 		return fmt.Errorf("open conversation store: %w", err)
 	}

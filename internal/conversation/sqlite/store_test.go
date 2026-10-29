@@ -251,7 +251,10 @@ func TestStoreEnforcesLimitsWithoutPartialHistory(t *testing.T) {
 	if err := store.CreateConversation(t.Context(), item); err != nil {
 		t.Fatalf("CreateConversation() error: %v", err)
 	}
-	if err := store.CreateConversation(t.Context(), testConversation("conversation-2", testOwner, testNow)); !errors.Is(err, conversation.ErrLimit) {
+	// The limit of the instance, for another user: the first is held by
+	// its own quota, of one conversation as the instance's.
+	other := conversation.Owner{Backend: testOwner.Backend, ClusterID: testOwner.ClusterID, Issuer: testOwner.Issuer, Subject: "bob"}
+	if err := store.CreateConversation(t.Context(), testConversation("conversation-2", other, testNow)); !errors.Is(err, conversation.ErrLimit) || errors.Is(err, conversation.ErrUserLimit) {
 		t.Fatalf("conversation limit error = %v", err)
 	}
 	turn1, err := store.BeginTurn(t.Context(), testOwner, item.ID, "turn-1", testNow.Add(time.Second))
@@ -519,5 +522,46 @@ func toolTranscript() []llm.Message {
 		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "get_cluster_health", Arguments: json.RawMessage(`{}`)}}},
 		{Role: llm.RoleTool, ToolResults: []llm.ToolResult{{CallID: "call-1", Content: json.RawMessage(`{"status":"healthy"}`)}}},
 		{Role: llm.RoleAssistant, Text: "cluster healthy"},
+	}
+}
+
+// A user over quota is refused with ErrUserLimit, while the other users still
+// create theirs; a conversation deleted frees a place. The quota counts the
+// conversations of the user on every backend and cluster.
+func TestStoreEnforcesTheQuotaOfAUser(t *testing.T) {
+	store, _ := openTestStore(t, Config{MaxConversations: 10, MaxUserConversations: 2})
+	oc3 := conversation.Owner{Backend: "oc3", ClusterID: "", Issuer: testOwner.Issuer, Subject: testOwner.Subject}
+	bob := conversation.Owner{Backend: testOwner.Backend, ClusterID: testOwner.ClusterID, Issuer: testOwner.Issuer, Subject: "bob"}
+	for _, item := range []conversation.Conversation{testConversation("alice-1", testOwner, testNow), testConversation("alice-2", oc3, testNow)} {
+		if err := store.CreateConversation(t.Context(), item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := store.CreateConversation(t.Context(), testConversation("alice-3", testOwner, testNow))
+	if !errors.Is(err, conversation.ErrUserLimit) || errors.Is(err, conversation.ErrLimit) {
+		t.Fatalf("quota error = %v", err)
+	}
+	if err := store.CreateConversation(t.Context(), testConversation("bob-1", bob, testNow)); err != nil {
+		t.Fatalf("another user held back by the quota of the first: %v", err)
+	}
+	if err := store.DeleteConversation(t.Context(), testOwner, "alice-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateConversation(t.Context(), testConversation("alice-3", testOwner, testNow)); err != nil {
+		t.Fatalf("a deleted conversation frees no place: %v", err)
+	}
+}
+
+func TestStoreConfigBoundsTheQuotaByTheLimit(t *testing.T) {
+	config, err := validateConfig(Config{Path: "x", MaxConversations: 50})
+	if err != nil || config.MaxUserConversations != 50 {
+		t.Fatalf("default quota under a smaller limit = %d, %v", config.MaxUserConversations, err)
+	}
+	config, err = validateConfig(Config{Path: "x"})
+	if err != nil || config.MaxConversations != DefaultMaxConversations || config.MaxUserConversations != DefaultMaxUserConversations {
+		t.Fatalf("defaults = %+v, %v", config, err)
+	}
+	if _, err := validateConfig(Config{Path: "x", MaxConversations: 10, MaxUserConversations: 11}); err == nil {
+		t.Fatal("a quota over the limit was accepted")
 	}
 }

@@ -74,7 +74,12 @@ func main() {
 		})
 	}
 	startupContext, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
-	conversationStore, err := conversationsqlite.Open(startupContext, conversationsqlite.Config{Path: conversationConfig.DatabasePath})
+	conversationStore, err := conversationsqlite.Open(startupContext, conversationsqlite.Config{
+		Path:                 conversationConfig.DatabasePath,
+		MaxConversations:     conversationConfig.MaxConversations,
+		MaxUserConversations: conversationConfig.MaxUserConversations,
+		MaxDatabaseBytes:     conversationConfig.MaxDatabaseBytes,
+	})
 	if err != nil {
 		cancelStartup()
 		log.Fatalf("open conversation store: %v", err)

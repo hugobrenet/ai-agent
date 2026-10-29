@@ -246,6 +246,8 @@ func conversationError(err error) (int, string, string) {
 		return http.StatusNotFound, "conversation_not_found", "the conversation was not found"
 	case errors.Is(err, conversation.ErrBusy):
 		return http.StatusConflict, "conversation_busy", "the conversation already has an active turn or an action waiting for a decision"
+	case errors.Is(err, conversation.ErrUserLimit):
+		return http.StatusConflict, "conversation_quota", "your conversation quota is reached: delete conversations, or wait for them to expire"
 	case errors.Is(err, conversation.ErrLimit):
 		return http.StatusConflict, "conversation_limit", "the conversation limit has been reached"
 	case errors.Is(err, conversation.ErrInvalid):
