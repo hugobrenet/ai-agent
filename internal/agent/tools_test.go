@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,6 +14,10 @@ import (
 func TestToolsListWhatTheModelMayBeOffered(t *testing.T) {
 	tools := previewedTools()
 	tools[0].Title, tools[0].Description = "Get object status", "Read the status of one object. Exact values are kept."
+	tools[0].InputSchema = map[string]any{"type": "object", "properties": map[string]any{
+		"path": map[string]any{"type": "string", "description": " the exact object path "},
+		"wait": map[string]any{"type": "integer"},
+	}}
 	freeze := &mcp.Tool{Name: "freeze_object", InputSchema: objectSchema(), Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(false)}}
 	session := &fakeSession{tools: append(tools, freeze)}
 	got, err := newTestAgent(t, &scriptedLLM{t: t}, session, 4).Tools(auth.WithBearerToken(t.Context(), "jwt-marker"))
@@ -27,7 +32,10 @@ func TestToolsListWhatTheModelMayBeOffered(t *testing.T) {
 	// to the name; a tool neither read-only nor destructive needs no
 	// confirmation.
 	want := []ToolInfo{
-		{Name: "get_object_status", Title: "Get object status", Summary: "Read the status of one object.", ReadOnly: true},
+		{
+			Name: "get_object_status", Title: "Get object status", Summary: "Read the status of one object.",
+			Description: "Read the status of one object. Exact values are kept.", Arguments: map[string]string{"path": "the exact object path"}, ReadOnly: true,
+		},
 		{Name: "update_object_config", Title: "Stop object", Confirmable: true},
 		{Name: "stop_instance", Title: "Stop object", Confirmable: true},
 		{Name: "freeze_object", Title: "freeze_object"},
@@ -36,7 +44,7 @@ func TestToolsListWhatTheModelMayBeOffered(t *testing.T) {
 		t.Fatalf("tools = %+v", got)
 	}
 	for index := range want {
-		if got[index] != want[index] {
+		if !reflect.DeepEqual(got[index], want[index]) {
 			t.Fatalf("tool %d = %+v, want %+v", index, got[index], want[index])
 		}
 	}

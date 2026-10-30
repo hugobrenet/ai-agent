@@ -409,9 +409,12 @@ user apply when a tool is called, not to the list. The tools for the client
 only, such as the previews, are left out. Each tool gives its `name`, its
 `title`, at most 200 bytes, its `summary`, the first sentence of its
 description, at most 512 bytes, past which both are cut on a character and
-end with an ellipsis, `read_only`, and
+end with an ellipsis, its `description`, whole, as the model reads it,
+`arguments`, the description of each argument by its name, at most 64 of
+1 KiB each, `read_only`, and
 `needs_confirmation`, whether a call of it waits for the confirmation of the
-user. The answer is not cached (`Cache-Control: no-store`); an MCP that does
+user. A client shows the description and the arguments as plain text: they
+come from the MCP. The whole catalog of om3-mcp weighs about 110 KiB. The answer is not cached (`Cache-Control: no-store`); an MCP that does
 not answer gives 502 `tools_unavailable`.
 
 `go test -tags agui_conformance ./internal/api/` runs the official client,

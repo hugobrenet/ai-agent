@@ -16,11 +16,14 @@ type ToolLister interface {
 }
 
 type ToolResponse struct {
-	Name              string `json:"name"`
-	Title             string `json:"title"`
-	Summary           string `json:"summary"`
-	ReadOnly          bool   `json:"read_only"`
-	NeedsConfirmation bool   `json:"needs_confirmation"`
+	Name        string `json:"name"`
+	Title       string `json:"title"`
+	Summary     string `json:"summary"`
+	Description string `json:"description,omitempty"`
+	// Arguments are the descriptions of the arguments, by their name.
+	Arguments         map[string]string `json:"arguments,omitempty"`
+	ReadOnly          bool              `json:"read_only"`
+	NeedsConfirmation bool              `json:"needs_confirmation"`
 }
 
 type ToolListResponse struct {
@@ -46,7 +49,10 @@ func serveTools(tools ToolLister, audit auditLogger) http.HandlerFunc {
 		}
 		result := make([]ToolResponse, 0, len(items))
 		for _, item := range items {
-			result = append(result, ToolResponse{Name: item.Name, Title: item.Title, Summary: item.Summary, ReadOnly: item.ReadOnly, NeedsConfirmation: item.Confirmable})
+			result = append(result, ToolResponse{
+				Name: item.Name, Title: item.Title, Summary: item.Summary, Description: item.Description, Arguments: item.Arguments,
+				ReadOnly: item.ReadOnly, NeedsConfirmation: item.Confirmable,
+			})
 		}
 		audit.event(request.Context(), "tools_listed", slog.Int("count", len(result)))
 		response.Header().Set("Cache-Control", "no-store")
