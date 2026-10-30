@@ -31,7 +31,7 @@ func TestToolsServeWhatTheUserMayAskTheAssistant(t *testing.T) {
 		token, _ = auth.BearerTokenFromContext(ctx)
 		return []agent.ToolInfo{
 			{Name: "get_object_status", Title: "Get object status", Summary: "Read the status of one object.", ReadOnly: true},
-			{Name: "stop_instance", Title: "Stop instance", Summary: "Stop the instance.", Confirmable: true},
+			{Name: "stop_instance", Title: "Stop instance", Summary: "Stop the instance.", Description: "Stop the instance.\nOn one node.", Arguments: map[string]string{"node": "the exact node"}, Confirmable: true},
 		}, nil
 	}))
 	recorder := httptest.NewRecorder()
@@ -45,7 +45,8 @@ func TestToolsServeWhatTheUserMayAskTheAssistant(t *testing.T) {
 	}
 	stop := body["tools"][1]
 	if len(body["tools"]) != 2 || stop["name"] != "stop_instance" || stop["title"] != "Stop instance" || stop["summary"] != "Stop the instance." ||
-		stop["read_only"] != false || stop["needs_confirmation"] != true || body["tools"][0]["read_only"] != true {
+		stop["read_only"] != false || stop["needs_confirmation"] != true || body["tools"][0]["read_only"] != true ||
+		stop["description"] != "Stop the instance.\nOn one node." || stop["arguments"].(map[string]any)["node"] != "the exact node" {
 		t.Fatalf("tools = %s", recorder.Body)
 	}
 }

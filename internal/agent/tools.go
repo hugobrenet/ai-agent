@@ -2,11 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -15,17 +18,24 @@ const (
 	// is cut on a character and ends with an ellipsis.
 	maxToolSummaryBytes = 512
 	maxToolTitleBytes   = 200
+	// maxToolArgumentDescriptions bounds the arguments a tool describes, and
+	// maxArgumentDescriptionBytes the description of each.
+	maxToolArgumentDescriptions = 64
+	maxArgumentDescriptionBytes = 1 << 10
 	// toolsTimeout bounds the reading of the tools of the MCP.
 	toolsTimeout = 30 * time.Second
 )
 
 // ToolInfo is a tool of the MCP the model may be offered, as a user reads
-// it: its title, the first sentence of its description, whether it only
+// it: its title, the first sentence of its description, its description
+// and those of its arguments as the model reads them, whether it only
 // reads, and whether a call of it waits for the confirmation of the user.
 type ToolInfo struct {
 	Name        string
 	Title       string
 	Summary     string
+	Description string
+	Arguments   map[string]string
 	ReadOnly    bool
 	Confirmable bool
 }
@@ -57,11 +67,44 @@ func (a *Agent) Tools(ctx context.Context) (tools []ToolInfo, err error) {
 			Name:        tool.Name,
 			Title:       bounded(toolTitle(tool), maxToolTitleBytes),
 			Summary:     bounded(firstSentence(tool.Description), maxToolSummaryBytes),
+			Description: bounded(strings.TrimSpace(tool.Description), maxToolDescriptionBytes),
+			Arguments:   argumentDescriptions(tool),
 			ReadOnly:    tool.Annotations != nil && tool.Annotations.ReadOnlyHint,
 			Confirmable: requiresConfirmation(tool),
 		})
 	}
 	return tools, nil
+}
+
+// argumentDescriptions reads the descriptions the input schema of a tool
+// gives its properties, at most maxToolArgumentDescriptions of them, each
+// bounded by maxArgumentDescriptionBytes. A schema the agent cannot read
+// gives none.
+func argumentDescriptions(tool *mcp.Tool) map[string]string {
+	data, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		return nil
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if json.Unmarshal(data, &schema) != nil {
+		return nil
+	}
+	var descriptions map[string]string
+	for name, property := range schema.Properties {
+		description := strings.TrimSpace(property.Description)
+		if description == "" || len(name) > maxToolNameBytes || len(descriptions) == maxToolArgumentDescriptions {
+			continue
+		}
+		if descriptions == nil {
+			descriptions = map[string]string{}
+		}
+		descriptions[name] = bounded(description, maxArgumentDescriptionBytes)
+	}
+	return descriptions
 }
 
 // firstSentence is the first sentence of a description: up to its first
